@@ -13,6 +13,7 @@ use App\Services\AccountWorkBatchService;
 use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\IndustryDataService;
+use App\Services\PlanTask\PullDataAnalysisService;
 use App\Services\SecretStore;
 use PDOException;
 
@@ -514,9 +515,21 @@ class AccountController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        $old = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        $old = DB::selectOne('SELECT id, owner_id, company_id FROM accounts WHERE id=?', [(int)$id]);
+        if (!$old) {
+            return $this->error('资源不存在', 404);
+        }
         if ($err = $this->assertAccountOwns($old)) {
-            return $err;
+            // 共用浏览器环境：账号已绑定环境时，允许任何登录用户回写「运行时登录状态」。
+            // 场景：A 建环境并绑定账号，B 打开该环境，浏览器检测到的登录态必须能写回，
+            // 否则账号状态永远停在旧值。注意只放开状态回写，账号资料仍按原权限校验。
+            $bound = DB::selectOne(
+                'SELECT 1 AS ok FROM account_browser_envs WHERE account_id=? LIMIT 1',
+                [(int)$id]
+            );
+            if (!$bound) {
+                return $err;
+            }
         }
         $status = (string)$request->input('loginStatus', '');
         if (!in_array($status, ['offline', 'online', 'expired', 'checking'], true)) {
@@ -1720,6 +1733,34 @@ class AccountController extends Controller
         $this->ensureSchema();
         $rows = DB::select('SELECT * FROM tiktok_videos WHERE account_id=? ORDER BY last_synced_at DESC, id DESC', [(int)$id]);
         return $this->success($rows);
+    }
+
+    /**
+     * 查看数据弹框：AI 分析当前账号已拉取指标并发送邮件通知。
+     */
+    public function sendDataAnalysisMail(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $aid = (int)$id;
+        $account = DB::selectOne('SELECT id, owner_id, company_id FROM accounts WHERE id=?', [$aid]);
+        if ($err = $this->assertAccountRowAccess($account)) {
+            return $err;
+        }
+        try {
+            @set_time_limit(180);
+            $result = PullDataAnalysisService::runManualForAccount($aid);
+        } catch (\Throwable $e) {
+            return $this->error('发送失败：' . $e->getMessage(), 500);
+        }
+        if (empty($result['ok'])) {
+            return $this->error((string)($result['error'] ?? '发送失败'), 422, $result);
+        }
+        $emails = $result['emails'] ?? [];
+        $mailCount = is_array($result['mails'] ?? null) ? count($result['mails']) : count($emails);
+        $msg = 'AI 分析完成，已向 ' . $mailCount . ' 个邮箱发送通知'
+            . ($emails ? ('（' . implode('、', $emails) . '）') : '');
+        return $this->success($result, $msg);
     }
 
     public function tiktokStats(Request $request, string $id): Response

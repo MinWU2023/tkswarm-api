@@ -61,6 +61,86 @@ class PullDataAnalysisService
     }
 
     /**
+     * 账号列表「查看数据」手动触发：入队并立即 AI 分析 + 发信。
+     *
+     * @return array{
+     *   ok:bool,id?:int,status?:string,error?:string,
+     *   emails?:list<string>,mails?:list<array<string,mixed>>,
+     *   skipped?:bool,reason?:string
+     * }
+     */
+    public static function runManualForAccount(int $accountId): array
+    {
+        self::ensureSchema();
+        if ($accountId <= 0) {
+            return ['ok' => false, 'error' => '账号无效'];
+        }
+        if (!MailService::isConfigured()) {
+            return ['ok' => false, 'error' => 'SMTP 未配置，请先在「开发管理 → SMTP 配置」填写发信参数'];
+        }
+
+        $account = DB::selectOne(
+            'SELECT id, username FROM accounts WHERE id=? LIMIT 1',
+            [$accountId]
+        );
+        if (!$account) {
+            return ['ok' => false, 'error' => '账号不存在'];
+        }
+
+        $resolved = PlanTaskRecipientResolver::resolveForAccount($accountId);
+        if (!$resolved['emails']) {
+            return [
+                'ok' => false,
+                'skipped' => true,
+                'reason' => 'no_recipient_email',
+                'error' => '无有效收件邮箱：请为账号绑定用户/企业用户，并在管理用户中填写通知邮箱',
+            ];
+        }
+
+        $payload = self::collectMetricsSnapshot($accountId);
+        $hasDaily = (int)($payload['analytics28d']['totals']['days'] ?? 0) > 0;
+        $hasProfile = !empty($payload['profile']);
+        if (!$hasDaily && !$hasProfile) {
+            return ['ok' => false, 'error' => '暂无可分析数据，请先点击「拉取数据」'];
+        }
+
+        $username = (string)($account['username'] ?? ('#' . $accountId));
+        // 手动任务用负 work_item_id，避免与真实工作项唯一键冲突
+        $manualRef = -((int)(microtime(true) * 1000) % 2000000000);
+        if ($manualRef >= 0) {
+            $manualRef = -1 - abs($manualRef % 1000000000);
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $id = (int)DB::table('plan_tasks')->insert([
+            'type' => self::TYPE,
+            'name' => '手动数据通知 · ' . $username,
+            'status' => 'pending',
+            'account_id' => $accountId,
+            'source_type' => 'manual_view_data',
+            'source_ref_id' => $accountId,
+            'work_item_id' => $manualRef,
+            'batch_id' => 0,
+            'recipients_json' => json_encode($resolved['recipients'], JSON_UNESCAPED_UNICODE),
+            'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
+            'ai_prompt_code' => self::PROMPT_CODE,
+            'mail_template_code' => self::MAIL_CODE,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        if ($id <= 0) {
+            return ['ok' => false, 'error' => '创建计划任务失败'];
+        }
+
+        $result = self::processOne($id, true);
+        $result['emails'] = $resolved['emails'];
+        if (!isset($result['id'])) {
+            $result['id'] = $id;
+        }
+        return $result;
+    }
+
+    /**
      * 工作项完成钩子：仅 pull_stats + completed 时尝试入队。
      *
      * @param array<string,mixed> $item account_work_items 行

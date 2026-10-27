@@ -179,7 +179,8 @@ class NodeBridgeController extends Controller
                 if (!DataScope::isAccountRowVisible($accRow)) {
                     return $this->error('无权操作该浏览器环境（账号不在可见范围）', 403);
                 }
-            } elseif (!DataScope::isSuper() && !DataScope::isOpsAdmin() && !DataScope::isEnterpriseCustomer()) {
+            } elseif (!DataScope::isSuper() && !DataScope::isOpsAdmin()
+                && !DataScope::isEnterpriseCustomer() && !DataScope::isOperator()) {
                 return $this->error('无权绑定未分配环境', 403);
             }
             $asPrimary = (bool)$request->input('asPrimary', $request->input('as_primary', false));
@@ -893,36 +894,41 @@ class NodeBridgeController extends Controller
         if ($profileId === '') {
             return $this->error('缺少 profileId', 422);
         }
-        $filters = ['e.browser_profile_id = ?'];
-        $params = [$profileId];
-        DataScope::applyBrowserEnvListScope($filters, $params, 'e', 'a');
+        // 环境共用：按 profileId 反查「它绑到哪个账号」同样是全局事实。
+        // 若按当前用户的账号可见范围过滤，B 用户打开 A 用户的已绑定环境时这里会返回 null，
+        // Node 端就拿不到绑定账号（无法回写登录状态、无法识别归属）。
         $row = DB::selectOne(
             "SELECT a.id, a.username, a.nickname, e.browser_profile_id, a.login_status, e.saturation,
                     e.browser_backend, e.browser_type, e.owner_user_id,
-                    a.owner_id AS account_owner_id,
+                    a.owner_id AS account_owner_id, a.company_id AS account_company_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM account_browser_envs e
              INNER JOIN accounts a ON a.id=e.account_id
              LEFT JOIN admin_users u ON u.id = COALESCE(NULLIF(e.owner_user_id, 0), a.owner_id)
-             WHERE " . implode(' AND ', $filters) . '
-             LIMIT 1',
-            $params
+             WHERE e.browser_profile_id = ?
+             LIMIT 1",
+            [$profileId]
         );
         if (!$row) {
-            $filters = ['a.browser_profile_id = ?', "TRIM(a.browser_profile_id) <> ''"];
-            $params = [$profileId];
-            DataScope::applyAccountListScope('a.owner_id', $filters, $params);
             $row = DB::selectOne(
                 "SELECT a.id, a.username, a.nickname, a.browser_profile_id, a.login_status,
                         a.browser_backend, a.owner_id AS owner_user_id, a.owner_id AS account_owner_id,
+                        a.company_id AS account_company_id,
                         u.username AS owner_username, u.nickname AS owner_nickname
                  FROM accounts a
                  LEFT JOIN admin_users u ON u.id = a.owner_id
-                 WHERE " . implode(' AND ', $filters) . ' LIMIT 1',
-                $params
+                 WHERE (TRIM(COALESCE(a.browser_profile_id, '')) = ?
+                     OR TRIM(COALESCE(a.tkswarm_browser_profile_id, '')) = ?
+                     OR TRIM(COALESCE(a.linux_browser_profile_id, '')) = ?)
+                 LIMIT 1",
+                [$profileId, $profileId, $profileId]
             );
         }
         if ($row) {
+            $row['shared'] = !DataScope::isAccountRowVisible([
+                'owner_id' => (int)($row['account_owner_id'] ?? 0),
+                'company_id' => (int)($row['account_company_id'] ?? 0),
+            ]);
             $be = \App\Services\AccountBrowserEnvService::normalizeBackend((string)($row['browser_backend'] ?? 'bit'));
             $row['browser_backend'] = $be;
             $row['browser_type'] = $be;
@@ -935,25 +941,25 @@ class NodeBridgeController extends Controller
     /** @param array<string,array<string,mixed>> $map */
     private function mergeLegacyAccountBrowserBindings(array &$map): void
     {
-        $legacyFilters = [
-            "(TRIM(COALESCE(a.browser_profile_id, '')) <> ''
-              OR TRIM(COALESCE(a.tkswarm_browser_profile_id, '')) <> ''
-              OR TRIM(COALESCE(a.linux_browser_profile_id, '')) <> '')",
-        ];
-        $legacyParams = [];
-        DataScope::applyAccountListScope('a.owner_id', $legacyFilters, $legacyParams);
+        // 同样按「全局事实」处理：老版本只在 accounts 表上记了环境 ID 的绑定也要全量返回，
+        // 否则 B 用户看不到 A 用户的历史绑定，会被当成孤儿环境。
         $legacy = DB::select(
-            "SELECT a.id, a.username, a.nickname, a.owner_id, a.browser_backend,
+            "SELECT a.id, a.username, a.nickname, a.owner_id, a.company_id, a.browser_backend,
                     a.browser_profile_id, a.tkswarm_browser_profile_id, a.linux_browser_profile_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM accounts a
              LEFT JOIN admin_users u ON u.id = a.owner_id
-             WHERE " . implode(' AND ', $legacyFilters),
-            $legacyParams
+             WHERE (TRIM(COALESCE(a.browser_profile_id, '')) <> ''
+                OR TRIM(COALESCE(a.tkswarm_browser_profile_id, '')) <> ''
+                OR TRIM(COALESCE(a.linux_browser_profile_id, '')) <> '')"
         ) ?: [];
         foreach ($legacy as $r) {
             $ownerName = trim((string)(($r['owner_nickname'] ?? '') !== '' ? $r['owner_nickname'] : ($r['owner_username'] ?? '')));
             $ownerId = (int)($r['owner_id'] ?? 0);
+            $shared = !DataScope::isAccountRowVisible([
+                'owner_id' => $ownerId,
+                'company_id' => (int)($r['company_id'] ?? 0),
+            ]);
             $pairs = [
                 ['profile' => trim((string)($r['browser_profile_id'] ?? '')), 'backend' => (string)($r['browser_backend'] ?? 'bit'), 'primary' => 1],
                 ['profile' => trim((string)($r['tkswarm_browser_profile_id'] ?? '')), 'backend' => 'tkswarm', 'primary' => 0],
@@ -979,6 +985,9 @@ class NodeBridgeController extends Controller
                     'owner_username' => (string)($r['owner_username'] ?? ''),
                     'owner_nickname' => (string)($r['owner_nickname'] ?? ''),
                     'owner_label' => $ownerName !== '' ? $ownerName : '-',
+                    'account_owner_id' => $ownerId,
+                    'shared' => $shared,
+                    'locked' => $shared,
                 ];
             }
         }
@@ -988,30 +997,40 @@ class NodeBridgeController extends Controller
     {
         DataScope::ensureColumns();
         \App\Services\AccountBrowserEnvService::backfillFromAccounts();
-        $filters = ['1=1'];
-        $params = [];
-        DataScope::applyBrowserEnvListScope($filters, $params, 'e', 'a');
+        // 环境共用：环境 ↔ 账号的绑定关系是「全局事实」，绝不能按当前用户的账号可见范围过滤。
+        // 否则 B 用户登录后查不到 A 用户已绑定的环境，Node 端会把这些环境当孤儿窗
+        // （applyBrowserProfileScope 只保留 row.account 的行）直接过滤掉，甚至误判可删。
+        // 这里返回全量绑定；账号不在本人可见范围的行用 shared/locked 标记，供前端显示「他人账号」。
         $rows = DB::select(
             "SELECT e.browser_profile_id, e.saturation, e.is_primary, e.account_id AS id,
                     e.browser_backend, e.browser_type, e.owner_user_id,
                     a.username, a.nickname, a.owner_id AS account_owner_id,
+                    a.company_id AS account_company_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM account_browser_envs e
              INNER JOIN accounts a ON a.id=e.account_id
-             LEFT JOIN admin_users u ON u.id = COALESCE(NULLIF(e.owner_user_id, 0), a.owner_id)
-             WHERE " . implode(' AND ', $filters),
-            $params
+             LEFT JOIN admin_users u ON u.id = COALESCE(NULLIF(e.owner_user_id, 0), a.owner_id)"
         ) ?: [];
         $map = [];
         foreach ($rows as $r) {
+            $pid = trim((string)($r['browser_profile_id'] ?? ''));
+            if ($pid === '') {
+                continue;
+            }
             $be = \App\Services\AccountBrowserEnvService::normalizeBackend((string)($r['browser_backend'] ?? 'bit'));
             $ownerId = (int)($r['owner_user_id'] ?: $r['account_owner_id'] ?: 0);
             $ownerName = trim((string)(($r['owner_nickname'] ?? '') !== '' ? $r['owner_nickname'] : ($r['owner_username'] ?? '')));
-            $map[(string)$r['browser_profile_id']] = [
+            // 账号不在本人可见范围 = 他人账号：仍然返回绑定事实（B 必须知道这个环境被谁占了、不能删），
+            // 但打上 shared 标记，前端可显示「他人账号」并提示这是共用环境。
+            $shared = !DataScope::isAccountRowVisible([
+                'owner_id' => (int)($r['account_owner_id'] ?? 0),
+                'company_id' => (int)($r['account_company_id'] ?? 0),
+            ]);
+            $map[$pid] = [
                 'id' => (int)$r['id'],
                 'username' => $r['username'] ?? '',
                 'nickname' => $r['nickname'] ?? '',
-                'browser_profile_id' => $r['browser_profile_id'],
+                'browser_profile_id' => $pid,
                 'saturation' => $r['saturation'] ?? 'idle',
                 'is_primary' => (int)($r['is_primary'] ?? 0),
                 'browser_backend' => $be,
@@ -1021,6 +1040,9 @@ class NodeBridgeController extends Controller
                 'owner_username' => (string)($r['owner_username'] ?? ''),
                 'owner_nickname' => (string)($r['owner_nickname'] ?? ''),
                 'owner_label' => $ownerName !== '' ? $ownerName : '-',
+                'account_owner_id' => (int)($r['account_owner_id'] ?? 0),
+                'shared' => $shared,
+                'locked' => $shared,
             ];
         }
         $this->mergeLegacyAccountBrowserBindings($map);
@@ -1062,29 +1084,30 @@ class NodeBridgeController extends Controller
             return $this->error('缺少 profileId', 422);
         }
 
+        // 环境共用（关键）：本接口是自研/服务器浏览器「开窗前按 profileId 补全该环境所绑账号的代理账密」，
+        // 属于浏览器服务的内部调用。调用方已通过登录鉴权，profileId 是随机 UUID，
+        // 返回的也只是「这个环境自己那条代理」，因此绝不能再用「当前登录用户能看见哪些账号」过滤：
+        //   · B 用户登录自研浏览器、打开 A 用户创建并绑定的环境 → 查不到账号 → hasProxy:false
+        //   · SOCKS 账密缺失后开窗代理认证失败，表现就是「A 的环境 B 用不了」
         $accountId = 0;
-        $envFilters = ['e.browser_profile_id = ?'];
-        $envParams = [$profileId];
-        DataScope::applyBrowserEnvListScope($envFilters, $envParams, 'e', 'a');
         $bound = DB::selectOne(
             'SELECT a.id FROM account_browser_envs e
              INNER JOIN accounts a ON a.id = e.account_id
-             WHERE ' . implode(' AND ', $envFilters) . ' LIMIT 1',
-            $envParams
+             WHERE e.browser_profile_id = ? LIMIT 1',
+            [$profileId]
         );
         if ($bound) {
             $accountId = (int)($bound['id'] ?? 0);
         }
 
         if ($accountId < 1) {
-            $legacyFilters = [
-                '(TRIM(a.tkswarm_browser_profile_id) = ? OR TRIM(a.browser_profile_id) = ? OR TRIM(a.linux_browser_profile_id) = ?)',
-            ];
-            $legacyParams = [$profileId, $profileId, $profileId];
-            DataScope::applyAccountListScope('a.owner_id', $legacyFilters, $legacyParams);
             $legacy = DB::selectOne(
-                'SELECT a.id FROM accounts a WHERE ' . implode(' AND ', $legacyFilters) . ' LIMIT 1',
-                $legacyParams
+                'SELECT a.id FROM accounts a
+                 WHERE (TRIM(a.tkswarm_browser_profile_id) = ?
+                     OR TRIM(a.browser_profile_id) = ?
+                     OR TRIM(a.linux_browser_profile_id) = ?)
+                 LIMIT 1',
+                [$profileId, $profileId, $profileId]
             );
             if ($legacy) {
                 $accountId = (int)($legacy['id'] ?? 0);
@@ -1096,15 +1119,15 @@ class NodeBridgeController extends Controller
         }
 
         $row = DB::selectOne(
-            'SELECT a.id AS account_id, a.proxy_id,
+            'SELECT a.id AS account_id, a.proxy_id, a.owner_id, a.company_id,
                     p.protocol, p.host, p.port, p.username, p.password, p.password_encrypted
              FROM accounts a
              LEFT JOIN proxies p ON p.id = a.proxy_id
              WHERE a.id = ?',
             [$accountId]
         );
-        if ($err = $this->assertNodeAccountRow($row)) {
-            return $err;
+        if (!$row) {
+            return $this->success(['hasProxy' => false, 'account_id' => null]);
         }
         if (!$row || trim((string)($row['host'] ?? '')) === '') {
             return $this->success([
