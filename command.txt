@@ -1,0 +1,14 @@
+php artisan warm:recurring
+0 * * * * cd /path/to/tkswarm-api && php artisan warm:recurring >> /var/log/tkswarm-warm-recurring.log 2>&1
+
+php artisan ai-lead:daily-quota
+5 0 * * * cd /path/to/tkswarm-api && php artisan ai-lead:daily-quota >> /var/log/tkswarm-ai-lead-quota.log 2>&1
+
+php artisan ai-lead:dm-dispatch
+* * * * * cd /path/to/tkswarm-api && php artisan ai-lead:dm-dispatch >> /var/log/tkswarm-ai-lead-dm.log 2>&1
+
+php artisan ai-lead:backfill-video-activation
+php artisan ai-lead:backfill-video-activation --limit=2000
+
+php artisan ai-lead:sync-stats
+php artisan ai-lead:sync-stats --limit=500

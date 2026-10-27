@@ -1,0 +1,38 @@
+# Nginx 站点配置示例：tkswarm-api.dyyweb.com
+# 网站根目录必须指向 tkswarm-api/public
+
+server {
+    listen 80;
+    server_name tkswarm-api.dyyweb.com;
+    root /www/wwwroot/tkswarm-api.dyyweb.com/public;
+    # 若代码直接解压在站点根且含 public 子目录，请改成真实 public 绝对路径
+    index index.php index.html;
+    charset utf-8;
+    client_max_body_size 100m;
+
+    # 跨域（always 保证 404/500 也带上）
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Acting-As" always;
+    add_header Access-Control-Max-Age 86400 always;
+    add_header Vary Origin always;
+
+    location / {
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/tmp/php-cgi-82.sock;  # 按宝塔实际 PHP 版本修改
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}

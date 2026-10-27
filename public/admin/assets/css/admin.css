@@ -1,0 +1,155 @@
+:root {
+  --bg0: #f3f7ff;
+  --bg1: #eaf2ff;
+  --card: rgba(255, 255, 255, 0.86);
+  --line: rgba(37, 99, 235, 0.12);
+  --primary: #2563eb;
+  --shadow: 0 18px 50px rgba(37, 99, 235, 0.08);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+.admin-body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: #0f172a;
+  background:
+    radial-gradient(900px 420px at 8% -10%, rgba(59, 130, 246, 0.18), transparent 55%),
+    radial-gradient(700px 380px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 50%),
+    linear-gradient(165deg, var(--bg0), var(--bg1) 45%, #f8fbff);
+  min-height: 100%;
+}
+
+.glass-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.login-shell {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-panel {
+  width: min(420px, 100%);
+  padding: 36px 32px 28px;
+}
+.login-brand {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 22px;
+}
+.brand-logo,
+.login-mark {
+  width: 44px; height: 44px; border-radius: 12px;
+  object-fit: cover; display: block; flex-shrink: 0;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18);
+}
+.brand-logo.brand-mark {
+  width: 36px; height: 36px; border-radius: 10px;
+  object-fit: contain; background: #fff;
+}
+.brand-logo.brand-logo-wide {
+  width: auto; height: 48px; max-width: 200px;
+  border-radius: 0; object-fit: contain;
+  box-shadow: none; background: transparent;
+}
+.login-brand .brand-logo-wide {
+  height: 52px; max-width: 220px;
+}
+.login-title { font-size: 22px; font-weight: 750; letter-spacing: .02em;
+  background: linear-gradient(90deg, #0b2a55, #2563eb 60%, #0891b2);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.login-sub { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  height: 100%;
+  min-height: 100vh;
+}
+.side {
+  padding: 18px 14px;
+  border-right: 1px solid var(--line);
+  background: rgba(255,255,255,.72);
+  backdrop-filter: blur(16px);
+}
+.side-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 18px;
+}
+.side-brand .brand-logo,
+.side-brand .login-mark {
+  width: 36px; height: 36px; border-radius: 10px;
+}
+.side-nav .el-menu {
+  border-right: none !important;
+  background: transparent !important;
+}
+.side-nav .el-menu-item {
+  border-radius: 12px !important;
+  margin: 4px 0 !important;
+  height: 44px !important;
+}
+.side-nav .el-menu-item.is-active {
+  background: linear-gradient(135deg, rgba(37,99,235,.12), rgba(14,165,233,.1)) !important;
+  color: #1d4ed8 !important;
+  font-weight: 650;
+}
+.main-wrap { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: 60px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 22px; border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,.65); backdrop-filter: blur(12px);
+}
+.content { padding: 20px 22px 28px; overflow: auto; flex: 1; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.stat-card {
+  padding: 18px 16px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #fff, #f8fbff);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 28px rgba(37,99,235,.06);
+}
+.stat-card .label { font-size: 12px; color: #64748b; }
+.stat-card .value { font-size: 28px; font-weight: 750; margin-top: 6px; color: #0f172a; }
+.stat-card .hint { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+  margin-bottom: 14px;
+}
+.page-head h2 { margin: 0; font-size: 20px; font-weight: 720; }
+.page-head p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
+
+.panel {
+  background: rgba(255,255,255,.88);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 12px 30px rgba(37,99,235,.05);
+}
+
+.captcha-box {
+  display: flex; gap: 10px; align-items: center;
+}
+.captcha-box img {
+  height: 40px; border-radius: 8px; cursor: pointer;
+  border: 1px solid #e2e8f0; background: #f8fafc;
+}
+
+@media (max-width: 1100px) {
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  .side { display: none; }
+}

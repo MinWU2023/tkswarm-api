@@ -1,0 +1,717 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Database\DB;
+
+/**
+ * 账号 ↔ 浏览器环境多绑定 + 饱和态租约。
+ * 类型：bit（比特）/ tkswarm（自研桌面）/ linux（Linux Browser）。
+ * 登录用户：tkswarm-api admin_users（两浏览器通用）。
+ * idle=待使用 / busy=执行中（总任务占用）。
+ */
+class AccountBrowserEnvService
+{
+    /** @return 'bit'|'tkswarm'|'linux' */
+    public static function normalizeBackend(string $raw): string
+    {
+        $v = strtolower(trim($raw));
+        if ($v === 'linux' || $v === 'tkswarm-linux' || $v === 'tkswarm-linuxbrowse') {
+            return 'linux';
+        }
+        if ($v === 'tkswarm' || $v === 'tkswarm-browses' || $v === 'desktop') {
+            return 'tkswarm';
+        }
+        return 'bit';
+    }
+
+    public static function backendLabel(string $backend): string
+    {
+        return match (self::normalizeBackend($backend)) {
+            'linux' => 'Linux Browser',
+            'tkswarm' => '第一页自研浏览器',
+            default => '比特浏览器',
+        };
+    }
+
+    public static function ensureSchema(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+
+        DB::query(
+            "CREATE TABLE IF NOT EXISTS account_browser_envs (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              account_id INT NOT NULL,
+              owner_user_id INT NOT NULL DEFAULT 0,
+              browser_type VARCHAR(32) NOT NULL DEFAULT 'bit',
+              browser_backend VARCHAR(16) NOT NULL DEFAULT 'bit',
+              browser_profile_id VARCHAR(128) NOT NULL,
+              saturation VARCHAR(16) NOT NULL DEFAULT 'idle',
+              locked_by VARCHAR(128) NOT NULL DEFAULT '',
+              batch_id INT NULL,
+              lease_until DATETIME NULL,
+              label VARCHAR(64) NOT NULL DEFAULT '',
+              is_primary TINYINT NOT NULL DEFAULT 0,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              UNIQUE KEY uk_abe_profile (browser_profile_id),
+              KEY idx_abe_account_sat (account_id, saturation),
+              KEY idx_abe_lease (saturation, lease_until),
+              KEY idx_abe_owner (owner_user_id),
+              KEY idx_abe_backend (browser_backend)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM account_work_batches') ?: [], 'Field');
+            if (!in_array('browser_env_id', $cols, true)) {
+                DB::query('ALTER TABLE account_work_batches ADD COLUMN browser_env_id INT NULL AFTER account_id');
+            }
+        } catch (\Throwable $e) {
+        }
+
+        // 增量列：env / accounts
+        try {
+            $envCols = array_column(DB::select('SHOW COLUMNS FROM account_browser_envs') ?: [], 'Field');
+            if (!in_array('browser_backend', $envCols, true)) {
+                DB::query("ALTER TABLE account_browser_envs ADD COLUMN browser_backend VARCHAR(16) NOT NULL DEFAULT 'bit' AFTER browser_type");
+            }
+            if (!in_array('owner_user_id', $envCols, true)) {
+                DB::query("ALTER TABLE account_browser_envs ADD COLUMN owner_user_id INT NOT NULL DEFAULT 0 AFTER account_id");
+            }
+        } catch (\Throwable $e) {
+        }
+        try {
+            $accCols = array_column(DB::select('SHOW COLUMNS FROM accounts') ?: [], 'Field');
+            if (!in_array('browser_backend', $accCols, true)) {
+                DB::query("ALTER TABLE accounts ADD COLUMN browser_backend VARCHAR(16) NOT NULL DEFAULT 'bit' AFTER browser_profile_id");
+            }
+            if (!in_array('tkswarm_browser_profile_id', $accCols, true)) {
+                DB::query("ALTER TABLE accounts ADD COLUMN tkswarm_browser_profile_id VARCHAR(128) NOT NULL DEFAULT '' AFTER browser_backend");
+            }
+            if (!in_array('linux_browser_profile_id', $accCols, true)) {
+                DB::query("ALTER TABLE accounts ADD COLUMN linux_browser_profile_id VARCHAR(128) NOT NULL DEFAULT '' AFTER tkswarm_browser_profile_id");
+            }
+        } catch (\Throwable $e) {
+        }
+
+        self::backfillFromAccounts();
+    }
+
+    /** 从 accounts 旧列同步到 account_browser_envs（每次列表前可安全调用） */
+    public static function backfillFromAccounts(): void
+    {
+        self::ensureSchema();
+        try {
+            DB::query(
+                "INSERT IGNORE INTO account_browser_envs (account_id, owner_user_id, browser_profile_id, is_primary, saturation, browser_backend, browser_type)
+                 SELECT id, COALESCE(owner_id, 0), browser_profile_id, 1, 'idle',
+                        COALESCE(NULLIF(browser_backend,''), 'bit'),
+                        COALESCE(NULLIF(browser_backend,''), 'bit')
+                 FROM accounts
+                 WHERE browser_profile_id IS NOT NULL AND TRIM(browser_profile_id) <> ''"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            $accCols = array_column(DB::select('SHOW COLUMNS FROM accounts') ?: [], 'Field');
+            if (in_array('tkswarm_browser_profile_id', $accCols, true)) {
+                DB::query(
+                    "INSERT IGNORE INTO account_browser_envs (account_id, owner_user_id, browser_profile_id, is_primary, saturation, browser_backend, browser_type)
+                     SELECT id, COALESCE(owner_id, 0), tkswarm_browser_profile_id, 0, 'idle', 'tkswarm', 'tkswarm'
+                     FROM accounts
+                     WHERE tkswarm_browser_profile_id IS NOT NULL AND TRIM(tkswarm_browser_profile_id) <> ''"
+                );
+            }
+            if (in_array('linux_browser_profile_id', $accCols, true)) {
+                DB::query(
+                    "INSERT IGNORE INTO account_browser_envs (account_id, owner_user_id, browser_profile_id, is_primary, saturation, browser_backend, browser_type)
+                     SELECT id, COALESCE(owner_id, 0), linux_browser_profile_id, 0, 'idle', 'linux', 'linux'
+                     FROM accounts
+                     WHERE linux_browser_profile_id IS NOT NULL AND TRIM(linux_browser_profile_id) <> ''"
+                );
+            }
+        } catch (\Throwable $e) {
+        }
+        try {
+            DB::query(
+                "UPDATE account_browser_envs e
+                 INNER JOIN accounts a ON a.id = e.account_id
+                 SET e.owner_user_id = COALESCE(a.owner_id, 0)
+                 WHERE e.owner_user_id = 0 AND a.owner_id IS NOT NULL AND a.owner_id > 0"
+            );
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /** @return list<array<string,mixed>> */
+    public static function listByAccount(int $accountId): array
+    {
+        self::ensureSchema();
+        return DB::select(
+            'SELECT * FROM account_browser_envs WHERE account_id=? ORDER BY is_primary DESC, id ASC',
+            [$accountId]
+        ) ?: [];
+    }
+
+    /**
+     * 各后端已绑环境 ID 列表（新 → 旧），供 Node 在旧环境已删时自动换用再绑的新环境。
+     *
+     * @return array{bit:list<string>,tkswarm:list<string>,linux:list<string>}
+     */
+    public static function listProfileIdsByBackend(int $accountId): array
+    {
+        self::ensureSchema();
+        $out = ['bit' => [], 'tkswarm' => [], 'linux' => []];
+        $rows = DB::select(
+            'SELECT browser_backend, browser_profile_id FROM account_browser_envs WHERE account_id=? ORDER BY id DESC',
+            [$accountId]
+        ) ?: [];
+        foreach ($rows as $row) {
+            $b = self::normalizeBackend((string)($row['browser_backend'] ?? ''));
+            $pid = trim((string)($row['browser_profile_id'] ?? ''));
+            if ($pid === '' || !isset($out[$b])) {
+                continue;
+            }
+            $out[$b][] = $pid;
+        }
+
+        return $out;
+    }
+
+    /**
+     * 从 account_browser_envs + accounts 分类型列汇总各后端「当前默认」环境 ID。
+     * 再绑追加时优先用该后端最新一条（id 最大），避免仍指向已删的旧环境。
+     *
+     * @return array{bit:string,tkswarm:string,linux:string,env_count:int}
+     */
+    public static function resolveTypedProfileIds(int $accountId): array
+    {
+        self::ensureSchema();
+        $acc = DB::selectOne(
+            'SELECT browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id FROM accounts WHERE id=?',
+            [$accountId]
+        ) ?: [];
+        $lists = self::listProfileIdsByBackend($accountId);
+        $out = [
+            'bit' => $lists['bit'][0] ?? '',
+            'tkswarm' => $lists['tkswarm'][0] ?? '',
+            'linux' => $lists['linux'][0] ?? '',
+        ];
+        // 账号主绑行：仅在该后端尚无 env 行时回退主列
+        $be = self::normalizeBackend((string)($acc['browser_backend'] ?? ''));
+        $primary = trim((string)($acc['browser_profile_id'] ?? ''));
+        if ($out['bit'] === '' && $be === 'bit' && $primary !== '') {
+            $out['bit'] = $primary;
+        }
+        if ($out['tkswarm'] === '') {
+            $out['tkswarm'] = trim((string)($acc['tkswarm_browser_profile_id'] ?? ''));
+        }
+        if ($out['linux'] === '') {
+            $out['linux'] = trim((string)($acc['linux_browser_profile_id'] ?? ''));
+        }
+        $envCount = (int)(DB::selectOne(
+            'SELECT COUNT(*) AS c FROM account_browser_envs WHERE account_id=?',
+            [$accountId]
+        )['c'] ?? 0);
+
+        return [
+            'bit' => $out['bit'],
+            'tkswarm' => $out['tkswarm'],
+            'linux' => $out['linux'],
+            'env_count' => $envCount,
+        ];
+    }
+
+    /**
+     * 绑定环境到账号（同一 profile 全局唯一；账号可绑多个）。
+     * @param string $browserBackend bit|tkswarm|linux
+     * @return array<string,mixed>
+     */
+    public static function bind(
+        int $accountId,
+        string $profileId,
+        bool $asPrimary = false,
+        string $label = '',
+        string $browserBackend = 'bit'
+    ): array {
+        self::ensureSchema();
+        $profileId = trim($profileId);
+        $backend = self::normalizeBackend($browserBackend);
+        if ($accountId < 1 || $profileId === '') {
+            throw new \InvalidArgumentException('账号或环境 ID 无效');
+        }
+        $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
+        if (!$acc) {
+            throw new \InvalidArgumentException('账号不存在');
+        }
+        $ownerUserId = DataScope::resolveBrowserEnvOwnerUserId((int)($acc['owner_id'] ?? 0));
+
+        $taken = DB::selectOne(
+            'SELECT id, account_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
+            [$profileId]
+        );
+        if ($taken && (int)$taken['account_id'] !== $accountId) {
+            throw new \RuntimeException('该环境已绑定其他账号 #' . (int)$taken['account_id']);
+        }
+        if ($taken && (int)$taken['account_id'] === $accountId) {
+            DB::query(
+                'UPDATE account_browser_envs SET browser_backend=?, browser_type=?, owner_user_id=?, label=COALESCE(NULLIF(?, ""), label), updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$backend, $backend, $ownerUserId, $label, (int)$taken['id']]
+            );
+            if ($asPrimary) {
+                DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
+                DB::query('UPDATE account_browser_envs SET is_primary=1 WHERE id=?', [(int)$taken['id']]);
+                self::syncAccountPrimaryColumns($accountId, $profileId, $backend);
+            } else {
+                self::syncTypedProfileColumn($accountId, $profileId, $backend);
+            }
+            return DB::selectOne('SELECT * FROM account_browser_envs WHERE id=?', [(int)$taken['id']]) ?: $taken;
+        }
+
+        $count = (int)(DB::selectOne(
+            'SELECT COUNT(*) AS c FROM account_browser_envs WHERE account_id=?',
+            [$accountId]
+        )['c'] ?? 0);
+        $isPrimary = $asPrimary || $count === 0 ? 1 : 0;
+        if ($isPrimary) {
+            DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
+        }
+
+        DB::query(
+            "INSERT INTO account_browser_envs
+             (account_id, owner_user_id, browser_type, browser_backend, browser_profile_id, saturation, label, is_primary)
+             VALUES (?, ?, ?, ?, ?, 'idle', ?, ?)",
+            [$accountId, $ownerUserId, $backend, $backend, $profileId, $label, $isPrimary]
+        );
+        $id = (int)DB::getPdo()->lastInsertId();
+
+        if ($isPrimary) {
+            self::syncAccountPrimaryColumns($accountId, $profileId, $backend);
+        } else {
+            self::syncTypedProfileColumn($accountId, $profileId, $backend);
+        }
+
+        return DB::selectOne('SELECT * FROM account_browser_envs WHERE id=?', [$id]) ?: [
+            'id' => $id,
+            'account_id' => $accountId,
+            'owner_user_id' => $ownerUserId,
+            'browser_profile_id' => $profileId,
+            'browser_backend' => $backend,
+            'browser_type' => $backend,
+        ];
+    }
+
+    /** 非主绑定时更新分类型列：指向该后端当前使用的环境（account_browser_envs 仍保留全部历史行） */
+    private static function syncTypedProfileColumn(int $accountId, string $profileId, string $backend): void
+    {
+        $col = self::typedColumn($backend);
+        if ($col === '') {
+            return;
+        }
+        DB::query(
+            "UPDATE accounts SET {$col}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [$profileId, $accountId]
+        );
+    }
+
+    /** 主环境同步到 accounts 旧列 + 分类型列 */
+    private static function syncAccountPrimaryColumns(int $accountId, string $profileId, string $backend): void
+    {
+        $backend = self::normalizeBackend($backend);
+        $hasBit = (bool)DB::selectOne(
+            "SELECT 1 AS ok FROM account_browser_envs WHERE account_id=? AND browser_backend='bit' LIMIT 1",
+            [$accountId]
+        );
+        if ($backend === 'tkswarm') {
+            if ($hasBit) {
+                // 已有比特环境：只切执行后端到自研，不覆盖 browser_profile_id（比特 ID 仍保留）
+                DB::query(
+                    "UPDATE accounts SET browser_type='tkswarm', browser_backend='tkswarm',
+                     tkswarm_browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    [$profileId, $accountId]
+                );
+                return;
+            }
+            DB::query(
+                "UPDATE accounts SET browser_type='tkswarm', browser_backend='tkswarm',
+                 browser_profile_id=?, tkswarm_browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [$profileId, $profileId, $accountId]
+            );
+            return;
+        }
+        if ($backend === 'linux') {
+            $hasOther = (bool)DB::selectOne(
+                "SELECT 1 AS ok FROM account_browser_envs WHERE account_id=? AND browser_backend IN ('bit','tkswarm') LIMIT 1",
+                [$accountId]
+            );
+            if ($hasOther) {
+                DB::query(
+                    "UPDATE accounts SET browser_type='linux', browser_backend='linux',
+                     linux_browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    [$profileId, $accountId]
+                );
+                return;
+            }
+            DB::query(
+                "UPDATE accounts SET browser_type='linux', browser_backend='linux',
+                 browser_profile_id=?, linux_browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [$profileId, $profileId, $accountId]
+            );
+            return;
+        }
+        DB::query(
+            "UPDATE accounts SET browser_type='bit', browser_backend='bit',
+             browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [$profileId, $accountId]
+        );
+    }
+
+    /** 后端对应的分类型环境列 */
+    private static function typedColumn(string $backend): string
+    {
+        return match (self::normalizeBackend($backend)) {
+            'tkswarm' => 'tkswarm_browser_profile_id',
+            'linux' => 'linux_browser_profile_id',
+            default => '',
+        };
+    }
+
+    /**
+     * 编辑账号时按所选后端落位环境绑定：
+     * - accounts：browser_type / browser_backend / browser_profile_id + 该后端分类型列
+     * - account_browser_envs：该后端的主环境记录（其他后端不受影响）
+     * 不校验环境是否真实存在于对应客户端（前端选择 + Node 侧创建/绑定保证）。
+     *
+     * @return array{browser_backend:string,browser_profile_id:string,typed_column:string}
+     */
+    public static function applyAccountBackend(int $accountId, string $backend, string $profileId): array
+    {
+        self::ensureSchema();
+        $backend = self::normalizeBackend($backend);
+        $profileId = trim($profileId);
+        $acc = $accountId > 0 ? DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]) : null;
+        if (!$acc) {
+            throw new \InvalidArgumentException('账号不存在');
+        }
+        $col = self::typedColumn($backend);
+
+        $taken = $profileId === '' ? null : DB::selectOne(
+            'SELECT id, account_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
+            [$profileId]
+        );
+        if ($taken && (int)$taken['account_id'] !== $accountId) {
+            throw new \RuntimeException('环境 ' . $profileId . ' 已绑定账号 #' . (int)$taken['account_id']);
+        }
+
+        // 1) accounts 主列按后端落位
+        $sets = ['browser_type=?', 'browser_backend=?', 'browser_profile_id=?'];
+        $args = [$backend, $backend, $profileId];
+        if ($col !== '') {
+            $sets[] = $col . '=?';
+            $args[] = $profileId;
+        }
+        $args[] = $accountId;
+        DB::query(
+            'UPDATE accounts SET ' . implode(', ', $sets) . ', updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            $args
+        );
+
+        // 2) 只有「清空环境 ID」时才移除该后端记录；指定环境时保留该后端其他环境（支持一账号多环境）
+        if ($profileId === '') {
+            DB::query(
+                'DELETE FROM account_browser_envs WHERE account_id=? AND browser_backend=?',
+                [$accountId, $backend]
+            );
+        }
+
+        if ($profileId !== '') {
+            $ownerUserId = DataScope::resolveBrowserEnvOwnerUserId((int)($acc['owner_id'] ?? 0));
+            DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
+            if ($taken) {
+                DB::query(
+                    'UPDATE account_browser_envs
+                     SET browser_backend=?, browser_type=?, owner_user_id=?, is_primary=1, updated_at=CURRENT_TIMESTAMP
+                     WHERE id=?',
+                    [$backend, $backend, $ownerUserId, (int)$taken['id']]
+                );
+            } else {
+                DB::query(
+                    "INSERT INTO account_browser_envs
+                     (account_id, owner_user_id, browser_type, browser_backend, browser_profile_id, saturation, label, is_primary)
+                     VALUES (?, ?, ?, ?, ?, 'idle', '', 1)",
+                    [$accountId, $ownerUserId, $backend, $backend, $profileId]
+                );
+            }
+        } else {
+            // 该后端已无环境：主环境让给仍然存在的其他后端环境
+            $first = DB::selectOne(
+                'SELECT id FROM account_browser_envs WHERE account_id=? ORDER BY is_primary DESC, id ASC LIMIT 1',
+                [$accountId]
+            );
+            if ($first) {
+                DB::query('UPDATE account_browser_envs SET is_primary=1 WHERE id=?', [(int)$first['id']]);
+            }
+        }
+
+        return ['browser_backend' => $backend, 'browser_profile_id' => $profileId, 'typed_column' => $col];
+    }
+
+    /** 解绑：可按 profile 或清空该账号全部 */
+    public static function unbind(int $accountId, ?string $profileId = null): void
+    {
+        self::ensureSchema();
+        if ($profileId !== null && trim($profileId) !== '') {
+            DB::query(
+                'DELETE FROM account_browser_envs WHERE account_id=? AND browser_profile_id=?',
+                [$accountId, trim($profileId)]
+            );
+        } else {
+            DB::query('DELETE FROM account_browser_envs WHERE account_id=?', [$accountId]);
+        }
+
+        $primary = DB::selectOne(
+            "SELECT browser_profile_id, browser_backend FROM account_browser_envs
+             WHERE account_id=? ORDER BY is_primary DESC, id ASC LIMIT 1",
+            [$accountId]
+        );
+        $primaryBackend = self::normalizeBackend((string)($primary['browser_backend'] ?? 'bit'));
+        $primaryId = (string)($primary['browser_profile_id'] ?? '');
+        if ($primaryId !== '') {
+            self::syncAccountPrimaryColumns($accountId, $primaryId, $primaryBackend);
+            DB::query(
+                'UPDATE account_browser_envs SET is_primary=1 WHERE account_id=? AND browser_profile_id=?',
+                [$accountId, $primaryId]
+            );
+        } else {
+            DB::query(
+                "UPDATE accounts SET browser_profile_id='', browser_backend='bit', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [$accountId]
+            );
+        }
+        // 刷新分类型列：解绑后保留仍存在的该类型环境
+        if ($profileId !== null && trim($profileId) !== '') {
+            foreach (['tkswarm' => 'tkswarm_browser_profile_id', 'linux' => 'linux_browser_profile_id'] as $be => $col) {
+                $still = DB::selectOne(
+                    "SELECT browser_profile_id FROM account_browser_envs
+                     WHERE account_id=? AND browser_backend=?
+                     ORDER BY is_primary DESC, id ASC LIMIT 1",
+                    [$accountId, $be]
+                );
+                DB::query(
+                    "UPDATE accounts SET {$col}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    [(string)($still['browser_profile_id'] ?? ''), $accountId]
+                );
+            }
+        }
+    }
+
+    /**
+     * 领取一个空闲环境；无空闲返回 null。
+     * @param string|null $preferredBackend bit|tkswarm|linux
+     * @return array<string,mixed>|null
+     */
+    public static function leaseEnv(
+        int $accountId,
+        int $batchId,
+        string $workerId,
+        int $leaseSeconds = 300,
+        ?string $preferredBackend = null
+    ): ?array {
+        self::ensureSchema();
+        self::reclaimExpiredEnvLeases();
+
+        $prefer = strtolower(trim((string)$preferredBackend));
+        if ($prefer === 'linux' || $prefer === 'tkswarm' || $prefer === 'bit') {
+            $prefer = self::normalizeBackend($prefer);
+        } else {
+            $prefer = '';
+        }
+
+        if ($prefer !== '') {
+            $env = DB::selectOne(
+                "SELECT * FROM account_browser_envs
+                 WHERE account_id=? AND saturation='idle' AND browser_backend=?
+                 ORDER BY is_primary DESC, id ASC
+                 LIMIT 1",
+                [$accountId, $prefer]
+            );
+            if (!$env) {
+                // 任务指定了后端但无对应空闲环境：不回落到另一后端，避免错开浏览器
+                return null;
+            }
+        } else {
+            $env = DB::selectOne(
+                "SELECT * FROM account_browser_envs
+                 WHERE account_id=? AND saturation='idle'
+                 ORDER BY is_primary DESC, id ASC
+                 LIMIT 1",
+                [$accountId]
+            );
+        }
+        if (!$env) {
+            return null;
+        }
+
+        $leaseUntil = date('Y-m-d H:i:s', time() + max(60, $leaseSeconds));
+        DB::query(
+            "UPDATE account_browser_envs
+             SET saturation='busy',
+                 locked_by=?,
+                 batch_id=?,
+                 lease_until=?,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE id=? AND saturation='idle'",
+            [$workerId, $batchId, $leaseUntil, (int)$env['id']]
+        );
+        $fresh = DB::selectOne('SELECT * FROM account_browser_envs WHERE id=?', [(int)$env['id']]);
+        if (!$fresh || ($fresh['saturation'] ?? '') !== 'busy' || ($fresh['locked_by'] ?? '') !== $workerId) {
+            return null;
+        }
+
+        DB::query(
+            'UPDATE account_work_batches SET browser_env_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [(int)$fresh['id'], $batchId]
+        );
+
+        // 会话期内把旧列指到本次租用环境，便于 Node 现有读 bundle 逻辑
+        DB::query(
+            "UPDATE accounts SET browser_profile_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [(string)$fresh['browser_profile_id'], $accountId]
+        );
+
+        return $fresh;
+    }
+
+    public static function renewEnvLease(int $batchId, string $workerId, int $leaseSeconds = 300): void
+    {
+        self::ensureSchema();
+        $leaseUntil = date('Y-m-d H:i:s', time() + max(60, $leaseSeconds));
+        DB::query(
+            "UPDATE account_browser_envs
+             SET lease_until=?, updated_at=CURRENT_TIMESTAMP
+             WHERE batch_id=? AND saturation='busy' AND locked_by=?",
+            [$leaseUntil, $batchId, $workerId]
+        );
+    }
+
+    public static function releaseEnvByBatch(int $batchId, ?string $workerId = null): void
+    {
+        self::ensureSchema();
+        if ($workerId) {
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE batch_id=? AND (locked_by=? OR locked_by='')",
+                [$batchId, $workerId]
+            );
+        } else {
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE batch_id=?",
+                [$batchId]
+            );
+        }
+        DB::query(
+            'UPDATE account_work_batches SET browser_env_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$batchId]
+        );
+    }
+
+    /**
+     * 批量释放多个总任务占用的环境租用（任务汇总「勾选清除 / 全部清除」一次性回收）。
+     * @param list<int> $batchIds
+     */
+    public static function releaseEnvByBatches(array $batchIds): void
+    {
+        $batchIds = array_values(array_unique(array_filter(
+            array_map('intval', $batchIds),
+            static fn($v) => $v > 0
+        )));
+        if (!$batchIds) {
+            return;
+        }
+        self::ensureSchema();
+        foreach (array_chunk($batchIds, 500) as $chunk) {
+            $ph = implode(',', array_fill(0, count($chunk), '?'));
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE batch_id IN ({$ph})",
+                $chunk
+            );
+        }
+    }
+
+    public static function reclaimExpiredEnvLeases(): void
+    {
+        self::ensureSchema();
+        DB::query(
+            "UPDATE account_browser_envs
+             SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+             WHERE saturation='busy' AND lease_until IS NOT NULL AND lease_until < CURRENT_TIMESTAMP"
+        );
+    }
+
+    public static function accountHasIdleEnv(int $accountId): bool
+    {
+        self::ensureSchema();
+        $row = DB::selectOne(
+            "SELECT id FROM account_browser_envs WHERE account_id=? AND saturation='idle' LIMIT 1",
+            [$accountId]
+        );
+        return (bool)$row;
+    }
+
+    /**
+     * 强制释放账号下全部 busy 环境（重新推送 / 终止重开）。
+     * @return array{released:int,profiles:list<string>,batch_ids:list<int>}
+     */
+    public static function forceReleaseAccount(int $accountId): array
+    {
+        self::ensureSchema();
+        if ($accountId < 1) {
+            return ['released' => 0, 'profiles' => [], 'batch_ids' => []];
+        }
+        $rows = DB::select(
+            "SELECT id, browser_profile_id, batch_id FROM account_browser_envs
+             WHERE account_id=? AND (saturation='busy' OR batch_id IS NOT NULL)",
+            [$accountId]
+        ) ?: [];
+        $profiles = [];
+        $batchIds = [];
+        foreach ($rows as $r) {
+            $pid = trim((string)($r['browser_profile_id'] ?? ''));
+            if ($pid !== '') {
+                $profiles[] = $pid;
+            }
+            $bid = (int)($r['batch_id'] ?? 0);
+            if ($bid > 0) {
+                $batchIds[] = $bid;
+            }
+        }
+        DB::query(
+            "UPDATE account_browser_envs
+             SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+             WHERE account_id=?",
+            [$accountId]
+        );
+        foreach (array_unique($batchIds) as $bid) {
+            DB::query(
+                'UPDATE account_work_batches SET browser_env_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [(int)$bid]
+            );
+        }
+        return [
+            'released' => count($rows),
+            'profiles' => array_values(array_unique($profiles)),
+            'batch_ids' => array_values(array_unique($batchIds)),
+        ];
+    }
+}

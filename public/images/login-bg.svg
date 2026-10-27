@@ -1,0 +1,228 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <!-- 天空与深邃海洋无缝夜航渐变 -->
+    <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="60%">
+      <stop offset="0%" stop-color="#050a17"/>
+      <stop offset="45%" stop-color="#091834"/>
+      <stop offset="85%" stop-color="#0c234b"/>
+      <stop offset="100%" stop-color="#103063"/>
+    </linearGradient>
+
+    <!-- 海洋洋流渐变 -->
+    <linearGradient id="oceanGrad" x1="0%" y1="60%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0d244c"/>
+      <stop offset="25%" stop-color="#091b38"/>
+      <stop offset="65%" stop-color="#051226"/>
+      <stop offset="100%" stop-color="#020813"/>
+    </linearGradient>
+
+    <!-- 巨舰与破浪科技蓝光辉光 -->
+    <radialGradient id="vesselGlow" cx="45%" cy="58%" r="48%">
+      <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.32"/>
+      <stop offset="40%" stop-color="#0077ff" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- TikTok 霓虹双色光芒 (Cyan / Pink-Red) 象征全球新媒体矩阵力量 -->
+    <radialGradient id="tkCyanGlow" cx="78%" cy="28%" r="42%">
+      <stop offset="0%" stop-color="#25f4ee" stop-opacity="0.35"/>
+      <stop offset="60%" stop-color="#0284c7" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="tkPinkGlow" cx="84%" cy="32%" r="38%">
+      <stop offset="0%" stop-color="#fe2c55" stop-opacity="0.28"/>
+      <stop offset="65%" stop-color="#a855f7" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 船体主金属科技渐变 -->
+    <linearGradient id="hullGrad" x1="0%" y1="0%" x2="100%" y2="80%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="45%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="hullEdgeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+
+    <!-- 科技微发光滤镜 -->
+    <filter id="neonBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <pattern id="dotPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="20" cy="20" r="1" fill="#38bdf8" fill-opacity="0.18"/>
+    </pattern>
+  </defs>
+
+  <!-- 1. 背景底色：浩瀚天幕与出海夜航大洋 -->
+  <rect width="1920" height="660" fill="url(#skyGrad)"/>
+  <rect y="640" width="1920" height="440" fill="url(#oceanGrad)"/>
+
+  <!-- 2. 全球出海经纬网格与星轨 -->
+  <rect width="1920" height="640" fill="url(#dotPattern)"/>
+
+  <!-- 3. 远景：地球曲率地平线与世界新媒体数据星环 -->
+  <g stroke="#38bdf8" fill="none" opacity="0.4">
+    <!-- 地球曲率弧光 -->
+    <path d="M -100 660 Q 960 520 2020 660" stroke="#00f2fe" stroke-width="2.5" opacity="0.6"/>
+    <path d="M -100 670 Q 960 540 2020 670" stroke="#38bdf8" stroke-width="1.2" opacity="0.3"/>
+
+    <!-- 全球航海经纬航线 (Sea Routes) -->
+    <path d="M 100 650 Q 640 420 1200 480 T 1920 420" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="6,8" opacity="0.5"/>
+    <path d="M 220 650 Q 820 460 1480 500 T 2020 460" stroke="#818cf8" stroke-width="1.2" stroke-dasharray="4,6" opacity="0.35"/>
+  </g>
+
+  <!-- 4. 远洋背景：发光天际线与全球云端数据信号发射塔 -->
+  <g filter="url(#neonBlur)">
+    <!-- 远洋信标灯塔 -->
+    <circle cx="280" cy="540" r="5" fill="#38bdf8"/>
+    <line x1="280" y1="540" x2="280" y2="640" stroke="#38bdf8" stroke-width="1.5" opacity="0.6"/>
+    <polygon points="280,540 0,440 0,470" fill="#38bdf8" opacity="0.08"/>
+
+    <!-- 右侧远景全球新媒体数据枢纽基站 -->
+    <circle cx="1680" cy="480" r="6" fill="#00f2fe"/>
+    <circle cx="1680" cy="480" r="16" stroke="#00f2fe" stroke-width="1" fill="none" opacity="0.4"/>
+    <circle cx="1680" cy="480" r="30" stroke="#00f2fe" stroke-width="0.8" stroke-dasharray="4,4" fill="none" opacity="0.25"/>
+    <line x1="1680" y1="480" x2="1680" y2="640" stroke="#38bdf8" stroke-width="1.5" opacity="0.5"/>
+  </g>
+
+  <!-- 5. 核心实体：劈波斩浪的“出海巨轮 / 科技旗舰” (The Flagship of Global Expansion) -->
+  <g id="flagship" filter="url(#neonBlur)">
+    <!-- 船体主轮廓 (现代科技穿浪型破浪舰体) -->
+    <path d="M 320 655 
+             L 520 635 
+             L 760 635 
+             L 940 648 
+             L 1080 660 
+             L 960 705 
+             L 580 710 
+             L 360 690 Z" 
+          fill="url(#hullGrad)" stroke="#1e293b" stroke-width="2"/>
+
+    <!-- 船体破浪锋利科技光刃吃水线 (Neon Bow & Chine) -->
+    <path d="M 320 655 L 560 670 L 960 682 L 1080 660" 
+          stroke="url(#hullEdgeGrad)" stroke-width="3" fill="none"/>
+
+    <!-- 船首锐利劈浪迎角结构 -->
+    <polygon points="320,655 420,620 540,635 380,665" fill="#1e293b" stroke="#38bdf8" stroke-width="1"/>
+
+    <!-- 船舰上层科技指挥台 (Bridge / Media Control Tower) -->
+    <polygon points="560,635 590,565 720,565 750,635" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+    <!-- 舷窗发光舱室（象征 7x24 小时出海作战矩阵中心） -->
+    <line x1="605" y1="585" x2="705" y2="585" stroke="#38bdf8" stroke-width="4" stroke-dasharray="10,6"/>
+    <line x1="615" y1="605" x2="720" y2="605" stroke="#00f2fe" stroke-width="3" stroke-dasharray="14,8"/>
+
+    <!-- 上层主舰塔与雷达桅杆 (Radar & Satellite Arrays) -->
+    <line x1="655" y1="565" x2="655" y2="480" stroke="#38bdf8" stroke-width="2.5"/>
+    <line x1="635" y1="510" x2="675" y2="510" stroke="#38bdf8" stroke-width="1.5"/>
+    <line x1="642" y1="535" x2="668" y2="535" stroke="#38bdf8" stroke-width="1.5"/>
+    <!-- 旋转通信雷达天线 -->
+    <ellipse cx="655" cy="475" rx="22" ry="7" stroke="#00f2fe" stroke-width="2" fill="none"/>
+    <circle cx="655" cy="475" r="4" fill="#fe2c55"/>
+
+    <!-- 船载集装箱/算力机柜矩阵 (Matrix Cluster Pods) -->
+    <g fill="#0c192e" stroke="#0284c7" stroke-width="1">
+      <rect x="755" y="610" width="45" height="24" rx="2"/>
+      <rect x="805" y="610" width="45" height="24" rx="2"/>
+      <rect x="855" y="618" width="45" height="20" rx="2"/>
+      <rect x="780" y="588" width="45" height="22" rx="2"/>
+      <rect x="830" y="592" width="45" height="20" rx="2"/>
+    </g>
+
+    <!-- 船头劈波激起的磅礴浪花与流体粒子 (Bow Waves & Foaming Water) -->
+    <path d="M 320 655 Q 260 675 200 665 Q 270 690 350 680" fill="#38bdf8" opacity="0.6"/>
+    <path d="M 280 660 Q 210 685 140 680 Q 230 705 340 695" fill="#00f2fe" opacity="0.4"/>
+    <path d="M 350 680 Q 560 740 850 720 Q 1100 710 1280 730" stroke="#38bdf8" stroke-width="2" fill="none" opacity="0.5" stroke-dasharray="12,8"/>
+    <path d="M 400 700 Q 640 760 980 735 Q 1200 730 1440 750" stroke="#00f2fe" stroke-width="1.5" fill="none" opacity="0.3"/>
+  </g>
+
+  <!-- 6. 核心业务意向：新媒体元素流（TikTok 标志、短视频 Play、点赞 Heart、音符、弹幕与跨海光束） -->
+  <g id="newMediaStream" filter="url(#neonBlur)">
+    <!-- 桅杆向天际发射的新媒体数据光束流 -->
+    <path d="M 655 475 Q 880 320 1280 260" stroke="#00f2fe" stroke-width="2.5" fill="none" stroke-dasharray="10,6" opacity="0.85"/>
+    <path d="M 655 475 Q 980 360 1420 310" stroke="#fe2c55" stroke-width="2" fill="none" stroke-dasharray="8,8" opacity="0.75"/>
+
+    <!-- [新媒体图标 1] 醒目的 TikTok 标志音符徽标 (双色青红立体错位投影) -->
+    <g transform="translate(1360, 180) scale(1.6)">
+      <!-- 红色投影 -->
+      <path d="M26 4C27.5 7.5 30.5 10 34 10.5V15.5C31.5 15.5 29 14.5 27 13.2V25.5C27 31 22.5 35.5 17 35.5C11.5 35.5 7 31 7 25.5C7 20 11.5 15.5 17 15.5C18 15.5 19 15.7 20 16V21.2C19 20.8 18 20.6 17 20.6C14.3 20.6 12.1 22.8 12.1 25.5C12.1 28.2 14.3 30.4 17 30.4C19.7 30.4 21.9 28.2 21.9 25.5V4H26Z" fill="#fe2c55" opacity="0.9"/>
+      <!-- 青色投影 -->
+      <path d="M24 2C25.5 5.5 28.5 8 32 8.5V13.5C29.5 13.5 27 12.5 25 11.2V23.5C25 29 20.5 33.5 15 33.5C9.5 33.5 5 29 5 23.5C5 18 9.5 13.5 15 13.5C16 13.5 17 13.7 18 14V19.2C17 18.8 16 18.6 15 18.6C12.3 18.6 10.1 20.8 10.1 23.5C10.1 26.2 12.3 28.4 15 28.4C17.7 28.4 19.9 26.2 19.9 23.5V2H24Z" fill="#25f4ee" opacity="0.9"/>
+      <!-- 白色主体现位 -->
+      <path d="M25 3C26.5 6.5 29.5 9 33 9.5V14.5C30.5 14.5 28 13.5 26 12.2V24.5C26 30 21.5 34.5 16 34.5C10.5 34.5 6 30 6 24.5C6 19 10.5 14.5 16 14.5C17 14.5 18 14.7 19 15V20.2C18 19.8 17 19.6 16 19.6C13.3 19.6 11.1 21.8 11.1 24.5C11.1 27.2 13.3 29.4 16 29.4C18.7 29.4 20.9 27.2 20.9 24.5V3H25Z" fill="#ffffff"/>
+    </g>
+
+    <!-- [新媒体图标 2] 视频播放 Play 胶囊与多媒体卡片 (Floating Video Card) -->
+    <g transform="translate(1080, 240)">
+      <rect width="160" height="96" rx="14" fill="#0f172a" stroke="#38bdf8" stroke-width="1.8" opacity="0.88"/>
+      <!-- 播放三角形按钮 -->
+      <polygon points="72,36 72,60 96,48" fill="#38bdf8"/>
+      <circle cx="80" cy="48" r="28" stroke="#38bdf8" stroke-width="1.5" fill="none" opacity="0.6"/>
+      <!-- 视频音频频谱波形线 (Equalizer Wave) -->
+      <line x1="20" y1="80" x2="35" y2="80" stroke="#00f2fe" stroke-width="3" stroke-linecap="round"/>
+      <line x1="42" y1="80" x2="68" y2="80" stroke="#fe2c55" stroke-width="3" stroke-linecap="round"/>
+      <line x1="75" y1="80" x2="140" y2="80" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+    </g>
+
+    <!-- [新媒体图标 3] 爆款互动心形点赞 (Viral Likes & Interactions) -->
+    <g transform="translate(1560, 280) scale(1.3)">
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="#fe2c55" opacity="0.95"/>
+      <circle cx="12" cy="11" r="16" stroke="#fe2c55" stroke-width="1.2" fill="none" opacity="0.4"/>
+    </g>
+
+    <!-- [新媒体图标 4] 互动评论气泡与跨海私信 (Live Chat / Message Icon) -->
+    <g transform="translate(920, 180)">
+      <path d="M 0 0 L 80 0 Q 94 0 94 14 L 94 48 Q 94 62 80 62 L 28 62 L 12 76 L 14 62 L 0 62 Q -14 62 -14 48 L -14 14 Q -14 0 0 0 Z" fill="#0f172a" stroke="#00f2fe" stroke-width="1.5" opacity="0.85"/>
+      <!-- 对话线条 -->
+      <line x1="8" y1="22" x2="68" y2="22" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="8" y1="36" x2="48" y2="36" stroke="#00f2fe" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="62" cy="36" r="3.5" fill="#fe2c55"/>
+    </g>
+
+    <!-- [新媒体图标 5] 全球直播中 LIVE 标签 (Global Livestream Badge) -->
+    <g transform="translate(1260, 360)">
+      <rect width="84" height="28" rx="6" fill="#fe2c55" opacity="0.9"/>
+      <circle cx="16" cy="14" r="4" fill="#ffffff"/>
+      <text x="30" y="19" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="900" fill="#ffffff" letter-spacing="1">LIVE</text>
+    </g>
+
+    <!-- [新媒体图标 6] 漂浮音符粒子 (Musical Notes of Creativity) -->
+    <g transform="translate(1480, 140)">
+      <path d="M10 15V4h14v11M10 9h14M6 18a4 4 0 108 0 4 4 0 00-8 0zM20 18a4 4 0 108 0 4 4 0 00-8 0z" stroke="#25f4ee" stroke-width="2" fill="none"/>
+    </g>
+    <g transform="translate(860, 310) scale(0.8)">
+      <path d="M8 14V3h10v11M8 7h10M5 16a3 3 0 106 0 3 3 0 00-6 0zM15 16a3 3 0 106 0 3 3 0 00-6 0z" stroke="#818cf8" stroke-width="2" fill="none"/>
+    </g>
+  </g>
+
+  <!-- 7. 大海波光与反射倒影 (Ocean Reflections & Neon Waves) -->
+  <g stroke="#00f2fe" opacity="0.25">
+    <line x1="520" y1="710" x2="860" y2="710" stroke-width="1.5" stroke-dasharray="16,12"/>
+    <line x1="460" y1="730" x2="940" y2="730" stroke-width="2" stroke-dasharray="24,18"/>
+    <line x1="380" y1="760" x2="1100" y2="760" stroke-width="1.8" stroke-dasharray="32,20"/>
+    <line x1="280" y1="800" x2="1320" y2="800" stroke-width="1.2" stroke-dasharray="40,24"/>
+    <!-- 红粉色霓虹倒影 (TikTok Red Glow on Water) -->
+    <line x1="1260" y1="720" x2="1480" y2="720" stroke="#fe2c55" stroke-width="2.5" opacity="0.5" stroke-dasharray="20,12"/>
+    <line x1="1220" y1="745" x2="1540" y2="745" stroke="#fe2c55" stroke-width="1.8" opacity="0.4" stroke-dasharray="28,16"/>
+  </g>
+
+  <!-- 8. 宏观标语与航海科技水印 (Enterprise Theme Watermark) -->
+  <g fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" opacity="0.45">
+    <!-- 左下角出海宣言 -->
+    <text x="80" y="990" font-size="20" font-weight="700" fill="#ffffff" letter-spacing="4">扬帆出海 · 融通全球</text>
+    <text x="80" y="1018" font-size="12" letter-spacing="2">GLOBAL MARITIME EXPEDITION &amp; TIKTOK NEW MEDIA MATRIX PLATFORM</text>
+    <text x="80" y="1038" font-size="11" letter-spacing="1">DISTRIBUTED CROSS-BORDER INFRASTRUCTURE • 24/7 AUTO FLEET</text>
+
+    <!-- 右下角科技参数 -->
+    <text x="1440" y="1018" font-size="12" letter-spacing="2">TIKTOK VIRAL TRAFFIC ENGINE</text>
+    <text x="1440" y="1038" font-size="11" letter-spacing="1">FLEET STATUS: SETTING SAIL // ALL CHANNELS ACTIVE</text>
+  </g>
+</svg>

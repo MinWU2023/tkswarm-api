@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#fdf7f0" />
+  <meta name="description" content="TkSwarm — TikTok 矩阵运营工作台。账号矩阵、指纹浏览器、智能发布、养号拓客与客服私信一体化。" />
+  <title>TkSwarm · TikTok 矩阵运营工作台</title>
+  <link rel="icon" type="image/png" href="/images/favicon.png?v=2" sizes="64x64" />
+  <link rel="icon" type="image/png" href="/images/icon.png?v=2" sizes="256x256" />
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png?v=2" sizes="180x180" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/landing/assets/css/landing.css?v=10" />
+</head>
+<body>
+  <header class="site-header" id="top">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top">
+        <img src="/images/icon.png?v=2" alt="" width="32" height="32" />
+        <span>TkSwarm</span>
+      </a>
+      <button class="nav-toggle" type="button" id="nav-toggle" aria-label="菜单">☰</button>
+      <nav class="nav" id="nav-links" aria-label="本页导航">
+        <a href="#capabilities">能力</a>
+        <a href="#matrix">账号矩阵</a>
+        <a href="#workflow">工作流</a>
+        <a href="#scenarios">场景</a>
+        <a href="#download">下载</a>
+        <a class="nav-cta" href="#contact">联系我们</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero：固定文案与按钮 + 下方图片轮播 + 编号能力廊 -->
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <p class="hero-eyebrow">TikTok 矩阵 · 指纹浏览器 · 本机 / Linux 坐席</p>
+        <h1 class="hero-title">
+          一套 TkSwarm
+          <em>= 矩阵数字员工协同为你工作</em>
+        </h1>
+        <div class="hero-ticker" aria-live="polite">
+          <p class="ticker-line is-on" data-i="0"><b>自动运营账号</b>，主动寻找潜在客户</p>
+          <p class="ticker-line" data-i="1"><b>批量发布、养号、评论与私信</b>，把执行排进计划</p>
+          <p class="ticker-line" data-i="2">说出目标：<b>环境就绪 → 登录 → 任务 → 反馈</b></p>
+        </div>
+        <p class="hero-lead">
+          账号、指纹环境、代理与发布任务统一管理。桌面调试或 Linux 长挂，均走比特兼容协议，业务层尽量零改。
+        </p>
+        <div class="hero-actions">
+          <a class="btn primary" id="hero-download-win" href="/lastest.exe" download>下载 Windows 版 <span aria-hidden="true">↗</span></a>
+          <a class="btn ghost" id="hero-download-mac" href="/lastest.dmg" download>下载 macOS 版 <span aria-hidden="true">↗</span></a>
+          <a class="btn ghost" href="#contact">联系团队</a>
+        </div>
+
+        <div class="hero-carousel" id="hero-carousel" role="region" aria-roledescription="carousel" aria-label="产品界面预览">
+          <div class="carousel-viewport">
+            <div class="carousel-track" id="carousel-track">
+              <figure class="carousel-slide">
+                <img src="/landing/assets/img/hero-1.svg" width="1600" height="900" alt="账号矩阵总览：分组侧栏、账号列表与环境状态" loading="eager" decoding="async" />
+              </figure>
+              <figure class="carousel-slide">
+                <img src="/landing/assets/img/hero-2.svg" width="1600" height="900" alt="任务批次执行：流水线步骤与批次进度" loading="lazy" decoding="async" />
+              </figure>
+              <figure class="carousel-slide">
+                <img src="/landing/assets/img/hero-3.svg" width="1600" height="900" alt="环境与代理：指纹环境、出口 IP 与一致性校验" loading="lazy" decoding="async" />
+              </figure>
+            </div>
+            <button class="carousel-nav prev" type="button" aria-label="上一张">‹</button>
+            <button class="carousel-nav next" type="button" aria-label="下一张">›</button>
+          </div>
+          <div class="carousel-dots" role="tablist" aria-label="选择轮播图"></div>
+          <div class="carousel-downloads">
+            <a class="btn primary sm" id="carousel-download-win" href="/lastest.exe" download>下载 Windows</a>
+            <a class="btn ghost sm" id="carousel-download-mac" href="/lastest.dmg" download>下载 macOS</a>
+          </div>
+        </div>
+
+        <div class="cap-gallery" id="capabilities">
+          <div class="cap-scroll">
+            <a class="cap-card" href="#matrix"><bdi>01</bdi><span>账号矩阵</span></a>
+            <a class="cap-card" href="#matrix"><bdi>02</bdi><span>指纹浏览器</span></a>
+            <a class="cap-card" href="#workflow"><bdi>03</bdi><span>智能发布</span></a>
+            <a class="cap-card" href="#workflow"><bdi>04</bdi><span>养号互动</span></a>
+            <a class="cap-card" href="#workflow"><bdi>05</bdi><span>AI 拓客</span></a>
+            <a class="cap-card" href="#workflow"><bdi>06</bdi><span>客服私信</span></a>
+            <a class="cap-card" href="#scenarios"><bdi>07</bdi><span>Linux 坐席</span></a>
+            <a class="cap-card" href="#compare"><bdi>08</bdi><span>任务可回看</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 目标陈述 -->
+    <section class="block">
+      <div class="wrap narrow">
+        <p class="kicker">说出目标，让工作流安排执行</p>
+        <h2 class="block-title">研究、内容、运营环节协作，形成你可以审核的执行计划。</h2>
+        <p class="block-lead">不止给建议：计划直接衔接环境绑定、账号登录与批次任务，不用你再手动拆一遍。</p>
+        <ul class="check-row">
+          <li>成百上千账号，统一管理</li>
+          <li>本机运行，数据与执行自己掌控</li>
+          <li>桌面调试，Linux 水平加机</li>
+          <li>协议兼容，切换后端不改业务</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 能做什么：Tab 四类（对标 01扩大曝光…） -->
+    <section class="block" id="cando">
+      <div class="wrap">
+        <header class="block-head">
+          <p class="kicker">TkSwarm 到底能为你做什么？</p>
+          <h2 class="block-title">不是一个账号慢慢做，而是让整个账号矩阵协同推广。</h2>
+        </header>
+        <div class="tabs" data-tabs>
+          <div class="tabs-list" role="tablist">
+            <button type="button" class="is-on" data-tab="see" role="tab">01 扩大曝光</button>
+            <button type="button" data-tab="lead" role="tab">02 获取客户</button>
+            <button type="button" data-tab="ops" role="tab">03 持续运营</button>
+            <button type="button" data-tab="scale" role="tab">04 规模化执行</button>
+          </div>
+          <div class="tabs-panels">
+            <div class="tabs-panel is-on" data-panel="see">
+              <article><h3>多账号批量发布</h3><p>素材编排、任务调度，把内容铺到矩阵账号，争取更多曝光机会。</p></article>
+              <article><h3>养号与互动</h3><p>浏览、点赞、评论回复按计划执行，保持账号活跃度。</p></article>
+              <article><h3>评论区规模化回应</h3><p>Studio 评论统一拉取与回复，减少遗漏与等待。</p></article>
+              <article><h3>跨环境分发</h3><p>比特 / 自研桌面 / Linux 按后端选环境，同批任务可对照。</p></article>
+            </div>
+            <div class="tabs-panel" data-panel="lead">
+              <article><h3>AI 线索筛选</h3><p>按意图与行业整理潜在客户，集中去重与跟进。</p></article>
+              <article><h3>私信触达</h3><p>模板与 AI 辅助回复，批量跟进同意联系的客户。</p></article>
+              <article><h3>引流到产品页</h3><p>把社媒关注带到店铺或落地页，形成可追踪访问。</p></article>
+              <article><h3>高匹配账号拓展</h3><p>围绕目标人群与话题，有计划地关注与互动。</p></article>
+            </div>
+            <div class="tabs-panel" data-panel="ops">
+              <article><h3>会话与客服台</h3><p>多账号会话列表、标签与翻译，客服工作一目了然。</p></article>
+              <article><h3>登录态与 CK</h3><p>扫码 / 账密辅助 / 会话导入，状态回写供任务复用。</p></article>
+              <article><h3>代理与出口校验</h3><p>代理池探测、环境改代理后出口 IP 可回读。</p></article>
+              <article><h3>周计划排期</h3><p>发布、养号、拓客与跟进排进批次，失败可诊断。</p></article>
+            </div>
+            <div class="tabs-panel" data-panel="scale">
+              <article><h3>矩阵分组管理</h3><p>按品牌与市场分组，上级可见下级数据范围。</p></article>
+              <article><h3>双轨浏览器</h3><p>办公机桌面 + 机房 Linux，同一套 Provider 协议。</p></article>
+              <article><h3>粘滞与多机</h3><p>hostId 防跨机误开；导出导入可换机。</p></article>
+              <article><h3>Token 隔离</h3><p>每员工各自 Bearer，环境按归属过滤。</p></article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 账号矩阵 -->
+    <section class="block" id="matrix">
+      <div class="wrap">
+        <p class="kicker">01 / 账号矩阵</p>
+        <h2 class="block-title">账号越多，<br />越需要管得有条理。</h2>
+        <p class="block-lead">按品牌和市场分组，账号绑定独立指纹环境，任务批量安排。不必来回切换平台，也能看清哪批账号在做什么。</p>
+        <div class="matrix-layout">
+          <div class="mock-ui" aria-hidden="true">
+            <div class="mock-bar"><span></span><span></span><span></span><b>TkSwarm · 账号矩阵</b></div>
+            <div class="mock-body">
+              <aside>
+                <div class="mock-item on">全部账号</div>
+                <div class="mock-item">跨境 A 组</div>
+                <div class="mock-item">坐席池</div>
+                <div class="mock-item">测试</div>
+              </aside>
+              <div class="mock-table">
+                <div class="mock-row head"><span>账号</span><span>环境</span><span>状态</span></div>
+                <div class="mock-row"><span>@brand_us_01</span><span class="tag cyan">Linux</span><span class="dot on">在线</span></div>
+                <div class="mock-row"><span>@brand_jp_02</span><span class="tag">自研</span><span class="dot on">在线</span></div>
+                <div class="mock-row"><span>@shop_eu_03</span><span class="tag muted">比特</span><span class="dot">离线</span></div>
+                <div class="mock-row"><span>@seat_04</span><span class="tag cyan">Linux</span><span class="dot on">执行中</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="stat-cards">
+            <div class="stat-card">
+              <span>三类型环境</span>
+              <strong>比特 · 自研 · Linux</strong>
+              <p>同一环境表加类型与归属用户，切换后端不改业务代码。</p>
+            </div>
+            <div class="stat-card">
+              <span>本机 / 机房</span>
+              <strong>桌面调试 + 长挂坐席</strong>
+              <p>办公机跑 tkswarm-browses；机房跑 linuxbrowse，协议对齐。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 工作流三步 -->
+    <section class="block" id="workflow">
+      <div class="wrap">
+        <p class="kicker">发出去只是开始，后面的工作也安排好</p>
+        <h2 class="block-title">环境、登录、任务与反馈，串成一条链路。</h2>
+        <div class="steps">
+          <article>
+            <bdi>01</bdi>
+            <h3>批量创作与就绪</h3>
+            <p>素材入库、环境创建或绑定、代理校验。桌面或 Linux 打开窗口均可。</p>
+          </article>
+          <article>
+            <bdi>02</bdi>
+            <h3>排期与互动</h3>
+            <p>发布、养号、评论、拓客与私信形成关联批次。可看执行中与失败原因。</p>
+          </article>
+          <article>
+            <bdi>03</bdi>
+            <h3>反馈与调整</h3>
+            <p>登录保持、任务完成率与代理错误可对照；双轨一周后再定默认后端。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 掌控 -->
+    <section class="block">
+      <div class="wrap narrow">
+        <p class="kicker">账号、数据和工作方式，由你掌控</p>
+        <h2 class="block-title">在本机运行，或把任务挂到自己的 Linux 坐席。</h2>
+        <div class="pill-row">
+          <span>本机桌面</span>
+          <span>Linux / VPS</span>
+          <span>内网 Token</span>
+        </div>
+        <ul class="check-col">
+          <li>业务数据走 tkswarm-api；浏览器环境跑在你可控的机器上。</li>
+          <li>自研与 Linux 共用 API 登录账号（admin_users），两浏览器通用。</li>
+          <li>环境页按本人与下级过滤，类型与所属用户一目了然。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 场景 -->
+    <section class="block" id="scenarios">
+      <div class="wrap">
+        <header class="block-head">
+          <p class="kicker">05 / 找到你的用法</p>
+          <h2 class="block-title">你的业务不同，都有更省力的做法。</h2>
+          <p class="block-lead">以下是应用场景，不是客户业绩承诺。</p>
+        </header>
+        <div class="cases">
+          <article>
+            <span class="case-type">跨境品牌</span>
+            <h3>进入更多市场，不必每次从头做。</h3>
+            <p>多账号按市场分组，独立代理与指纹；内容与任务按时区排期。</p>
+            <a class="text-link" href="#contact">了解适配方案 ↗</a>
+          </article>
+          <article>
+            <span class="case-type">B2B 与服务</span>
+            <h3>找客户、筛选客户，不再全靠手动。</h3>
+            <p>AI 线索整理去重，再跟进同意联系的客户；私信可降级到浏览器。</p>
+            <a class="text-link" href="#contact">了解适配方案 ↗</a>
+          </article>
+          <article>
+            <span class="case-type">代运营与多品牌</span>
+            <h3>客户更多，工作安排依然清楚。</h3>
+            <p>品牌与账号分级；上级看下级范围，不把不同客户的工作混在一起。</p>
+            <a class="text-link" href="#contact">了解适配方案 ↗</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 对比 -->
+    <section class="block" id="compare">
+      <div class="wrap">
+        <header class="block-head">
+          <p class="kicker">你需要的，不只是一张发帖日历</p>
+          <h2 class="block-title">看清执行深度与环境掌控，再决定是否适合你的矩阵规模。</h2>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>你关心的事</th><th>TkSwarm</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>账号规模与环境</td><td>矩阵分组 + 比特 / 自研 / Linux 三类型，双绑定可切换。</td></tr>
+              <tr><td>执行深度</td><td>发布、养号、评论、拓客、私信走本机 CDP，不是只排程发帖。</td></tr>
+              <tr><td>控制与扩展</td><td>本机桌面调试，机房 Linux 加机；协议兼容，回滚一键切回比特。</td></tr>
+              <tr><td>数据归属</td><td>API 管业务；浏览器 Token 按员工隔离，环境归属可审计。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="block" id="download">
+      <div class="wrap">
+        <header class="block-head">
+          <p class="kicker">下载客户端</p>
+          <h2 class="block-title">Windows 与 macOS 安装包</h2>
+          <p class="block-lead">安装桌面客户端后，可检测本机环境并连接指纹浏览器与任务执行。</p>
+        </header>
+        <div class="dl-grid">
+          <div class="dl-card">
+            <span class="dl-kicker">桌面客户端</span>
+            <h3>TkSwarm Client</h3>
+            <p class="dl-meta" id="latest-meta">检测系统中…</p>
+            <div class="dl-actions">
+              <a class="btn primary" id="btn-download-win" href="/lastest.exe" download>下载 Windows（.exe）</a>
+              <a class="btn ghost" id="btn-download-mac" href="/lastest.dmg" download>下载 macOS（.dmg）</a>
+            </div>
+          </div>
+          <div class="dl-card soft">
+            <h3>安装说明</h3>
+            <p id="env-hint">推荐按当前系统下载对应安装包。安装后打开客户端，按向导检测 Node 与浏览器 API。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 联系我们 -->
+    <section class="block contact-block" id="contact">
+      <div class="wrap contact-layout">
+        <div>
+          <p class="kicker">告诉我们你的账号规模</p>
+          <h2 class="block-title">找到适合你的方案</h2>
+          <p class="block-lead">告诉团队你的平台、目标市场，以及最想省下的重复工作。先看是否适合，再决定如何开始。</p>
+          <div class="faq" id="questions">
+            <details open>
+              <summary>必须用自研浏览器吗？</summary>
+              <p>不必。可继续用比特，也可切自研桌面或 Linux。Node 按后端选择环境。</p>
+            </details>
+            <details>
+              <summary>现在账号不多，也能开始吗？</summary>
+              <p>可以。先把本机环境与一条发布/养号链路跑通，再随坐席资源扩大。</p>
+            </details>
+            <details>
+              <summary>自动化越多就一定效果越好吗？</summary>
+              <p>不是。效果仍取决于内容、受众与平台规则。TkSwarm 帮你组织执行与回看。</p>
+            </details>
+          </div>
+        </div>
+        <form class="contact-form" id="contact-form" novalidate>
+          <label><span>姓名 / 称呼 *</span><input name="name" required maxlength="64" placeholder="怎么称呼您" autocomplete="name" /></label>
+          <label><span>公司 / 团队</span><input name="company" maxlength="128" placeholder="选填" autocomplete="organization" /></label>
+          <label><span>手机 / 微信 *</span><input name="phone" required maxlength="64" placeholder="方便回电或加微信" autocomplete="tel" /></label>
+          <label><span>邮箱</span><input name="email" type="email" maxlength="128" placeholder="选填" autocomplete="email" /></label>
+          <label class="full"><span>账号规模（约）</span>
+            <select name="accountScale">
+              <option value="">请选择</option>
+              <option value="1-20">1 – 20 个账号</option>
+              <option value="21-100">21 – 100 个账号</option>
+              <option value="101-500">101 – 500 个账号</option>
+              <option value="500+">500 个以上</option>
+            </select>
+          </label>
+          <label class="full"><span>需求说明 *</span>
+            <textarea name="message" rows="5" required maxlength="2000" placeholder="例如：主要做发布养号 / 需要 Linux 坐席 / 想了解自研浏览器…"></textarea>
+          </label>
+          <div class="form-foot">
+            <button class="btn primary" type="submit" id="contact-submit">提交咨询 <span aria-hidden="true">↗</span></button>
+            <p class="form-status" id="contact-status" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="brand">
+        <img src="/images/icon.png?v=2" alt="" width="28" height="28" />
+        <div>
+          <strong>TkSwarm</strong>
+          <span>TikTok 矩阵运营工作台</span>
+        </div>
+      </div>
+      <div class="footer-links">
+        <a href="#capabilities">能力</a>
+        <a href="#download">下载</a>
+        <a href="#contact">联系我们</a>
+        <a href="#top">顶部</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/landing/assets/js/landing.js?v=7"></script>
+</body>
+</html>
