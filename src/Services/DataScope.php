@@ -1227,20 +1227,11 @@ class DataScope
             $ph = implode(',', array_fill(0, count($companyIds), '?'));
             $filters[] = "c.id IN ({$ph})";
             array_push($params, ...$companyIds);
-        } elseif (self::isOpsAdmin()) {
-            $filters[] = 'EXISTS (
-                SELECT 1 FROM company_users cu
-                INNER JOIN admin_users u ON u.id = cu.user_id
-                INNER JOIN admin_roles r ON r.id = u.role_id
-                WHERE cu.company_id = c.id AND u.status = 1
-                  AND (r.name LIKE ? OR r.name LIKE ?)
-            )';
-            $params[] = '%运营专员%';
-            $params[] = '%企业客户%';
         }
+        // 运营管理与「企业数据」页口径一致：可见全部启用企业（新增企业不必等关联用户才出现）
         $where = 'WHERE ' . implode(' AND ', $filters);
         $rows = DB::select(
-            "SELECT c.id, c.name, c.industry_id FROM companies c {$where} ORDER BY c.id ASC LIMIT 200",
+            "SELECT c.id, c.name, c.industry_id FROM companies c {$where} ORDER BY c.id DESC LIMIT 1000",
             $params
         ) ?: [];
         $out = [];
