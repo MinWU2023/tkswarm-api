@@ -353,7 +353,10 @@ class TaskController extends Controller
             'total_count' => '总数',
             'success_count' => '成功',
             'fail_count' => '失败',
-            'scheduled_at' => '计划时间',
+            'scheduled_at' => '计划时间(中国)',
+            'schedule_local_at' => '当地定时',
+            'schedule_country' => '定时国家',
+            'schedule_timezone' => '账号时区',
             'started_at' => '开始时间',
             'finished_at' => '结束时间',
             'created_at' => '创建时间',
@@ -405,7 +408,10 @@ class TaskController extends Controller
             'total_count' => $r['total_count'] ?? '',
             'success_count' => $r['success_count'] ?? '',
             'fail_count' => $r['fail_count'] ?? '',
-            'scheduled_at' => $r['scheduled_at'] ?? '',
+            'scheduled_at' => $payload['scheduleChinaAt'] ?? ($r['scheduled_at'] ?? ''),
+            'schedule_local_at' => $payload['scheduleLocalAt'] ?? '',
+            'schedule_country' => $payload['scheduleCountry'] ?? ($payload['scheduleCountryCode'] ?? ''),
+            'schedule_timezone' => $payload['scheduleTimezone'] ?? '',
             'started_at' => $r['started_at'] ?? '',
             'finished_at' => $r['finished_at'] ?? '',
             'created_at' => $r['created_at'] ?? '',
@@ -872,7 +878,13 @@ class TaskController extends Controller
         }
         DB::query('UPDATE tasks SET status=?, finished_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$status, $id]);
         if ($status === 'queued') {
-            AccountWorkBatchService::attachFromTask($id);
+            $attached = AccountWorkBatchService::attachFromTask($id);
+            if (!empty($attached['deferred'])) {
+                $when = trim((string)($task['scheduled_at'] ?? ''));
+                $msg = $when !== ''
+                    ? "任务已入队，将于 {$when}（中国时间）挂载执行"
+                    : '任务已入队，等待到点后挂载执行';
+            }
         }
         $this->event($id, 'info', $msg);
         return $this->success($silent ? ['ok' => true] : null, $msg);

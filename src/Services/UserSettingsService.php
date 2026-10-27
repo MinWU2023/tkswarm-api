@@ -58,6 +58,8 @@ class UserSettingsService
             'browserApiUrl' => 'http://127.0.0.1:54345',
             'language' => 'zh-CN',
             'clockTimezone' => 'Asia/Shanghai',
+            'clockCountryCode' => 'CN',
+            'clockCountryName' => '中国',
             'clocks' => [
                 ['name' => '中国 · 上海', 'tz' => 'Asia/Shanghai'],
                 ['name' => '美国 · 纽约', 'tz' => 'America/New_York'],

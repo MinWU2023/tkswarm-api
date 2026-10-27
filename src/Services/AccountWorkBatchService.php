@@ -847,11 +847,64 @@ class AccountWorkBatchService
         return in_array($type, self::BROWSER_TYPES, true);
     }
 
+    /** 任务是否已到可执行时间（scheduled_at 为空或已到点；按库当前时间，与 PHP Asia/Shanghai 对齐） */
+    public static function isTaskDue(?array $task): bool
+    {
+        if (!$task) {
+            return false;
+        }
+        $scheduled = trim((string)($task['scheduled_at'] ?? ''));
+        if ($scheduled === '') {
+            return true;
+        }
+        $ts = strtotime($scheduled);
+        if ($ts === false) {
+            return true;
+        }
+        return $ts <= time();
+    }
+
+    /**
+     * 把已到点的 queued 浏览器任务挂入账号会话（定时发布用）。
+     * @return int 本次新挂载的分项数
+     */
+    public static function attachDueQueuedTasks(?int $ownerFilter = null): int
+    {
+        self::ensureSchema();
+        $params = [];
+        $ownerSql = '';
+        if ($ownerFilter !== null && $ownerFilter > 0) {
+            $ownerSql = ' AND (t.owner_id=? OR t.owner_id=0)';
+            $params[] = $ownerFilter;
+        }
+        $rows = DB::select(
+            "SELECT t.id FROM tasks t
+             WHERE t.status='queued'
+               AND t.type IN ('publish','message','warm','sync_fans','dm_sync','sync','profile')
+               AND (t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
+               AND NOT EXISTS (
+                 SELECT 1 FROM account_work_items i
+                 WHERE i.task_ref_id=t.id AND i.status IN ('pending','running')
+               )
+               {$ownerSql}
+             ORDER BY t.id ASC
+             LIMIT 40",
+            $params
+        ) ?: [];
+        $items = 0;
+        foreach ($rows as $row) {
+            $r = self::attachFromTask((int)($row['id'] ?? 0), true);
+            $items += (int)($r['items'] ?? 0);
+        }
+        return $items;
+    }
+
     /**
      * 任务入队后：按账号拆分并挂到 pending/running 总任务（没有则新建）。
-     * @return array{batches:int, items:int}
+     * @param bool $forceDue 定时未到点时跳过挂载（由 attachDueQueuedTasks 到点后再挂）
+     * @return array{batches:int, items:int, deferred?:bool}
      */
-    public static function attachFromTask(int $taskId): array
+    public static function attachFromTask(int $taskId, bool $forceDue = false): array
     {
         self::ensureSchema();
         $task = DB::selectOne('SELECT * FROM tasks WHERE id=?', [$taskId]);
@@ -864,6 +917,11 @@ class AccountWorkBatchService
         }
         if (in_array($type, ['ai_lead', 'ai_lead_dm'], true)) {
             return ['batches' => 0, 'items' => 0];
+        }
+
+        // 定时未到：不挂会话，等 claim 时 attachDueQueuedTasks 再挂
+        if (!$forceDue && !self::isTaskDue($task)) {
+            return ['batches' => 0, 'items' => 0, 'deferred' => true];
         }
 
         // 避免重复挂载未完成项
@@ -1205,6 +1263,11 @@ class AccountWorkBatchService
     {
         self::ensureSchema();
         self::reclaimExpiredLeases();
+        // 把已到点的定时任务挂进会话，再领取
+        try {
+            self::attachDueQueuedTasks($ownerFilter);
+        } catch (\Throwable $e) {
+        }
 
         $excludeIds = [];
         // 指定后端暂无空闲环境时跳过该 batch，避免反复领同一条卡住
@@ -1226,13 +1289,16 @@ class AccountWorkBatchService
             }
 
             // 常规总任务优先；同账号有 general 未完成时不领 ai_lead
+            // pending 分项须已到 scheduled_at（无任务行 / 无定时 视为可领）
             $batch = DB::selectOne(
                 "SELECT b.* FROM account_work_batches b
                  WHERE b.status='pending'
                    AND b.deleted_at IS NULL
                    AND EXISTS (
                      SELECT 1 FROM account_work_items i
+                     LEFT JOIN tasks t ON t.id=i.task_ref_id
                      WHERE i.batch_id=b.id AND i.status='pending'
+                       AND (t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
                    )
                    AND EXISTS (
                      SELECT 1 FROM account_browser_envs e
@@ -1596,9 +1662,11 @@ class AccountWorkBatchService
         }
 
         $item = DB::selectOne(
-            "SELECT * FROM account_work_items
-             WHERE batch_id=? AND status='pending'
-             ORDER BY priority ASC, seq ASC, id ASC
+            "SELECT i.* FROM account_work_items i
+             LEFT JOIN tasks t ON t.id=i.task_ref_id
+             WHERE i.batch_id=? AND i.status='pending'
+               AND (t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
+             ORDER BY i.priority ASC, i.seq ASC, i.id ASC
              LIMIT 1",
             [$batchId]
         );
