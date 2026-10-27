@@ -7,11 +7,42 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
+use App\Core\Auth\RBAC;
 use App\Services\DataScope;
 use App\Services\CompanyService;
 
 class PermissionController extends Controller
 {
+    /** 细粒度权限：任一码命中即可；鉴权关闭时放行 */
+    private function assertAnyPermission(array $codes): ?Response
+    {
+        try {
+            $row = DB::selectOne("SELECT `value` FROM settings WHERE `key`='authEnabled'");
+            if ($row) {
+                $val = json_decode((string)$row['value'], true);
+                if ($val === null && $row['value'] !== 'null') {
+                    $val = $row['value'];
+                }
+                if (!filter_var($val, FILTER_VALIDATE_BOOLEAN)) {
+                    return null;
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+        $user = $GLOBALS['auth_user'] ?? null;
+        $uid = (int)($user['id'] ?? 0);
+        if ($uid <= 0) {
+            return $this->error('未登录', 401);
+        }
+        $held = RBAC::userPermissionCodes($uid);
+        foreach ($codes as $code) {
+            if (RBAC::matchesHeldCode((string)$code, $held)) {
+                return null;
+            }
+        }
+        return $this->error('当前角色无权执行此操作（需要：' . implode(' / ', $codes) . '）', 403);
+    }
+
     private static function roleName(int $roleId): string
     {
         if ($roleId <= 0) {
@@ -80,6 +111,9 @@ class PermissionController extends Controller
     // 权限节点列表
     public function permissions(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.permissions.view', 'rbac.manage'])) {
+            return $deny;
+        }
         $keyword = trim((string)$request->get('keyword', ''));
         $module = trim((string)$request->get('module', ''));
 
@@ -105,6 +139,13 @@ class PermissionController extends Controller
     // 保存权限节点（新增 / 编辑）
     public function savePermission(Request $request): Response
     {
+        $id = $request->input('id');
+        $deny = $this->assertAnyPermission($id
+            ? ['rbac.permissions.update', 'rbac.manage']
+            : ['rbac.permissions.create', 'rbac.manage']);
+        if ($deny) {
+            return $deny;
+        }
         $id = $request->input('id');
         $module = trim((string)$request->input('module', 'system'));
         $code = trim((string)$request->input('code', ''));
@@ -149,6 +190,9 @@ class PermissionController extends Controller
     // 删除权限节点
     public function deletePermission(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.permissions.delete', 'rbac.manage'])) {
+            return $deny;
+        }
         $id = (int)$request->input('id');
         if ($id <= 0) {
             return $this->error('无效的权限节点 ID');
@@ -164,6 +208,9 @@ class PermissionController extends Controller
     // 角色管理列表
     public function roles(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.roles.view', 'rbac.manage', 'rbac.users.view', 'rbac.users.create', 'rbac.users.update'])) {
+            return $deny;
+        }
         $roles = DB::table('admin_roles')->orderBy('id', 'ASC')->get();
         // 统计每个角色的用户数量
         foreach ($roles as &$r) {
@@ -177,6 +224,11 @@ class PermissionController extends Controller
     public function saveRole(Request $request): Response
     {
         $id = $request->input('id');
+        if ($deny = $this->assertAnyPermission($id
+            ? ['rbac.roles.update', 'rbac.manage']
+            : ['rbac.roles.create', 'rbac.manage'])) {
+            return $deny;
+        }
         $name = trim((string)$request->input('name', ''));
         $description = (string)$request->input('description', '');
         $permissions = $request->input('permissions', []);
@@ -216,6 +268,9 @@ class PermissionController extends Controller
     // 删除角色
     public function deleteRole(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.roles.delete', 'rbac.manage'])) {
+            return $deny;
+        }
         $id = (int)$request->input('id');
         if ($id <= 1) {
             return $this->error('系统超级管理员角色禁止删除');
@@ -235,6 +290,9 @@ class PermissionController extends Controller
     // 管理用户列表
     public function users(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.users.view', 'rbac.manage'])) {
+            return $deny;
+        }
         DataScope::ensureChildrenTable();
         CompanyService::ensureSchema();
         $page = (int)$request->get('page', 1);
@@ -308,9 +366,15 @@ class PermissionController extends Controller
     // 保存管理用户（新增 / 编辑）
     public function saveUser(Request $request): Response
     {
+        $id = $request->input('id');
+        $need = $id
+            ? ['rbac.users.update', 'rbac.manage']
+            : ['rbac.users.create', 'rbac.manage'];
+        if ($deny = $this->assertAnyPermission($need)) {
+            return $deny;
+        }
         DataScope::ensureChildrenTable();
         CompanyService::ensureSchema();
-        $id = $request->input('id');
         $username = trim((string)$request->input('username', ''));
         $nickname = trim((string)$request->input('nickname', ''));
         $password = (string)$request->input('password', '');
@@ -476,6 +540,9 @@ class PermissionController extends Controller
     // 删除管理用户
     public function deleteUser(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.users.delete', 'rbac.manage'])) {
+            return $deny;
+        }
         DataScope::ensureChildrenTable();
         $id = (int)$request->input('id');
         if ($id === 1) {
@@ -513,6 +580,9 @@ class PermissionController extends Controller
     // 操作日志列表
     public function logs(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.logs.view', 'rbac.log', 'rbac.manage', 'logs.view'])) {
+            return $deny;
+        }
         $page = (int)$request->get('page', 1);
         $pageSize = (int)$request->get('pageSize', 20);
         $keyword = trim((string)$request->get('keyword', ''));
@@ -566,6 +636,9 @@ class PermissionController extends Controller
     // 清空操作审计日志
     public function clearLogs(Request $request): Response
     {
+        if ($deny = $this->assertAnyPermission(['rbac.logs.clear', 'rbac.manage'])) {
+            return $deny;
+        }
         DB::execute("TRUNCATE TABLE admin_logs");
         return $this->success(null, '全部操作审计日志已清空');
     }
