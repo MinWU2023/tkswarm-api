@@ -91,6 +91,11 @@ class RoutePermissionMap
             ['method' => 'GET', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.view', 'system.view', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'PUT', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
+
+            // SMTP：中间件放行已登录超管（*）；控制器再强制 isLoginSuper
+            ['method' => 'GET', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
+            ['method' => 'POST', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
+            ['method' => 'PUT', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/system/backup#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/system/restore#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
@@ -271,6 +276,10 @@ class RoutePermissionMap
             '/api/settings' => [
                 'read' => ['system.settings.view', 'system.view', 'rbac.manage'],
                 'write' => ['system.settings.update', 'system.view', 'rbac.manage'],
+            ],
+            '/api/smtp-config' => [
+                'read' => ['system.smtp', 'admin'],
+                'write' => ['system.smtp', 'admin'],
             ],
             '/api/help-' => ['read' => ['system.help', 'system.view', 'rbac.manage'], 'write' => ['system.help', 'rbac.manage']],
             '/api/tickets' => ['read' => ['system.tickets', 'system.view', 'rbac.manage'], 'write' => ['system.tickets', 'rbac.manage']],

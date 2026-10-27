@@ -20,12 +20,24 @@ class SystemController extends Controller
 
     public function getSettings(Request $request): Response
     {
-        return $this->success(UserSettingsService::getForUser());
+        $map = UserSettingsService::getForUser();
+        // SMTP 仅超管在 /api/smtp-config 管理，基础设置接口不回传
+        foreach (array_keys($map) as $k) {
+            if (str_starts_with((string)$k, 'smtp.')) {
+                unset($map[$k]);
+            }
+        }
+        return $this->success($map);
     }
 
     public function saveSettings(Request $request): Response
     {
         $all = $request->all();
+        foreach (array_keys($all) as $k) {
+            if (str_starts_with((string)$k, 'smtp.')) {
+                unset($all[$k]);
+            }
+        }
         // 兼容参考站 translateMode=normal → basic；旧秒制间隔→分钟
         if (isset($all['translateMode']) && !isset($all['translationMode'])) {
             $all['translationMode'] = $all['translateMode'] === 'normal' ? 'basic' : $all['translateMode'];

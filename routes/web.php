@@ -26,6 +26,7 @@ use App\Controllers\Api\TicketController;
 use App\Controllers\Api\ContactInquiryController;
 use App\Controllers\Api\EnvInstallerController;
 use App\Controllers\Api\AiPlatformController;
+use App\Controllers\Api\SmtpConfigController;
 use App\Controllers\Api\AiPromptTemplateController;
 use App\Controllers\Api\AiCallLogController;
 use App\Controllers\Api\NodeBridgeController;
@@ -108,6 +109,12 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/settings', SystemController::class . '@getSettings');
     Router::post('/api/settings', SystemController::class . '@saveSettings');
     Router::put('/api/settings', SystemController::class . '@saveSettings');
+
+    // 开发管理 · SMTP（仅超管，控制器内二次校验）
+    Router::get('/api/smtp-config', SmtpConfigController::class . '@get');
+    Router::put('/api/smtp-config', SmtpConfigController::class . '@save');
+    Router::post('/api/smtp-config', SmtpConfigController::class . '@save');
+    Router::post('/api/smtp-config/test', SmtpConfigController::class . '@test');
 
     Router::get('/api/meta', MetaController::class . '@index');
     Router::get('/api/meta/dicts/{domain}', MetaController::class . '@dicts');

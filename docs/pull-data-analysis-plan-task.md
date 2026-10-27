@@ -154,7 +154,9 @@ PullDataAnalysisService::enqueueFromWorkItem([
 
 ## 6. SMTP 配置
 
-系统设置 →「邮件 SMTP」，或直接写 `settings` 表：
+**系统管理 → 开发管理 → SMTP 配置**（仅超级管理员），或直接写 `settings` 表：
+
+API：`GET/PUT /api/smtp-config`、`POST /api/smtp-config/test`
 
 | key | 示例 |
 |-----|------|
