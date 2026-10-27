@@ -220,10 +220,12 @@ class CompanyService
                 'updated_at' => $now,
             ]);
 
+            \App\Services\PlanTask\PlanTaskRecipientResolver::ensureAdminEmailColumn();
             $userId = (int)DB::table('admin_users')->insert([
                 'username' => $userData['username'],
                 'password_hash' => $userData['password_hash'],
                 'nickname' => $userData['nickname'],
+                'email' => strtolower(trim((string)($userData['email'] ?? ''))),
                 'role_id' => (int)$userData['role_id'],
                 'company_id' => $companyId,
                 'status' => (int)$userData['status'],

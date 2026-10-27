@@ -11,7 +11,18 @@ use App\Core\Database\DB;
 class UserSettingsService
 {
     /** @var list<string> */
-    private const GLOBAL_KEYS = ['authEnabled', 'landingDownloadWinUrl', 'landingDownloadMacUrl'];
+    private const GLOBAL_KEYS = [
+        'authEnabled',
+        'landingDownloadWinUrl',
+        'landingDownloadMacUrl',
+        'smtp.host',
+        'smtp.port',
+        'smtp.encryption',
+        'smtp.username',
+        'smtp.password',
+        'smtp.from_email',
+        'smtp.from_name',
+    ];
 
     /** @var array<string,bool> */
     private static array $migratedUsers = [];
@@ -39,7 +50,9 @@ class UserSettingsService
 
     public static function isGlobalKey(string $key): bool
     {
-        return in_array($key, self::GLOBAL_KEYS, true) || str_starts_with($key, 'captcha:');
+        return in_array($key, self::GLOBAL_KEYS, true)
+            || str_starts_with($key, 'captcha:')
+            || str_starts_with($key, 'smtp.');
     }
 
     /** 设置归属登录用户（不受身份切换影响） */
@@ -87,6 +100,13 @@ class UserSettingsService
             'authEnabled' => false,
             'landingDownloadWinUrl' => '/lastest.exe',
             'landingDownloadMacUrl' => '/lastest.dmg',
+            'smtp.host' => '',
+            'smtp.port' => '465',
+            'smtp.encryption' => 'ssl',
+            'smtp.username' => '',
+            'smtp.password' => '',
+            'smtp.from_email' => '',
+            'smtp.from_name' => 'TkSwarm',
         ];
     }
 
@@ -116,6 +136,9 @@ class UserSettingsService
             }
             if (!empty($map['translationApiKey'])) {
                 $map['translationApiKey'] = '******';
+            }
+            if (!empty($map['smtp.password'])) {
+                $map['smtp.password'] = '******';
             }
         }
         return $map;

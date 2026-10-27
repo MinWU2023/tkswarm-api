@@ -217,6 +217,32 @@ class AiPromptCatalog
                     ['key' => 'language', 'label' => '语言', 'required' => false, 'default' => '中文', 'type' => 'text'],
                 ],
             ],
+            [
+                'code' => 'pull_data_analysis',
+                'name' => '拉取数据洞察分析',
+                'category' => 'account',
+                'description' => 'Studio 拉取数据后的多维分析：概况/优点/问题原因/方案。变量：account / period / metrics_json / now',
+                'content' => "你是资深 TikTok 账号增长与内容运营顾问。请基于下列账号「{{account}}」在「{{period}}」的拉取数据做中文分析。\n"
+                    . "当前时间：{{now}}\n\n"
+                    . "数据 JSON：\n{{metrics_json}}\n\n"
+                    . "请从粉丝体量、播放/互动、内容表现、转化潜力、风险信号等多方面判断「好与不好」及原因，并给出可执行方案。\n"
+                    . "不要编造数据中不存在的指标；信息不足时明确说明。\n\n"
+                    . "仅输出一个 JSON 对象（不要 markdown），字段固定为：\n"
+                    . "{\n"
+                    . "  \"summary\": \"一段中文概况\",\n"
+                    . "  \"strengths\": [\"亮点1\", \"亮点2\"],\n"
+                    . "  \"issues\": [\"问题及原因1\", \"问题及原因2\"],\n"
+                    . "  \"actions\": [\"可执行方案1\", \"可执行方案2\"],\n"
+                    . "  \"score\": 1\n"
+                    . "}\n"
+                    . "score 为 1～10 的综合健康分（整数）。strengths/issues/actions 至少各 2 条，尽量具体。",
+                'variables' => [
+                    ['key' => 'account', 'label' => '账号', 'required' => true, 'type' => 'text', 'example' => 'demo_account'],
+                    ['key' => 'period', 'label' => '统计周期', 'required' => false, 'default' => '近 28 天', 'type' => 'text'],
+                    ['key' => 'metrics_json', 'label' => '指标 JSON', 'required' => true, 'type' => 'textarea'],
+                    ['key' => 'now', 'label' => '当前时间', 'required' => false, 'default' => '', 'type' => 'text'],
+                ],
+            ],
         ];
     }
 

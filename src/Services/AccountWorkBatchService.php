@@ -1787,6 +1787,15 @@ class AccountWorkBatchService
             self::syncAutoFollowWorkItem($item, $status, $result, $errorMessage);
         }
 
+        if ($status === 'completed' && $type === 'pull_stats') {
+            try {
+                $fresh = DB::selectOne('SELECT * FROM account_work_items WHERE id=?', [$itemId]) ?: $item;
+                \App\Services\PlanTask\PullDataAnalysisService::enqueueFromWorkItem(is_array($fresh) ? $fresh : $item);
+            } catch (\Throwable $e) {
+                error_log('[pull_data_analysis] enqueue failed: ' . $e->getMessage());
+            }
+        }
+
         return [
             'item' => self::formatItem(DB::selectOne('SELECT * FROM account_work_items WHERE id=?', [$itemId]) ?: $item),
             'has_more' => self::hasPendingItems($batchId),

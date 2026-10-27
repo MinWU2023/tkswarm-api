@@ -295,13 +295,14 @@ class PermissionController extends Controller
         }
         DataScope::ensureChildrenTable();
         CompanyService::ensureSchema();
+        \App\Services\PlanTask\PlanTaskRecipientResolver::ensureAdminEmailColumn();
         $page = (int)$request->get('page', 1);
         $pageSize = (int)$request->get('pageSize', 20);
         $keyword = trim((string)$request->get('keyword', ''));
         $status = $request->get('status', null);
 
         $query = DB::table('admin_users')
-            ->select(['id', 'username', 'nickname', 'role_id', 'company_id', 'status', 'created_at', 'updated_at'])
+            ->select(['id', 'username', 'nickname', 'email', 'role_id', 'company_id', 'status', 'created_at', 'updated_at'])
             ->orderBy('id', 'ASC');
 
         if ($status !== null && $status !== '') {
@@ -375,8 +376,10 @@ class PermissionController extends Controller
         }
         DataScope::ensureChildrenTable();
         CompanyService::ensureSchema();
+        \App\Services\PlanTask\PlanTaskRecipientResolver::ensureAdminEmailColumn();
         $username = trim((string)$request->input('username', ''));
         $nickname = trim((string)$request->input('nickname', ''));
+        $email = strtolower(trim((string)$request->input('email', '')));
         $password = (string)$request->input('password', '');
         $roleId = (int)$request->input('role_id', 1);
         $status = (int)$request->input('status', 1);
@@ -393,6 +396,9 @@ class PermissionController extends Controller
 
         if (empty($username)) {
             return $this->error('用户名不能为空');
+        }
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return $this->error('邮箱格式不正确');
         }
 
         $authUser = $GLOBALS['auth_user'] ?? null;
@@ -415,6 +421,7 @@ class PermissionController extends Controller
 
             $update = [
                 'nickname' => $nickname ?: $username,
+                'email' => $email,
                 'role_id' => $roleId,
                 'status' => $status,
                 'updated_at' => date('Y-m-d H:i:s')
@@ -488,6 +495,7 @@ class PermissionController extends Controller
                         'username' => $username,
                         'password_hash' => password_hash($password, PASSWORD_BCRYPT),
                         'nickname' => $nickname ?: $username,
+                        'email' => $email,
                         'role_id' => $roleId,
                         'status' => $status,
                     ],
@@ -505,6 +513,7 @@ class PermissionController extends Controller
                     'username' => $username,
                     'password_hash' => password_hash($password, PASSWORD_BCRYPT),
                     'nickname' => $nickname ?: $username,
+                    'email' => $email,
                     'role_id' => $roleId,
                     'status' => $status,
                     'created_at' => date('Y-m-d H:i:s'),

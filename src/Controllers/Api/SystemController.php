@@ -52,7 +52,7 @@ class SystemController extends Controller
         }
         $filtered = [];
         foreach ($all as $k => $v) {
-            $secretKeys = ['browserApiToken', 'tkswarmBrowserApiToken', 'translationApiKey'];
+            $secretKeys = ['browserApiToken', 'tkswarmBrowserApiToken', 'translationApiKey', 'smtp.password'];
             if (in_array($k, $secretKeys, true) && ($v === '' || $v === '******')) {
                 continue;
             }
