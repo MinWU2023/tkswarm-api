@@ -312,16 +312,27 @@ class MaterialController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        $row = DB::selectOne('SELECT id, owner_id, file_path, path FROM materials WHERE id=?', [(int)$id]);
-        if ($err = $this->assertMaterialOwns($row)) {
+        $row = DB::selectOne(
+            'SELECT id, owner_id, file_path, path, file_name, mime_type FROM materials WHERE id=?',
+            [(int)$id]
+        );
+        // 与 stream 一致：可见即可检测（预览前探测），不要求必须本人可写
+        if ($err = $this->assertMaterialVisible($row)) {
             return $err;
         }
-        $path = $this->resolvePath($row);
-        $exists = $path !== '' && is_file($path);
+        $path = $this->resolveExistingPath($row);
+        $exists = $path !== '';
         $status = $exists ? 'ready' : 'missing';
         DB::query('UPDATE materials SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$status, (int)$id]);
+        $size = $exists ? (int)(filesize($path) ?: 0) : 0;
         return $this->success(
-            ['id' => (int)$id, 'exists' => $exists, 'status' => $status, 'message' => $exists ? '素材文件存在' : '未找到素材文件'],
+            [
+                'id' => (int)$id,
+                'exists' => $exists,
+                'status' => $status,
+                'sizeBytes' => $size,
+                'message' => $exists ? '素材文件存在' : '未找到素材文件',
+            ],
             $exists ? '素材文件存在' : '未找到素材文件'
         );
     }
@@ -448,16 +459,10 @@ class MaterialController extends Controller
         if ($err = $this->assertMaterialVisible($row)) {
             return $err;
         }
-        $path = $this->resolvePath($row);
-        if ($path === '' || !is_file($path)) {
-            // 登记路径可能是别的机器的路径（如本机导入）：按文件名到服务器素材目录兜底查找
-            $base = $path !== '' ? basename(str_replace('\\', '/', $path)) : '';
-            $alt = $base !== '' ? $this->materialDir() . DIRECTORY_SEPARATOR . $base : '';
-            if ($alt !== '' && is_file($alt)) {
-                $path = $alt;
-            } else {
-                return $this->error('素材文件不存在（服务器上找不到：' . ($base !== '' ? $base : '路径为空') . '）', 404);
-            }
+        $path = $this->resolveExistingPath($row);
+        if ($path === '') {
+            $hint = (string)($row['file_name'] ?? basename(str_replace('\\', '/', (string)($row['file_path'] ?? ''))));
+            return $this->error('素材文件不存在（服务器上找不到：' . ($hint !== '' ? $hint : '路径为空') . '）', 404);
         }
         $size = filesize($path) ?: 0;
         $mime = (string)($row['mime_type'] ?: '');
@@ -1000,6 +1005,33 @@ class MaterialController extends Controller
             }
         }
         return $path;
+    }
+
+    /**
+     * 解析实际可读的素材文件路径（含 materialDir 按文件名兜底），供 check / stream 共用。
+     */
+    private function resolveExistingPath(array $row): string
+    {
+        $path = $this->resolvePath($row);
+        if ($path !== '' && is_file($path)) {
+            return $path;
+        }
+        $candidates = [];
+        if ($path !== '') {
+            $candidates[] = basename(str_replace('\\', '/', $path));
+        }
+        $fileName = trim((string)($row['file_name'] ?? ''));
+        if ($fileName !== '') {
+            $candidates[] = basename(str_replace('\\', '/', $fileName));
+        }
+        $dir = $this->materialDir();
+        foreach (array_unique(array_filter($candidates)) as $base) {
+            $alt = $dir . DIRECTORY_SEPARATOR . $base;
+            if (is_file($alt)) {
+                return $alt;
+            }
+        }
+        return '';
     }
 
     private function materialDir(): string

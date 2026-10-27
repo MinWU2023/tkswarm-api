@@ -231,6 +231,7 @@ class AccountBrowserEnvService
     /**
      * 绑定环境到账号（同一 profile 全局唯一；账号可绑多个）。
      * @param string $browserBackend bit|tkswarm|linux
+     * @param int|null $ownerUserIdOverride 超管再绑时可指定耗用额度的管理用户
      * @return array<string,mixed>
      */
     public static function bind(
@@ -238,7 +239,8 @@ class AccountBrowserEnvService
         string $profileId,
         bool $asPrimary = false,
         string $label = '',
-        string $browserBackend = 'bit'
+        string $browserBackend = 'bit',
+        ?int $ownerUserIdOverride = null
     ): array {
         self::ensureSchema();
         $profileId = trim($profileId);
@@ -250,7 +252,14 @@ class AccountBrowserEnvService
         if (!$acc) {
             throw new \InvalidArgumentException('账号不存在');
         }
-        $ownerUserId = DataScope::resolveBrowserEnvOwnerUserId((int)($acc['owner_id'] ?? 0));
+        if ($ownerUserIdOverride !== null && $ownerUserIdOverride > 0) {
+            if (!DataScope::isLoginSuper()) {
+                throw new \RuntimeException('仅超级管理员可为环境指定管理用户归属');
+            }
+            $ownerUserId = $ownerUserIdOverride;
+        } else {
+            $ownerUserId = DataScope::resolveBrowserEnvOwnerUserId((int)($acc['owner_id'] ?? 0));
+        }
 
         $taken = DB::selectOne(
             'SELECT id, account_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',

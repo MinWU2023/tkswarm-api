@@ -66,7 +66,7 @@
     <rect x="122" y="486" width="640" height="196" rx="18" fill="#fdfaf6" stroke="#ecdac7"/>
     <text x="154" y="536" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="21" font-weight="600" fill="#6b564a">eu-shop-03</text>
     <rect x="642" y="514" width="88" height="30" rx="8" fill="#f6ece2" stroke="#ecdac7"/>
-    <text x="686" y="535" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" text-anchor="middle" fill="#a1897a">比特</text>
+    <text x="686" y="535" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" text-anchor="middle" fill="#a1897a">桌面</text>
     <text x="154" y="572" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#8d7768">德国 · 法兰克福　91.200.xx.xx</text>
     <circle cx="160" cy="602" r="6" fill="#c6ae96"/>
     <text x="178" y="608" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#8d7768">离线 · 上次延迟 156ms</text>

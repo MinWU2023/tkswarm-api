@@ -162,16 +162,22 @@ class NodeBridgeController extends Controller
         }
         try {
             $existing = DB::selectOne(
-                'SELECT e.account_id, e.owner_user_id, a.owner_id AS account_owner_id
+                'SELECT e.account_id, e.owner_user_id,
+                        a.id AS account_pk, a.owner_id, a.company_id
                  FROM account_browser_envs e
                  INNER JOIN accounts a ON a.id = e.account_id
                  WHERE e.browser_profile_id = ? LIMIT 1',
                 [$profileId]
             );
             if ($existing) {
-                $effOwner = (int)($existing['owner_user_id'] ?: $existing['account_owner_id'] ?: 0);
-                if (!DataScope::isBrowserEnvOwnerVisible($effOwner)) {
-                    return $this->error('无权操作该浏览器环境', 403);
+                // 环境本机共用：能否操作看「绑定账号是否在可见范围」，不按环境创建者/额度归属拦截
+                $accRow = [
+                    'id' => (int)($existing['account_pk'] ?? $existing['account_id'] ?? 0),
+                    'owner_id' => (int)($existing['owner_id'] ?? 0),
+                    'company_id' => (int)($existing['company_id'] ?? 0),
+                ];
+                if (!DataScope::isAccountRowVisible($accRow)) {
+                    return $this->error('无权操作该浏览器环境（账号不在可见范围）', 403);
                 }
             } elseif (!DataScope::isSuper() && !DataScope::isOpsAdmin() && !DataScope::isEnterpriseCustomer()) {
                 return $this->error('无权绑定未分配环境', 403);
@@ -180,7 +186,21 @@ class NodeBridgeController extends Controller
             $backend = \App\Services\AccountBrowserEnvService::normalizeBackend(
                 (string)$request->input('browserBackend', $request->input('browser_backend', 'bit'))
             );
-            $env = \App\Services\AccountBrowserEnvService::bind((int)$id, $profileId, $asPrimary, '', $backend);
+            $ownerOverrideRaw = $request->input('ownerUserId', $request->input('owner_user_id', $request->input('ownerId')));
+            $ownerOverride = ($ownerOverrideRaw === null || $ownerOverrideRaw === '')
+                ? null
+                : (int)$ownerOverrideRaw;
+            if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()) {
+                return $this->error('仅超级管理员可为环境指定管理用户归属', 403);
+            }
+            $env = \App\Services\AccountBrowserEnvService::bind(
+                (int)$id,
+                $profileId,
+                $asPrimary,
+                '',
+                $backend,
+                ($ownerOverride !== null && $ownerOverride > 0) ? $ownerOverride : null
+            );
             \App\Services\AccountBrowserEnvService::backfillFromAccounts();
             $verify = DB::selectOne(
                 'SELECT id FROM account_browser_envs WHERE account_id=? AND browser_profile_id=? LIMIT 1',

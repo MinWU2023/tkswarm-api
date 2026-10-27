@@ -58,6 +58,7 @@ class AccountController extends Controller
         $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM accounts a LEFT JOIN account_sessions s ON s.account_id=a.id {$where}", $params)['c'] ?? 0);
         $rows = DB::select(self::SELECT . " {$where} ORDER BY a.id DESC LIMIT {$pageSize} OFFSET {$offset}", $params);
         $rows = $this->enrichOwnerMeta($rows);
+        $rows = $this->enrichPickerCardMeta($rows);
         $pages = max(1, (int)ceil($total / $pageSize));
         return $this->success([
             'items' => array_map([$this, 'publicRow'], $rows),
@@ -129,6 +130,7 @@ class AccountController extends Controller
             return $err;
         }
         $enriched = $this->enrichOwnerMeta([$row]);
+        $enriched = $this->enrichPickerCardMeta($enriched);
         return $this->success($this->publicRow($enriched[0] ?? $row));
     }
 
@@ -2579,6 +2581,83 @@ class AccountController extends Controller
         return $rows;
     }
 
+    /**
+     * 选账号卡片所需统计：粉丝/视频/最近同步 + 当日私信配额。
+     * @param list<array<string,mixed>> $rows
+     * @return list<array<string,mixed>>
+     */
+    private function enrichPickerCardMeta(array $rows): array
+    {
+        if (!$rows) {
+            return $rows;
+        }
+        $ids = [];
+        foreach ($rows as $r) {
+            $id = (int)($r['id'] ?? 0);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        if (!$ids) {
+            return $rows;
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $profileMap = [];
+        try {
+            $profiles = DB::select(
+                "SELECT account_id, followers_count, videos_count, last_synced_at
+                 FROM tiktok_profiles WHERE account_id IN ({$ph})",
+                $ids
+            ) ?: [];
+            foreach ($profiles as $p) {
+                $profileMap[(int)$p['account_id']] = $p;
+            }
+        } catch (\Throwable $e) {
+        }
+        $videoSyncMap = [];
+        try {
+            $videoSyncs = DB::select(
+                "SELECT account_id, MAX(last_synced_at) AS last_video_at
+                 FROM tiktok_videos WHERE account_id IN ({$ph}) GROUP BY account_id",
+                $ids
+            ) ?: [];
+            foreach ($videoSyncs as $v) {
+                $videoSyncMap[(int)$v['account_id']] = (string)($v['last_video_at'] ?? '');
+            }
+        } catch (\Throwable $e) {
+        }
+        $dmMap = [];
+        try {
+            $today = date('Y-m-d');
+            $dailies = DB::select(
+                "SELECT account_id, times, daily_limit
+                 FROM ai_lead_account_daily WHERE date=? AND account_id IN ({$ph})",
+                array_merge([$today], $ids)
+            ) ?: [];
+            foreach ($dailies as $d) {
+                $dmMap[(int)$d['account_id']] = $d;
+            }
+        } catch (\Throwable $e) {
+        }
+
+        foreach ($rows as &$row) {
+            $id = (int)($row['id'] ?? 0);
+            $p = $profileMap[$id] ?? null;
+            $row['followers_count'] = (int)($p['followers_count'] ?? 0);
+            $row['videos_count'] = (int)($p['videos_count'] ?? 0);
+            $profileSynced = trim((string)($p['last_synced_at'] ?? ''));
+            $row['profile_synced_at'] = $profileSynced;
+            $videoAt = trim((string)($videoSyncMap[$id] ?? ''));
+            $row['last_video_at'] = $videoAt !== '' ? $videoAt : $profileSynced;
+            $dm = $dmMap[$id] ?? null;
+            $row['dm_used'] = (int)($dm['times'] ?? 0);
+            $row['dm_limit'] = (int)($dm['daily_limit'] ?? 0);
+        }
+        unset($row);
+        return $rows;
+    }
+
     private function publicRow(?array $row): ?array
     {
         if (!$row) {
@@ -2598,6 +2677,11 @@ class AccountController extends Controller
         if (!empty($row['has_fingerprint'])) {
             $row['fingerprint'] = '1';
         }
+        $row['followers_count'] = (int)($row['followers_count'] ?? 0);
+        $row['videos_count'] = (int)($row['videos_count'] ?? 0);
+        $row['last_video_at'] = (string)($row['last_video_at'] ?? '');
+        $row['dm_used'] = (int)($row['dm_used'] ?? 0);
+        $row['dm_limit'] = (int)($row['dm_limit'] ?? 0);
         return $row;
     }
 

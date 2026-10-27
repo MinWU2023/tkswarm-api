@@ -23,7 +23,8 @@ class CorsMiddleware
         }
         header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
         header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Acting-As');
-        header('Access-Control-Expose-Headers: Content-Disposition, Content-Type');
+        // 跨域 <video> Range 探测需要暴露这些头，否则浏览器会一直转圈加载不了
+        header('Access-Control-Expose-Headers: Content-Disposition, Content-Type, Content-Length, Accept-Ranges, Content-Range');
         header('Access-Control-Max-Age: 86400');
     }
 
@@ -42,7 +43,7 @@ class CorsMiddleware
         $headers = [
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Acting-As',
-            'Access-Control-Expose-Headers' => 'Content-Disposition, Content-Type',
+            'Access-Control-Expose-Headers' => 'Content-Disposition, Content-Type, Content-Length, Accept-Ranges, Content-Range',
             'Access-Control-Max-Age' => '86400',
         ];
         if ($origin !== '') {

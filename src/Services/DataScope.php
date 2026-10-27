@@ -882,7 +882,12 @@ class DataScope
         self::applyAccountListScope("{$aAlias}.owner_id", $filters, $params);
     }
 
-    /** 绑定环境时写入 owner_user_id：仅企业客户创建时绑定本人；超管/运营管理创建不绑定 */
+    /**
+     * 绑定环境时写入 owner_user_id：
+     * - 企业客户创建：绑定本人
+     * - 超管再绑并传入 override：用指定管理用户（见 AccountBrowserEnvService::bind）
+     * - 其余默认 0（不占用具体用户额度归属，由本机浏览器 owner_id 另计）
+     */
     public static function resolveBrowserEnvOwnerUserId(int $accountOwnerId): int
     {
         if (self::isEnterpriseCustomer()) {
@@ -892,9 +897,16 @@ class DataScope
         return 0;
     }
 
+    /**
+     * 环境归属是否对当前身份「可见」——按账号归属语义，不套代理「超管只能看未分配」。
+     * owner_user_id 仅额度/创建者归属；0 = 未指定（本机共用额度）。
+     */
     public static function isBrowserEnvOwnerVisible(int $ownerUserId): bool
     {
-        return self::isProxyOwnerVisible($ownerUserId);
+        if ($ownerUserId <= 0) {
+            return self::canEditBrowserEnvs() || self::isOperator() || self::isSuper() || self::isOpsAdmin();
+        }
+        return self::isAccountOwnerVisible($ownerUserId);
     }
 
     public static function canEditBrowserEnvs(): bool
@@ -902,10 +914,24 @@ class DataScope
         return self::canCreateBrowserEnvs();
     }
 
-    /** 是否可编辑/删除该浏览器环境行（与代理行权限一致） */
+    /**
+     * 是否可解绑/绑定/删该浏览器环境行。
+     * 环境本机共用：不套用代理「超管只能改未分配」；有创建/编辑环境权限即可管理可见环境。
+     */
     public static function canEditBrowserEnvRow(?array $row, string $field = 'owner_user_id'): bool
     {
-        return self::canEditProxyRow($row, $field);
+        if (!self::canEditBrowserEnvs() || !$row) {
+            return false;
+        }
+        if (self::isSuper() || self::isOpsAdmin()) {
+            return true;
+        }
+        if (self::isEnterpriseCustomer()) {
+            $ownerId = (int)($row[$field] ?? 0);
+            $selfId = (int)(self::effectiveUser()['id'] ?? 0);
+            return $ownerId <= 0 || $ownerId === $selfId;
+        }
+        return false;
     }
 
     /** 超管/运营管理可删本机未绑定孤儿窗；已分配给他人（有效归属>0）的不可当孤儿删 */

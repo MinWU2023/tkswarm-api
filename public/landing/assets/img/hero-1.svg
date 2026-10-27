@@ -50,7 +50,7 @@
     <line x1="118" y1="440" x2="312" y2="440" stroke="#f0e2d2"/>
     <text x="118" y="482" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" letter-spacing="1.5" fill="#a1897a">环境类型</text>
     <circle cx="126" cy="518" r="6" fill="#f7921e"/>
-    <text x="146" y="524" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">比特 412</text>
+    <text x="146" y="524" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">桌面 412</text>
     <circle cx="126" cy="560" r="6" fill="#df5f2b"/>
     <text x="146" y="566" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">自研 386</text>
     <circle cx="126" cy="602" r="6" fill="#c6ae96"/>
@@ -98,7 +98,7 @@
       <text x="404" y="475" font-size="14" font-weight="600" text-anchor="middle" fill="#a1897a">EU</text>
       <text x="436" y="476" font-size="20" fill="#1d1310">@shop_eu_03</text>
       <rect x="800" y="454" width="84" height="30" rx="8" fill="#f6ece2" stroke="#ecdac7"/>
-      <text x="842" y="475" font-size="15" text-anchor="middle" fill="#a1897a">比特</text>
+      <text x="842" y="475" font-size="15" text-anchor="middle" fill="#a1897a">桌面</text>
       <circle cx="1046" cy="469" r="6" fill="#c6ae96"/>
       <text x="1064" y="476" font-size="17" fill="#6b564a">离线</text>
       <rect x="1220" y="465" width="210" height="10" rx="5" fill="#f4e7d8"/>
