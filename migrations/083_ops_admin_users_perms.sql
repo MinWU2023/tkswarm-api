@@ -1,0 +1,14 @@
+-- 运营管理「管理用户」无权限修复说明
+--
+-- 根因：细粒度拆分后，角色常只勾了 menu.630（管理用户菜单），缺少
+-- rbac.users.view / create / update / delete（及编辑用户所需的 rbac.roles.view）。
+--
+-- 自动修复（推荐）：重启 API 或访问任意会触发 SeedMeta 的接口（如 GET /api/meta），
+-- PermissionCatalog::ensureSplitNodes 会：
+--   1) 按已勾菜单 view/subview 补齐对应细节点
+--   2) 对名称含「运营管理」的角色强制写入上述 users/roles.view 权限
+--
+-- 手工核对：
+--   SELECT id, name, permissions FROM admin_roles WHERE name LIKE '%运营管理%';
+--   SELECT id, code FROM admin_permissions
+--     WHERE code IN ('rbac.users.view','rbac.users.create','rbac.users.update','rbac.users.delete','rbac.roles.view');

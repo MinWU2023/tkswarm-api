@@ -263,9 +263,97 @@ class PermissionCatalog
         try {
             self::upsertNodes();
             self::migrateRoles();
+            self::ensureOpsAdminUserPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
             error_log('[PermissionCatalog] ensureSplitNodes: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 菜单 view|subview → 细粒度功能码。
+     * 角色勾了对应 menu.* 但未勾细节点时，页面会进得去却被前端/API 拦截。
+     * @return array<string, list<string>>
+     */
+    private static function menuViewFineCodes(): array
+    {
+        return [
+            'rbac|users' => [
+                'rbac.users.view', 'rbac.users.create', 'rbac.users.update', 'rbac.users.delete',
+                'rbac.roles.view',
+            ],
+            'rbac|roles' => [
+                'rbac.roles.view', 'rbac.roles.create', 'rbac.roles.update', 'rbac.roles.delete',
+            ],
+            'rbac|permissions' => [
+                'rbac.permissions.view', 'rbac.permissions.create', 'rbac.permissions.update', 'rbac.permissions.delete',
+            ],
+            'rbac|menus' => ['rbac.menus.view', 'rbac.menus.update'],
+            'rbac|logs' => ['rbac.logs.view', 'rbac.log'],
+            'rbac|country_data' => [
+                'rbac.country_data', 'rbac.country_data.view', 'rbac.country_data.create',
+                'rbac.country_data.update', 'rbac.country_data.delete',
+            ],
+            'rbac|industry_data' => [
+                'rbac.industry_data', 'rbac.industry_data.view', 'rbac.industry_data.create',
+                'rbac.industry_data.update', 'rbac.industry_data.delete',
+            ],
+            'rbac|company_data' => [
+                'rbac.company_data', 'rbac.company_data.view', 'rbac.company_data.create',
+                'rbac.company_data.update', 'rbac.company_data.delete',
+            ],
+        ];
+    }
+
+    /** 运营管理：保证可打开并维护「管理用户」列表（含选角色） */
+    private static function ensureOpsAdminUserPerms(): void
+    {
+        $needCodes = [
+            'rbac.users.view', 'rbac.users.create', 'rbac.users.update', 'rbac.users.delete',
+            'rbac.roles.view',
+        ];
+        $codeToId = [];
+        foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
+            $codeToId[(string)$row['code']] = (int)$row['id'];
+        }
+        $needIds = [];
+        foreach ($needCodes as $code) {
+            if (!empty($codeToId[$code])) {
+                $needIds[] = (int)$codeToId[$code];
+            }
+        }
+        if (!$needIds) {
+            return;
+        }
+        $roles = DB::select("SELECT id, permissions FROM admin_roles WHERE name LIKE '%运营管理%'");
+        foreach ($roles as $role) {
+            $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
+            if (!is_array($ids) || in_array('*', $ids, true)) {
+                continue;
+            }
+            $set = [];
+            foreach ($ids as $raw) {
+                $id = (int)$raw;
+                if ($id > 0) {
+                    $set[$id] = true;
+                }
+            }
+            $changed = false;
+            foreach ($needIds as $nid) {
+                if (!isset($set[$nid])) {
+                    $set[$nid] = true;
+                    $changed = true;
+                }
+            }
+            if (!$changed) {
+                continue;
+            }
+            $newIds = array_map('strval', array_keys($set));
+            sort($newIds, SORT_NUMERIC);
+            DB::query(
+                'UPDATE admin_roles SET permissions=? WHERE id=?',
+                [json_encode($newIds, JSON_UNESCAPED_UNICODE), (int)$role['id']]
+            );
         }
     }
 
@@ -363,6 +451,29 @@ class PermissionCatalog
                 foreach ($codeExpand[$code] ?? [] as $extraCode) {
                     if (isset($codeToId[$extraCode])) {
                         $set[$codeToId[$extraCode]] = true;
+                    }
+                }
+            }
+            // 已勾菜单但未勾细节点：按菜单 view/subview 补齐功能码
+            $menuIds = [];
+            foreach ($heldCodes as $code) {
+                if (preg_match('/^menu\.(\d+)$/', (string)$code, $m)) {
+                    $menuIds[] = (int)$m[1];
+                }
+            }
+            if ($menuIds) {
+                $ph = implode(',', array_fill(0, count($menuIds), '?'));
+                $menuRows = DB::select(
+                    "SELECT id, view, subview FROM navigation_menus WHERE id IN ({$ph})",
+                    $menuIds
+                ) ?: [];
+                $menuMap = self::menuViewFineCodes();
+                foreach ($menuRows as $menu) {
+                    $key = trim((string)($menu['view'] ?? '')) . '|' . trim((string)($menu['subview'] ?? ''));
+                    foreach ($menuMap[$key] ?? [] as $extraCode) {
+                        if (isset($codeToId[$extraCode])) {
+                            $set[$codeToId[$extraCode]] = true;
+                        }
                     }
                 }
             }
