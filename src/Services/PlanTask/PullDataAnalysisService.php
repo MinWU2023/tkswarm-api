@@ -289,14 +289,12 @@ class PullDataAnalysisService
                 return ['ok' => true, 'id' => $id, 'status' => 'skipped'];
             }
 
-            $payload = json_decode((string)($row['payload_json'] ?? '{}'), true) ?: [];
-            if (!$payload) {
-                $payload = self::collectMetricsSnapshot((int)$row['account_id']);
-                DB::query(
-                    'UPDATE plan_tasks SET payload_json=?, updated_at=NOW() WHERE id=?',
-                    [json_encode($payload, JSON_UNESCAPED_UNICODE), $id]
-                );
-            }
+            // 发送时重新采集，确保邮件含完整日走势/快照走势（手动与计划任务共用）
+            $payload = self::collectMetricsSnapshot((int)$row['account_id']);
+            DB::query(
+                'UPDATE plan_tasks SET payload_json=?, updated_at=NOW() WHERE id=?',
+                [json_encode($payload, JSON_UNESCAPED_UNICODE), $id]
+            );
 
             $ai = self::runAiAnalysis($payload);
             $mailVars = self::buildMailVariables($payload, $ai['parsed'], $ai['raw']);
@@ -416,6 +414,18 @@ class PullDataAnalysisService
         } catch (\Throwable $e) {
         }
 
+        $snapshots = [];
+        try {
+            // 与查看数据页一致：取最近 30 条，再按时间升序供走势使用
+            $snapshotsDesc = DB::select(
+                'SELECT captured_at, followers_count, following_count, likes_count, videos_count
+                 FROM tiktok_stat_snapshots WHERE account_id=? ORDER BY captured_at DESC LIMIT 30',
+                [$accountId]
+            ) ?: [];
+            $snapshots = array_reverse($snapshotsDesc);
+        } catch (\Throwable $e) {
+        }
+
         $totals = [
             'video_views' => 0,
             'profile_views' => 0,
@@ -433,6 +443,28 @@ class PullDataAnalysisService
             $totals['shares_count'] += (int)($day['shares_count'] ?? 0);
             $totals['est_rewards'] += (float)($day['est_rewards'] ?? 0);
         }
+
+        $dailyRows = array_map(static function ($day) {
+            return [
+                'metric_date' => (string)($day['metric_date'] ?? ''),
+                'video_views' => (int)($day['video_views'] ?? 0),
+                'profile_views' => (int)($day['profile_views'] ?? 0),
+                'likes_count' => (int)($day['likes_count'] ?? 0),
+                'comments_count' => (int)($day['comments_count'] ?? 0),
+                'shares_count' => (int)($day['shares_count'] ?? 0),
+                'est_rewards' => (float)($day['est_rewards'] ?? 0),
+            ];
+        }, $analytics);
+
+        $snapshotRows = array_map(static function ($s) {
+            return [
+                'captured_at' => (string)($s['captured_at'] ?? ''),
+                'followers_count' => (int)($s['followers_count'] ?? 0),
+                'following_count' => (int)($s['following_count'] ?? 0),
+                'likes_count' => (int)($s['likes_count'] ?? 0),
+                'videos_count' => (int)($s['videos_count'] ?? 0),
+            ];
+        }, $snapshots);
 
         return [
             'collectedAt' => date('Y-m-d H:i:s'),
@@ -457,8 +489,10 @@ class PullDataAnalysisService
             ] : null,
             'analytics28d' => [
                 'totals' => $totals,
-                'daily' => array_slice($analytics, -14),
+                // 完整日序列供邮件走势与 AI 趋势判断（原先仅截取末 14 天）
+                'daily' => $dailyRows,
             ],
+            'snapshots' => $snapshotRows,
             'studioMetrics' => array_slice($metrics, 0, 80),
             'topContent' => array_map(static function ($c) {
                 return [
@@ -618,6 +652,7 @@ class PullDataAnalysisService
                 . '</tr><tr>'
                 . implode('', array_map(static fn ($c) => '<td style="width:33%;padding:4px;">' . $c . '</td>', array_slice($cards, 3, 3)))
                 . '</tr></table>',
+            'trends_html' => self::buildTrendsHtml($payload),
             'summary_html' => self::escHtml($summary !== '' ? $summary : '暂无概况'),
             'strengths_html' => self::listHtml($ai['strengths'] ?? [], '暂无明显亮点，建议持续观察数据趋势。'),
             'issues_html' => self::listHtml($ai['issues'] ?? [], '暂未识别出显著问题。'),
@@ -625,6 +660,207 @@ class PullDataAnalysisService
             'raw_metrics_html' => self::escHtml(self::rawMetricsText($payload)),
             'footer_note' => '本邮件由 TkSwarm 计划任务自动生成，请勿直接回复。',
         ];
+    }
+
+    /**
+     * 邮件内「各类数据走势」：近 28 天 Studio 日指标 + 历史快照（与查看数据页折线图同源）。
+     *
+     * @param array<string,mixed> $payload
+     */
+    private static function buildTrendsHtml(array $payload): string
+    {
+        $daily = $payload['analytics28d']['daily'] ?? [];
+        if (!is_array($daily)) {
+            $daily = [];
+        }
+        $snapshots = $payload['snapshots'] ?? [];
+        if (!is_array($snapshots)) {
+            $snapshots = [];
+        }
+
+        $parts = [];
+        $parts[] = self::dailyTrendBlock($daily);
+        $parts[] = self::snapshotTrendBlock($snapshots);
+        return implode('', $parts);
+    }
+
+    /** @param list<array<string,mixed>> $daily */
+    private static function dailyTrendBlock(array $daily): string
+    {
+        if (!$daily) {
+            return '<div style="border:1px solid #e8edf3;border-radius:12px;padding:16px 18px;margin-bottom:14px;color:#64748b;font-size:13px;">暂无近 28 天日指标走势，请先拉取 Studio 数据。</div>';
+        }
+
+        $series = [
+            ['key' => 'video_views', 'name' => '播放', 'color' => '#409EFF', 'float' => false],
+            ['key' => 'profile_views', 'name' => '主页浏览', 'color' => '#67C23A', 'float' => false],
+            ['key' => 'likes_count', 'name' => '点赞', 'color' => '#E6A23C', 'float' => false],
+            ['key' => 'comments_count', 'name' => '评论', 'color' => '#F56C6C', 'float' => false],
+            ['key' => 'shares_count', 'name' => '转发', 'color' => '#909399', 'float' => false],
+            ['key' => 'est_rewards', 'name' => '预估收益', 'color' => '#9B59B6', 'float' => true],
+        ];
+
+        $sparkRows = '';
+        foreach (array_chunk($series, 3) as $chunk) {
+            $cells = '';
+            foreach ($chunk as $s) {
+                $vals = [];
+                foreach ($daily as $row) {
+                    $vals[] = $s['float']
+                        ? (float)($row[$s['key']] ?? 0)
+                        : (float)(int)($row[$s['key']] ?? 0);
+                }
+                $delta = self::trendDeltaLabel($vals, $s['float']);
+                $cells .= '<td style="width:33%;padding:4px;vertical-align:top;">'
+                    . '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">'
+                    . '<div style="font-size:12px;color:#64748b;margin-bottom:4px;">' . self::escHtml($s['name'])
+                    . ' <span style="color:#94a3b8;">' . self::escHtml($delta) . '</span></div>'
+                    . self::sparklineSvg($vals, $s['color'], 180, 40)
+                    . '</div></td>';
+            }
+            while (substr_count($cells, '<td') < 3) {
+                $cells .= '<td style="width:33%;padding:4px;"></td>';
+            }
+            $sparkRows .= '<tr>' . $cells . '</tr>';
+        }
+
+        // 表格过大时只展示末 14 天明细，折线仍用全量
+        $tableRows = array_slice($daily, -14);
+        $tbody = '';
+        foreach ($tableRows as $row) {
+            $date = (string)($row['metric_date'] ?? '');
+            $label = strlen($date) >= 10 ? substr($date, 5, 5) : $date;
+            $tbody .= '<tr>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;white-space:nowrap;">' . self::escHtml($label) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['video_views'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['profile_views'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['likes_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['comments_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['shares_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(number_format((float)($row['est_rewards'] ?? 0), 2)) . '</td>'
+                . '</tr>';
+        }
+
+        return '<div style="border:1px solid #e8edf3;border-radius:12px;padding:18px 20px;margin-bottom:14px;">'
+            . '<div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:4px;">近 28 天数据走势</div>'
+            . '<div style="font-size:12px;color:#94a3b8;margin-bottom:12px;">共 ' . count($daily) . ' 天 · 折线为全量，明细表展示最近 ' . count($tableRows) . ' 天</div>'
+            . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px;">' . $sparkRows . '</table>'
+            . '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;color:#334155;">'
+            . '<thead><tr style="background:#f1f5f9;color:#64748b;">'
+            . '<th style="padding:7px 8px;text-align:left;font-weight:600;">日期</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">播放</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">主页</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">点赞</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">评论</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">转发</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">收益</th>'
+            . '</tr></thead><tbody>' . $tbody . '</tbody></table>'
+            . '</div>';
+    }
+
+    /** @param list<array<string,mixed>> $snapshots */
+    private static function snapshotTrendBlock(array $snapshots): string
+    {
+        if (!$snapshots) {
+            return '<div style="border:1px solid #e8edf3;border-radius:12px;padding:16px 18px;margin-bottom:14px;color:#64748b;font-size:13px;">暂无历史快照走势，拉取数据后会自动生成。</div>';
+        }
+
+        $series = [
+            ['key' => 'followers_count', 'name' => '粉丝', 'color' => '#409EFF'],
+            ['key' => 'following_count', 'name' => '关注', 'color' => '#67C23A'],
+            ['key' => 'likes_count', 'name' => '获赞', 'color' => '#E6A23C'],
+        ];
+
+        $sparkRows = '';
+        $cells = '';
+        foreach ($series as $s) {
+            $vals = [];
+            foreach ($snapshots as $row) {
+                $vals[] = (float)(int)($row[$s['key']] ?? 0);
+            }
+            $delta = self::trendDeltaLabel($vals, false);
+            $cells .= '<td style="width:33%;padding:4px;vertical-align:top;">'
+                . '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">'
+                . '<div style="font-size:12px;color:#64748b;margin-bottom:4px;">' . self::escHtml($s['name'])
+                . ' <span style="color:#94a3b8;">' . self::escHtml($delta) . '</span></div>'
+                . self::sparklineSvg($vals, $s['color'], 180, 40)
+                . '</div></td>';
+        }
+        $sparkRows = '<tr>' . $cells . '</tr>';
+
+        $tbody = '';
+        // 展示全部快照（最多 30），时间倒序更易读近期
+        $rowsDesc = array_reverse($snapshots);
+        foreach ($rowsDesc as $row) {
+            $t = (string)($row['captured_at'] ?? '');
+            $label = strlen($t) >= 16 ? substr($t, 5, 11) : $t;
+            $tbody .= '<tr>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;white-space:nowrap;">' . self::escHtml($label) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['followers_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['following_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['likes_count'] ?? 0))) . '</td>'
+                . '<td style="padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:right;">' . self::escHtml(self::fmtNum((int)($row['videos_count'] ?? 0))) . '</td>'
+                . '</tr>';
+        }
+
+        return '<div style="border:1px solid #e8edf3;border-radius:12px;padding:18px 20px;margin-bottom:14px;">'
+            . '<div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:4px;">历史快照走势</div>'
+            . '<div style="font-size:12px;color:#94a3b8;margin-bottom:12px;">共 ' . count($snapshots) . ' 次快照 · 折线按时间升序，明细表按时间倒序</div>'
+            . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px;">' . $sparkRows . '</table>'
+            . '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;color:#334155;">'
+            . '<thead><tr style="background:#f1f5f9;color:#64748b;">'
+            . '<th style="padding:7px 8px;text-align:left;font-weight:600;">时间</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">粉丝</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">关注</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">获赞</th>'
+            . '<th style="padding:7px 8px;text-align:right;font-weight:600;">作品</th>'
+            . '</tr></thead><tbody>' . $tbody . '</tbody></table>'
+            . '</div>';
+    }
+
+    /** @param list<float|int> $values */
+    private static function trendDeltaLabel(array $values, bool $asFloat): string
+    {
+        if (count($values) < 2) {
+            return '';
+        }
+        $first = (float)$values[0];
+        $last = (float)$values[count($values) - 1];
+        $diff = $last - $first;
+        if (abs($diff) < 0.0001) {
+            return '持平';
+        }
+        $sign = $diff > 0 ? '+' : '-';
+        if ($asFloat) {
+            return $sign . number_format(abs($diff), 2);
+        }
+        return $sign . self::fmtNum((int)round(abs($diff)));
+    }
+
+    /** @param list<float|int> $values */
+    private static function sparklineSvg(array $values, string $color, int $w = 180, int $h = 40): string
+    {
+        $n = count($values);
+        if ($n < 2) {
+            return '<div style="height:' . $h . 'px;color:#cbd5e1;font-size:11px;line-height:' . $h . 'px;">数据点不足</div>';
+        }
+        $min = min($values);
+        $max = max($values);
+        $range = $max - $min;
+        if ($range <= 0) {
+            $range = 1;
+        }
+        $pts = [];
+        for ($i = 0; $i < $n; $i++) {
+            $x = ($i / ($n - 1)) * ($w - 2) + 1;
+            $y = ($h - 1) - (((float)$values[$i] - $min) / $range) * ($h - 2);
+            $pts[] = round($x, 1) . ',' . round($y, 1);
+        }
+        $poly = implode(' ', $pts);
+        $safeColor = preg_match('/^#[0-9A-Fa-f]{3,8}$/', $color) ? $color : '#409EFF';
+        return '<svg width="' . $w . '" height="' . $h . '" viewBox="0 0 ' . $w . ' ' . $h . '" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true" style="display:block;width:100%;max-width:' . $w . 'px;height:auto;">'
+            . '<polyline fill="none" stroke="' . $safeColor . '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="' . $poly . '"/>'
+            . '</svg>';
     }
 
     private static function metricCard(string $label, string $value): string

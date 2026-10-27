@@ -105,6 +105,7 @@ class MailTemplateCatalog
                     ['key' => 'report_date', 'label' => '报告日期', 'required' => true],
                     ['key' => 'period', 'label' => '统计周期', 'required' => false, 'default' => '近 28 天'],
                     ['key' => 'metric_cards_html', 'label' => '指标卡片 HTML', 'required' => false, 'default' => ''],
+                    ['key' => 'trends_html', 'label' => '数据走势 HTML', 'required' => false, 'default' => ''],
                     ['key' => 'summary_html', 'label' => '概况', 'required' => false, 'default' => ''],
                     ['key' => 'strengths_html', 'label' => '优点', 'required' => false, 'default' => ''],
                     ['key' => 'issues_html', 'label' => '问题与原因', 'required' => false, 'default' => ''],
@@ -145,6 +146,12 @@ class MailTemplateCatalog
             <td style="padding:28px 32px 8px;">
               <div style="font-size:13px;font-weight:600;color:#64748b;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:12px;">关键指标</div>
               {{metric_cards_html}}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 8px;">
+              <div style="font-size:13px;font-weight:600;color:#64748b;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:12px;">数据走势</div>
+              {{trends_html}}
             </td>
           </tr>
           <tr>
