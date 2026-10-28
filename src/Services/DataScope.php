@@ -11,7 +11,7 @@ use App\Core\Response;
  * 管理用户数据壁垒：
  * - 超管：全部账号
  * - 运营管理：运营专员/企业客户已分配账号 + 公海（无归属/无企业/无行业）
- * - 运营专员：本人 + 关联企业客户账号 + 公海（公海不含其他运营专员已分配账号）
+ * - 运营专员：本人 + 关联企业下企业客户账号 + 公共池（未绑用户、未绑企业、但已绑行业）
  * - 企业客户：本人 owner_id + 关联企业 company_id 的账号
  * - 切换身份（Acting-As）：按目标角色的可见范围（含公海，企业客户除外）
  * - 账号/代理/环境创建·导入：超管/运营管理不绑定 owner/企业/行业；企业客户绑定本人+企业+行业；运营专员禁止创建/导入
@@ -1149,6 +1149,9 @@ class DataScope
         if (!$account) {
             return false;
         }
+        if (self::isOperator()) {
+            return self::isOperatorAccountRowVisible($account);
+        }
         if (!self::isEnterpriseCustomer()) {
             return self::isAccountOwnerVisible((int)($account['owner_id'] ?? 0));
         }
@@ -1180,11 +1183,15 @@ class DataScope
             if ($ownerId === $selfId) {
                 return true;
             }
+            if ($ownerId <= 0) {
+                // 无归属账号需结合 company_id/industry_id 判断，见 isOperatorAccountRowVisible
+                return true;
+            }
             if (self::isOtherOperatorOwner($ownerId)) {
                 return false;
             }
-            return self::userHasScopedRole($ownerId, ['企业客户'], self::operatorCompanyIds())
-                || self::isUnscopedOwnerId($ownerId);
+            // 有归属时仅本人 + 关联企业客户；不再把「无企业/无行业用户」当公共池
+            return self::userHasScopedRole($ownerId, ['企业客户'], self::operatorCompanyIds());
         }
         return $ownerId === (int)(self::effectiveUser()['id'] ?? 0);
     }
@@ -1398,12 +1405,80 @@ class DataScope
         ];
     }
 
-    /** 运营专员可见公海：无归属/无企业/无行业，但排除其他运营专员已分配账号 */
-    private static function operatorAccountPublicPoolExpr(string $column): string
+    /**
+     * 运营专员可见公共池：账号未绑定用户、未绑定企业，但已绑定行业。
+     * （不再使用「归属用户无企业/无行业」那种宽公海。）
+     */
+    private static function operatorAccountPublicPoolExpr(string $ownerColumn): string
     {
-        $unscoped = self::unscopedOwnerExpr($column);
-        $otherOperators = self::scopedRoleOwnerSubquery(['运营专员']);
-        return "(({$unscoped}) AND ({$column} IS NULL OR {$column} = 0 OR {$column} NOT IN ({$otherOperators})))";
+        $companyColumn = preg_replace('/owner_id\b/', 'company_id', $ownerColumn) ?: 'company_id';
+        $industryColumn = preg_replace('/owner_id\b/', 'industry_id', $ownerColumn) ?: 'industry_id';
+        return "(
+            ({$ownerColumn} IS NULL OR {$ownerColumn} = 0)
+            AND ({$companyColumn} IS NULL OR {$companyColumn} = 0)
+            AND ({$industryColumn} IS NOT NULL AND {$industryColumn} > 0)
+        )";
+    }
+
+    /**
+     * 运营专员单行可见：本人 / 关联企业客户账号 / 公共池（无用户无企业有行业）。
+     *
+     * @param array<string,mixed> $account
+     */
+    private static function isOperatorAccountRowVisible(array $account): bool
+    {
+        $account = self::hydrateAccountScopeFields($account);
+        $selfId = (int)(self::effectiveUser()['id'] ?? 0);
+        $ownerId = (int)($account['owner_id'] ?? 0);
+        if ($ownerId > 0) {
+            if ($ownerId === $selfId) {
+                return true;
+            }
+            if (self::isOtherOperatorOwner($ownerId)) {
+                return false;
+            }
+            return self::userHasScopedRole($ownerId, ['企业客户'], self::operatorCompanyIds());
+        }
+        $companyId = (int)($account['company_id'] ?? 0);
+        $industryId = (int)($account['industry_id'] ?? 0);
+        return $companyId <= 0 && $industryId > 0;
+    }
+
+    /**
+     * 补齐 owner/company/industry，避免详情/写操作只查了 owner_id 时误判公共池。
+     *
+     * @param array<string,mixed> $account
+     * @return array<string,mixed>
+     */
+    private static function hydrateAccountScopeFields(array $account): array
+    {
+        $needOwner = !array_key_exists('owner_id', $account);
+        $needCompany = !array_key_exists('company_id', $account);
+        $needIndustry = !array_key_exists('industry_id', $account);
+        if (!$needOwner && !$needCompany && !$needIndustry) {
+            return $account;
+        }
+        $id = (int)($account['id'] ?? 0);
+        if ($id <= 0) {
+            return $account;
+        }
+        $row = DB::selectOne(
+            'SELECT owner_id, company_id, industry_id FROM accounts WHERE id=?',
+            [$id]
+        );
+        if (!$row) {
+            return $account;
+        }
+        if ($needOwner) {
+            $account['owner_id'] = $row['owner_id'] ?? 0;
+        }
+        if ($needCompany) {
+            $account['company_id'] = $row['company_id'] ?? 0;
+        }
+        if ($needIndustry) {
+            $account['industry_id'] = $row['industry_id'] ?? 0;
+        }
+        return $account;
     }
 
     private static function isOtherOperatorOwner(int $ownerId): bool
@@ -1613,6 +1688,9 @@ class DataScope
     {
         if (!$account) {
             return false;
+        }
+        if (self::isOperator()) {
+            return self::isOperatorAccountRowVisible($account);
         }
         if (!array_key_exists('owner_id', $account)) {
             return self::ownsRow($account);

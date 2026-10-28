@@ -901,6 +901,7 @@ class NodeBridgeController extends Controller
             "SELECT a.id, a.username, a.nickname, e.browser_profile_id, a.login_status, e.saturation,
                     e.browser_backend, e.browser_type, e.owner_user_id,
                     a.owner_id AS account_owner_id, a.company_id AS account_company_id,
+                    a.industry_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM account_browser_envs e
              INNER JOIN accounts a ON a.id=e.account_id
@@ -913,7 +914,7 @@ class NodeBridgeController extends Controller
             $row = DB::selectOne(
                 "SELECT a.id, a.username, a.nickname, a.browser_profile_id, a.login_status,
                         a.browser_backend, a.owner_id AS owner_user_id, a.owner_id AS account_owner_id,
-                        a.company_id AS account_company_id,
+                        a.company_id AS account_company_id, a.industry_id,
                         u.username AS owner_username, u.nickname AS owner_nickname
                  FROM accounts a
                  LEFT JOIN admin_users u ON u.id = a.owner_id
@@ -926,8 +927,10 @@ class NodeBridgeController extends Controller
         }
         if ($row) {
             $row['shared'] = !DataScope::isAccountRowVisible([
+                'id' => (int)($row['id'] ?? 0),
                 'owner_id' => (int)($row['account_owner_id'] ?? 0),
                 'company_id' => (int)($row['account_company_id'] ?? 0),
+                'industry_id' => (int)($row['industry_id'] ?? 0),
             ]);
             $be = \App\Services\AccountBrowserEnvService::normalizeBackend((string)($row['browser_backend'] ?? 'bit'));
             $row['browser_backend'] = $be;
@@ -944,7 +947,7 @@ class NodeBridgeController extends Controller
         // 同样按「全局事实」处理：老版本只在 accounts 表上记了环境 ID 的绑定也要全量返回，
         // 否则 B 用户看不到 A 用户的历史绑定，会被当成孤儿环境。
         $legacy = DB::select(
-            "SELECT a.id, a.username, a.nickname, a.owner_id, a.company_id, a.browser_backend,
+            "SELECT a.id, a.username, a.nickname, a.owner_id, a.company_id, a.industry_id, a.browser_backend,
                     a.browser_profile_id, a.tkswarm_browser_profile_id, a.linux_browser_profile_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM accounts a
@@ -957,8 +960,10 @@ class NodeBridgeController extends Controller
             $ownerName = trim((string)(($r['owner_nickname'] ?? '') !== '' ? $r['owner_nickname'] : ($r['owner_username'] ?? '')));
             $ownerId = (int)($r['owner_id'] ?? 0);
             $shared = !DataScope::isAccountRowVisible([
+                'id' => (int)($r['id'] ?? 0),
                 'owner_id' => $ownerId,
                 'company_id' => (int)($r['company_id'] ?? 0),
+                'industry_id' => (int)($r['industry_id'] ?? 0),
             ]);
             $pairs = [
                 ['profile' => trim((string)($r['browser_profile_id'] ?? '')), 'backend' => (string)($r['browser_backend'] ?? 'bit'), 'primary' => 1],
@@ -1005,7 +1010,7 @@ class NodeBridgeController extends Controller
             "SELECT e.browser_profile_id, e.saturation, e.is_primary, e.account_id AS id,
                     e.browser_backend, e.browser_type, e.owner_user_id,
                     a.username, a.nickname, a.owner_id AS account_owner_id,
-                    a.company_id AS account_company_id,
+                    a.company_id AS account_company_id, a.industry_id,
                     u.username AS owner_username, u.nickname AS owner_nickname
              FROM account_browser_envs e
              INNER JOIN accounts a ON a.id=e.account_id
@@ -1023,8 +1028,10 @@ class NodeBridgeController extends Controller
             // 账号不在本人可见范围 = 他人账号：仍然返回绑定事实（B 必须知道这个环境被谁占了、不能删），
             // 但打上 shared 标记，前端可显示「他人账号」并提示这是共用环境。
             $shared = !DataScope::isAccountRowVisible([
+                'id' => (int)($r['id'] ?? 0),
                 'owner_id' => (int)($r['account_owner_id'] ?? 0),
                 'company_id' => (int)($r['account_company_id'] ?? 0),
+                'industry_id' => (int)($r['industry_id'] ?? 0),
             ]);
             $map[$pid] = [
                 'id' => (int)$r['id'],
