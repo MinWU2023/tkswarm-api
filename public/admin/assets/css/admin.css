@@ -296,6 +296,14 @@ html { color-scheme: light; }
   overflow: auto;
   flex: 1;
   min-height: 0;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.content > * {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
 }
 
 /* ---------- 页头 / 统计 / 面板 ---------- */

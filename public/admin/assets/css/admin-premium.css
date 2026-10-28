@@ -3,9 +3,16 @@
    深度精修：导航材质 / 工具栏节奏 / 表格密度 / 弹框质感 / 登录双栏
    ========================================================================== */
 
-/* ----- 内容区节奏 ----- */
-.content > div {
-  max-width: 1280px;
+/* ----- 内容区节奏：铺满右侧剩余宽度（勿限 max-width） ----- */
+.content {
+  width: 100%;
+  min-width: 0;
+}
+.content > div,
+.content > .page-view {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
 }
 .content > div > .page-head:first-child {
   margin-top: 2px;
@@ -407,5 +414,4 @@
   }
   .login-atmosphere-line { display: none; }
   .login-atmosphere-name { font-size: 22px; }
-  .content > div { max-width: none; }
 }

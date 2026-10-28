@@ -1,23 +1,23 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-label="账号矩阵总览：分组侧栏、账号列表与环境状态">
   <defs>
     <linearGradient id="s1bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fffaf4"/>
-      <stop offset="1" stop-color="#fdf7f0"/>
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f8fafc"/>
     </linearGradient>
     <linearGradient id="s1accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#ffb75c"/>
-      <stop offset="1" stop-color="#ec7f11"/>
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#2563eb"/>
     </linearGradient>
     <radialGradient id="s1glow" cx="0.5" cy="0" r="0.72">
-      <stop offset="0" stop-color="#ffcb8c" stop-opacity="0.8"/>
-      <stop offset="1" stop-color="#ffcb8c" stop-opacity="0"/>
+      <stop offset="0" stop-color="#93c5fd" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#93c5fd" stop-opacity="0"/>
     </radialGradient>
     <pattern id="s1grid" width="56" height="56" patternUnits="userSpaceOnUse">
-      <path d="M56 0H0V56" fill="none" stroke="#c9761f" stroke-opacity="0.09" stroke-width="1"/>
+      <path d="M56 0H0V56" fill="none" stroke="#64748b" stroke-opacity="0.09" stroke-width="1"/>
     </pattern>
     <filter id="s1shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#a4713a" flood-opacity="0.22"/>
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#334155" flood-opacity="0.22"/>
     </filter>
     <clipPath id="s1win"><rect x="90" y="70" width="1420" height="760" rx="28"/></clipPath>
   </defs>
@@ -27,38 +27,38 @@
   <ellipse cx="800" cy="-40" rx="760" ry="360" fill="url(#s1glow)"/>
 
   <!-- app window -->
-  <rect x="90" y="70" width="1420" height="760" rx="28" fill="#ffffff" stroke="#ecdac7" filter="url(#s1shadow)"/>
+  <rect x="90" y="70" width="1420" height="760" rx="28" fill="#ffffff" stroke="#e2e8f0" filter="url(#s1shadow)"/>
   <g clip-path="url(#s1win)">
-    <rect x="90" y="70" width="1420" height="64" fill="#f8ece0"/>
+    <rect x="90" y="70" width="1420" height="64" fill="#f1f5f9"/>
     <circle cx="130" cy="102" r="7" fill="#f26d5b"/>
     <circle cx="158" cy="102" r="7" fill="#f7bf4f"/>
     <circle cx="186" cy="102" r="7" fill="#59b76b"/>
-    <text x="222" y="109" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" fill="#6b564a">TkSwarm · 账号矩阵</text>
-    <rect x="1320" y="86" width="160" height="36" rx="18" fill="#ffffff" stroke="#ecdac7"/>
+    <text x="222" y="109" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" fill="#64748b">TkSwarm · 账号矩阵</text>
+    <rect x="1320" y="86" width="160" height="36" rx="18" fill="#ffffff" stroke="#e2e8f0"/>
     <circle cx="1344" cy="104" r="5" fill="#59b76b"/>
-    <text x="1360" y="111" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#b1580b">环境已就绪</text>
+    <text x="1360" y="111" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#1d4ed8">环境已就绪</text>
 
     <!-- sidebar -->
     <rect x="90" y="134" width="250" height="696" fill="#fcf7f1"/>
     <line x1="340" y1="134" x2="340" y2="830" stroke="#f0e2d2" stroke-width="1"/>
     <text x="118" y="184" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" letter-spacing="1.5" fill="#a1897a">分组</text>
-    <rect x="108" y="204" width="214" height="48" rx="10" fill="#fdf0dc" stroke="#f7921e33"/>
-    <text x="128" y="234" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" font-weight="600" fill="#b1580b">全部账号</text>
-    <text x="128" y="290" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#6b564a">跨境 A 组</text>
-    <text x="128" y="346" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#6b564a">坐席池</text>
-    <text x="128" y="402" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#6b564a">测试账号</text>
+    <rect x="108" y="204" width="214" height="48" rx="10" fill="#fdf0dc" stroke="#2563eb33"/>
+    <text x="128" y="234" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" font-weight="600" fill="#1d4ed8">全部账号</text>
+    <text x="128" y="290" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">跨境 A 组</text>
+    <text x="128" y="346" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">坐席池</text>
+    <text x="128" y="402" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">测试账号</text>
     <line x1="118" y1="440" x2="312" y2="440" stroke="#f0e2d2"/>
     <text x="118" y="482" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" letter-spacing="1.5" fill="#a1897a">环境类型</text>
-    <circle cx="126" cy="518" r="6" fill="#f7921e"/>
-    <text x="146" y="524" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">桌面 412</text>
-    <circle cx="126" cy="560" r="6" fill="#df5f2b"/>
-    <text x="146" y="566" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">自研 386</text>
+    <circle cx="126" cy="518" r="6" fill="#2563eb"/>
+    <text x="146" y="524" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">桌面 412</text>
+    <circle cx="126" cy="560" r="6" fill="#e11d48"/>
+    <text x="146" y="566" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">自研 386</text>
     <circle cx="126" cy="602" r="6" fill="#c6ae96"/>
-    <text x="146" y="608" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#6b564a">Linux 486</text>
+    <text x="146" y="608" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">Linux 486</text>
 
     <!-- main head -->
     <text x="380" y="186" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="30" font-weight="700" fill="#1d1310">账号矩阵</text>
-    <text x="380" y="220" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#6b564a">按品牌与市场分组 · 环境、代理与任务同屏可见</text>
+    <text x="380" y="220" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">按品牌与市场分组 · 环境、代理与任务同屏可见</text>
 
     <!-- table head -->
     <text x="380" y="288" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="15" letter-spacing="1.2" fill="#a1897a">账号</text>
@@ -71,82 +71,82 @@
     <g font-family="'Segoe UI','Microsoft YaHei',sans-serif">
       <!-- row 1 -->
       <circle cx="404" cy="337" r="18" fill="#fdf0dc"/>
-      <text x="404" y="343" font-size="14" font-weight="600" text-anchor="middle" fill="#b1580b">US</text>
+      <text x="404" y="343" font-size="14" font-weight="600" text-anchor="middle" fill="#1d4ed8">US</text>
       <text x="436" y="344" font-size="20" fill="#1d1310">@brand_us_01</text>
-      <rect x="800" y="322" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#f7921e33"/>
-      <text x="842" y="343" font-size="15" text-anchor="middle" fill="#b1580b">Linux</text>
+      <rect x="800" y="322" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#2563eb33"/>
+      <text x="842" y="343" font-size="15" text-anchor="middle" fill="#1d4ed8">Linux</text>
       <circle cx="1046" cy="337" r="6" fill="#59b76b"/>
-      <text x="1064" y="344" font-size="17" fill="#6b564a">在线</text>
+      <text x="1064" y="344" font-size="17" fill="#64748b">在线</text>
       <rect x="1220" y="333" width="210" height="10" rx="5" fill="#f4e7d8"/>
       <rect x="1220" y="333" width="172" height="10" rx="5" fill="url(#s1accent)"/>
-      <text x="1448" y="344" font-size="15" fill="#6b564a">82%</text>
+      <text x="1448" y="344" font-size="15" fill="#64748b">82%</text>
       <line x1="380" y1="368" x2="1470" y2="368" stroke="#f4e7d8"/>
       <!-- row 2 -->
       <circle cx="404" cy="403" r="18" fill="#fbe9e0"/>
-      <text x="404" y="409" font-size="14" font-weight="600" text-anchor="middle" fill="#b1580b">JP</text>
+      <text x="404" y="409" font-size="14" font-weight="600" text-anchor="middle" fill="#1d4ed8">JP</text>
       <text x="436" y="410" font-size="20" fill="#1d1310">@brand_jp_02</text>
-      <rect x="800" y="388" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#f7921e33"/>
-      <text x="842" y="409" font-size="15" text-anchor="middle" fill="#b1580b">自研</text>
+      <rect x="800" y="388" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#2563eb33"/>
+      <text x="842" y="409" font-size="15" text-anchor="middle" fill="#1d4ed8">自研</text>
       <circle cx="1046" cy="403" r="6" fill="#59b76b"/>
-      <text x="1064" y="410" font-size="17" fill="#6b564a">在线</text>
+      <text x="1064" y="410" font-size="17" fill="#64748b">在线</text>
       <rect x="1220" y="399" width="210" height="10" rx="5" fill="#f4e7d8"/>
       <rect x="1220" y="399" width="134" height="10" rx="5" fill="url(#s1accent)"/>
-      <text x="1448" y="410" font-size="15" fill="#6b564a">64%</text>
+      <text x="1448" y="410" font-size="15" fill="#64748b">64%</text>
       <line x1="380" y1="434" x2="1470" y2="434" stroke="#f4e7d8"/>
       <!-- row 3 -->
       <circle cx="404" cy="469" r="18" fill="#f6ece2"/>
       <text x="404" y="475" font-size="14" font-weight="600" text-anchor="middle" fill="#a1897a">EU</text>
       <text x="436" y="476" font-size="20" fill="#1d1310">@shop_eu_03</text>
-      <rect x="800" y="454" width="84" height="30" rx="8" fill="#f6ece2" stroke="#ecdac7"/>
+      <rect x="800" y="454" width="84" height="30" rx="8" fill="#f6ece2" stroke="#e2e8f0"/>
       <text x="842" y="475" font-size="15" text-anchor="middle" fill="#a1897a">桌面</text>
       <circle cx="1046" cy="469" r="6" fill="#c6ae96"/>
-      <text x="1064" y="476" font-size="17" fill="#6b564a">离线</text>
+      <text x="1064" y="476" font-size="17" fill="#64748b">离线</text>
       <rect x="1220" y="465" width="210" height="10" rx="5" fill="#f4e7d8"/>
       <text x="1448" y="476" font-size="15" fill="#a1897a">—</text>
       <line x1="380" y1="500" x2="1470" y2="500" stroke="#f4e7d8"/>
       <!-- row 4 -->
       <circle cx="404" cy="535" r="18" fill="#fdf0dc"/>
-      <text x="404" y="541" font-size="14" font-weight="600" text-anchor="middle" fill="#b1580b">S4</text>
+      <text x="404" y="541" font-size="14" font-weight="600" text-anchor="middle" fill="#1d4ed8">S4</text>
       <text x="436" y="542" font-size="20" fill="#1d1310">@seat_04</text>
-      <rect x="800" y="520" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#f7921e33"/>
-      <text x="842" y="541" font-size="15" text-anchor="middle" fill="#b1580b">Linux</text>
-      <circle cx="1046" cy="535" r="6" fill="#f7921e"/>
-      <text x="1064" y="542" font-size="17" fill="#b1580b">执行中</text>
+      <rect x="800" y="520" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#2563eb33"/>
+      <text x="842" y="541" font-size="15" text-anchor="middle" fill="#1d4ed8">Linux</text>
+      <circle cx="1046" cy="535" r="6" fill="#2563eb"/>
+      <text x="1064" y="542" font-size="17" fill="#1d4ed8">执行中</text>
       <rect x="1220" y="531" width="210" height="10" rx="5" fill="#f4e7d8"/>
       <rect x="1220" y="531" width="94" height="10" rx="5" fill="url(#s1accent)"/>
-      <text x="1448" y="542" font-size="15" fill="#6b564a">45%</text>
+      <text x="1448" y="542" font-size="15" fill="#64748b">45%</text>
       <line x1="380" y1="566" x2="1470" y2="566" stroke="#f4e7d8"/>
       <!-- row 5 -->
       <circle cx="404" cy="601" r="18" fill="#fbe9e0"/>
-      <text x="404" y="607" font-size="14" font-weight="600" text-anchor="middle" fill="#b1580b">UK</text>
+      <text x="404" y="607" font-size="14" font-weight="600" text-anchor="middle" fill="#1d4ed8">UK</text>
       <text x="436" y="608" font-size="20" fill="#1d1310">@brand_uk_05</text>
-      <rect x="800" y="586" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#f7921e33"/>
-      <text x="842" y="607" font-size="15" text-anchor="middle" fill="#b1580b">自研</text>
+      <rect x="800" y="586" width="84" height="30" rx="8" fill="#fdf0dc" stroke="#2563eb33"/>
+      <text x="842" y="607" font-size="15" text-anchor="middle" fill="#1d4ed8">自研</text>
       <circle cx="1046" cy="601" r="6" fill="#59b76b"/>
-      <text x="1064" y="608" font-size="17" fill="#6b564a">在线</text>
+      <text x="1064" y="608" font-size="17" fill="#64748b">在线</text>
       <rect x="1220" y="597" width="210" height="10" rx="5" fill="#f4e7d8"/>
       <rect x="1220" y="597" width="191" height="10" rx="5" fill="url(#s1accent)"/>
-      <text x="1448" y="608" font-size="15" fill="#6b564a">91%</text>
+      <text x="1448" y="608" font-size="15" fill="#64748b">91%</text>
     </g>
 
     <!-- stat cards -->
-    <rect x="380" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#ecdac7"/>
+    <rect x="380" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#e2e8f0"/>
     <text x="408" y="694" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#a1897a">账号总数</text>
     <text x="408" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="36" font-weight="700" fill="#1d1310">1,284</text>
-    <text x="562" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#b1580b">+36 本周</text>
+    <text x="562" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#1d4ed8">+36 本周</text>
 
-    <rect x="735" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#ecdac7"/>
+    <rect x="735" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#e2e8f0"/>
     <text x="763" y="694" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#a1897a">在线环境</text>
     <text x="763" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="36" font-weight="700" fill="#1d1310">962</text>
-    <text x="879" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#6b564a">/ 1,284</text>
+    <text x="879" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#64748b">/ 1,284</text>
 
-    <rect x="1090" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#ecdac7"/>
+    <rect x="1090" y="654" width="330" height="124" rx="18" fill="#ffffff" stroke="#e2e8f0"/>
     <text x="1118" y="694" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#a1897a">今日任务</text>
     <text x="1118" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="36" font-weight="700" fill="#1d1310">3,410</text>
-    <text x="1300" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#6b564a">完成 92%</text>
+    <text x="1300" y="748" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#64748b">完成 92%</text>
   </g>
 
   <!-- caption -->
-  <circle cx="100" cy="866" r="5" fill="#f7921e"/>
+  <circle cx="100" cy="866" r="5" fill="#2563eb"/>
   <text x="118" y="873" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="22" fill="#a1897a">01 · 账号矩阵：分组、环境与状态一屏看清</text>
 </svg>
