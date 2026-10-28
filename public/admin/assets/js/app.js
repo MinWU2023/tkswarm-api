@@ -58,6 +58,8 @@
     },
     render: function () {
       var self = this;
+      var displayName = (self.user && (self.user.nickname || self.user.username)) || '管理员';
+      var initial = String(displayName).trim().charAt(0).toUpperCase() || 'A';
       return h('div', { class: 'layout' }, [
         h('aside', { class: 'side' }, [
           h('div', { class: 'side-brand' }, [
@@ -67,6 +69,7 @@
               h('div', { class: 'text-xs text-slate-400' }, '运营控制台')
             ])
           ]),
+          h('div', { class: 'side-nav-label' }, '菜单'),
           h('div', { class: 'side-nav' }, [
             h(ElementPlus.ElMenu, {
               defaultActive: self.active,
@@ -87,9 +90,10 @@
         ]),
         h('div', { class: 'main-wrap' }, [
           h('header', { class: 'topbar' }, [
-            h('div', { class: 'text-sm text-slate-500' }, self.$route.meta.title || '控制台'),
-            h('div', { class: 'flex items-center gap-3' }, [
-              h('span', { class: 'text-sm text-slate-600' }, (self.user && (self.user.nickname || self.user.username)) || '管理员'),
+            h('div', { class: 'topbar-title' }, self.$route.meta.title || '控制台'),
+            h('div', { class: 'user-chip' }, [
+              h('span', { class: 'user-chip-avatar', 'aria-hidden': 'true' }, initial),
+              h('span', { class: 'user-chip-name' }, displayName),
               h(ElementPlus.ElButton, { size: 'small', plain: true, onClick: function () { self.logout(); } }, function () { return '退出'; })
             ])
           ]),

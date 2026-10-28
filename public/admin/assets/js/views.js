@@ -22,6 +22,25 @@
     return h(ElementPlus.ElTag, { type: m.type, size: 'small', effect: 'light' }, function () { return m.t; });
   }
 
+  function pageHead(title, desc, actions) {
+    var kids = [
+      h('div', { class: 'page-head-text' }, [
+        h('h2', title),
+        desc ? h('p', desc) : null
+      ].filter(Boolean))
+    ];
+    if (actions) {
+      kids.push(h('div', { class: 'page-toolbar' }, Array.isArray(actions) ? actions : [actions]));
+    }
+    return h('div', { class: 'page-head' }, kids);
+  }
+
+  function panelHead(title, extra) {
+    var kids = [typeof title === 'string' ? h('b', title) : title];
+    if (extra) kids.push(extra);
+    return h('div', { class: 'panel-head' }, kids);
+  }
+
   var LoginView = {
     name: 'LoginView',
     data: function () {
@@ -64,63 +83,78 @@
     },
     render: function () {
       var self = this;
-      return h('div', { class: 'login-shell' }, [
-        h('div', { class: 'glass-card login-panel' }, [
-          h('div', { class: 'login-brand' }, [
-            h('img', { class: 'brand-logo brand-logo-wide', src: '/images/logo.png?v=2', alt: '第一页科技 TkSwarm' }),
-            h('div', [
-              h('div', { class: 'login-title' }, 'TKSwarm'),
-              h('div', { class: 'login-sub' }, '运营控制台 · 工单 / 版本 / 帮助文档')
-            ])
+      return h('div', { class: 'login-shell login-shell--split' }, [
+        h('aside', { class: 'login-atmosphere', 'aria-hidden': 'true' }, [
+          h('div', { class: 'login-atmosphere-grid' }),
+          h('div', { class: 'login-atmosphere-glow' }),
+          h('div', { class: 'login-atmosphere-brand' }, [
+            h('img', { src: '/images/icon.png?v=2', alt: '' }),
+            h('div', { class: 'login-atmosphere-name' }, 'TKSwarm')
           ]),
-          h(ElementPlus.ElForm, { labelPosition: 'top', onSubmit: function (e) { e.preventDefault(); self.submit(); } }, function () {
-            return [
-              h(ElementPlus.ElFormItem, { label: '账号' }, function () {
-                return h(ElementPlus.ElInput, {
-                  modelValue: self.form.username,
-                  'onUpdate:modelValue': function (v) { self.form.username = v; },
-                  placeholder: '管理员账号',
-                  prefixIcon: ElementPlusIconsVue.User
-                });
-              }),
-              h(ElementPlus.ElFormItem, { label: '密码' }, function () {
-                return h(ElementPlus.ElInput, {
-                  modelValue: self.form.password,
-                  'onUpdate:modelValue': function (v) { self.form.password = v; },
-                  type: 'password',
-                  showPassword: true,
-                  placeholder: '登录密码',
-                  prefixIcon: ElementPlusIconsVue.Lock
-                });
-              }),
-              h(ElementPlus.ElFormItem, { label: '验证码' }, function () {
-                return h('div', { class: 'captcha-box' }, [
-                  h(ElementPlus.ElInput, {
-                    modelValue: self.form.captchaCode,
-                    'onUpdate:modelValue': function (v) { self.form.captchaCode = v; },
-                    placeholder: '验证码',
-                    style: 'flex:1'
-                  }),
-                  self.captchaSvg
-                    ? h('img', { src: self.captchaSvg, title: '点击刷新', onClick: function () { self.refreshCaptcha(); } })
-                    : h(ElementPlus.ElButton, { onClick: function () { self.refreshCaptcha(); } }, function () { return '刷新'; })
-                ]);
-              }),
-              h('div', { class: 'flex items-center justify-between mb-4' }, [
-                h(ElementPlus.ElCheckbox, {
-                  modelValue: self.form.rememberMe,
-                  'onUpdate:modelValue': function (v) { self.form.rememberMe = v; }
-                }, function () { return '记住登录'; }),
-                h('span', { class: 'text-xs text-slate-400' }, '使用后台管理员账号')
-              ]),
-              h(ElementPlus.ElButton, {
-                type: 'primary',
-                class: 'w-full',
-                loading: self.loading,
-                onClick: function () { self.submit(); }
-              }, function () { return '登录控制台'; })
-            ];
-          })
+          h('div', { class: 'login-atmosphere-line' }, '运营控制台 · 工单 / 版本 / 帮助文档')
+        ]),
+        h('div', { class: 'login-stage' }, [
+          h('div', { class: 'glass-card login-panel' }, [
+            h('div', { class: 'login-brand' }, [
+              h('img', { class: 'brand-logo brand-logo-wide', src: '/images/logo.png?v=2', alt: 'TkSwarm' }),
+              h('div', [
+                h('div', { class: 'login-title' }, '登录控制台'),
+                h('div', { class: 'login-sub' }, '请使用管理员账号进入系统')
+              ])
+            ]),
+            h(ElementPlus.ElForm, { labelPosition: 'top', onSubmit: function (e) { e.preventDefault(); self.submit(); } }, function () {
+              return [
+                h(ElementPlus.ElFormItem, { label: '账号' }, function () {
+                  return h(ElementPlus.ElInput, {
+                    modelValue: self.form.username,
+                    'onUpdate:modelValue': function (v) { self.form.username = v; },
+                    placeholder: '管理员账号',
+                    size: 'large',
+                    prefixIcon: ElementPlusIconsVue.User
+                  });
+                }),
+                h(ElementPlus.ElFormItem, { label: '密码' }, function () {
+                  return h(ElementPlus.ElInput, {
+                    modelValue: self.form.password,
+                    'onUpdate:modelValue': function (v) { self.form.password = v; },
+                    type: 'password',
+                    showPassword: true,
+                    size: 'large',
+                    placeholder: '登录密码',
+                    prefixIcon: ElementPlusIconsVue.Lock
+                  });
+                }),
+                h(ElementPlus.ElFormItem, { label: '验证码' }, function () {
+                  return h('div', { class: 'captcha-box' }, [
+                    h(ElementPlus.ElInput, {
+                      modelValue: self.form.captchaCode,
+                      'onUpdate:modelValue': function (v) { self.form.captchaCode = v; },
+                      placeholder: '验证码',
+                      size: 'large',
+                      style: 'flex:1'
+                    }),
+                    self.captchaSvg
+                      ? h('img', { src: self.captchaSvg, title: '点击刷新', onClick: function () { self.refreshCaptcha(); } })
+                      : h(ElementPlus.ElButton, { onClick: function () { self.refreshCaptcha(); } }, function () { return '刷新'; })
+                  ]);
+                }),
+                h('div', { class: 'login-meta-row' }, [
+                  h(ElementPlus.ElCheckbox, {
+                    modelValue: self.form.rememberMe,
+                    'onUpdate:modelValue': function (v) { self.form.rememberMe = v; }
+                  }, function () { return '记住登录'; }),
+                  h('span', { class: 'text-xs text-slate-400' }, '会话保持')
+                ]),
+                h(ElementPlus.ElButton, {
+                  type: 'primary',
+                  class: 'w-full',
+                  size: 'large',
+                  loading: self.loading,
+                  onClick: function () { self.submit(); }
+                }, function () { return '登录'; })
+              ];
+            })
+          ])
         ])
       ]);
     }
@@ -154,10 +188,8 @@
         { label: '已发布文档', value: s.docsPublished || 0, hint: '共 ' + (s.docsTotal || 0) + ' 篇' },
         { label: '帮助分类', value: s.categories || 0, hint: '文档分类数量' }
       ];
-      return h('div', { 'v-loading': this.loading }, [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '工作台'), h('p', '一眼看清工单、版本与帮助文档概况')])
-        ]),
+      return h('div', { class: 'page-view', 'v-loading': this.loading }, [
+        pageHead('工作台', '一眼看清工单、版本与帮助文档概况'),
         h('div', { class: 'stat-grid' }, cards.map(function (c) {
           return h('div', { class: 'stat-card' }, [
             h('div', { class: 'label' }, c.label),
@@ -166,11 +198,8 @@
           ]);
         })),
         h('div', { class: 'panel', style: 'margin-bottom:16px' }, [
-          h('div', { class: 'flex items-center justify-between mb-3 flex-wrap gap-2' }, [
-            h('b', '任务数据运维'),
-            h('span', { class: 'text-xs text-slate-400' }, '总任务 / 子任务维护入口')
-          ]),
-          h('div', { class: 'flex items-center gap-3 flex-wrap' }, [
+          panelHead('任务数据运维', h('span', { class: 'text-xs text-slate-400' }, '总任务 / 子任务维护入口')),
+          h('div', { class: 'page-toolbar' }, [
             h(ElementPlus.ElButton, {
               type: 'warning',
               onClick: function () { location.hash = '#/task-reset'; }
@@ -183,10 +212,7 @@
           ])
         ]),
         h('div', { class: 'panel' }, [
-          h('div', { class: 'flex items-center justify-between mb-3' }, [
-            h('b', '最近工单'),
-            h(ElementPlus.ElButton, { text: true, type: 'primary', onClick: function () { location.hash = '#/tickets'; } }, function () { return '查看全部'; })
-          ]),
+          panelHead('最近工单', h(ElementPlus.ElButton, { text: true, type: 'primary', onClick: function () { location.hash = '#/tickets'; } }, function () { return '查看全部'; })),
           h(ElementPlus.ElTable, { data: this.recent, stripe: true, size: 'default', style: 'width:100%' }, function () {
             return [
               h(ElementPlus.ElTableColumn, { prop: 'ticketNo', label: '工单号', width: 160 }),
@@ -262,25 +288,22 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '工单处理'), h('p', '查看并回复客户端提交的问题反馈')]),
-          h('div', { class: 'flex gap-2' }, [
-            h(ElementPlus.ElSelect, {
-              modelValue: self.status,
-              'onUpdate:modelValue': function (v) { self.status = v; self.load(); },
-              clearable: true,
-              placeholder: '全部状态',
-              style: 'width:140px'
-            }, function () {
-              return [
-                h(ElementPlus.ElOption, { label: '待处理', value: 'open' }),
-                h(ElementPlus.ElOption, { label: '处理中', value: 'processing' }),
-                h(ElementPlus.ElOption, { label: '已回复', value: 'replied' }),
-                h(ElementPlus.ElOption, { label: '已关闭', value: 'closed' })
-              ];
-            }),
-            h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
-          ])
+        pageHead('工单处理', '查看并回复客户端提交的问题反馈', [
+          h(ElementPlus.ElSelect, {
+            modelValue: self.status,
+            'onUpdate:modelValue': function (v) { self.status = v; self.load(); },
+            clearable: true,
+            placeholder: '全部状态',
+            style: 'width:140px'
+          }, function () {
+            return [
+              h(ElementPlus.ElOption, { label: '待处理', value: 'open' }),
+              h(ElementPlus.ElOption, { label: '处理中', value: 'processing' }),
+              h(ElementPlus.ElOption, { label: '已回复', value: 'replied' }),
+              h(ElementPlus.ElOption, { label: '已关闭', value: 'closed' })
+            ];
+          }),
+          h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
         ]),
         h('div', { class: 'panel' }, [
           h(ElementPlus.ElTable, { data: self.rows, vLoading: self.loading, stripe: true, style: 'width:100%' }, function () {
@@ -468,8 +491,7 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '版本发布'), h('p', '上传代码包或填写下载链接后发布，供客户端安装')]),
+        pageHead('版本发布', '上传代码包或填写下载链接后发布，供客户端安装', [
           h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建版本'; })
         ]),
         h('div', { class: 'panel' }, [
@@ -607,8 +629,7 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '帮助分类'), h('p', '管理客户端帮助文档左侧分类')]),
+        pageHead('帮助分类', '管理客户端帮助文档左侧分类', [
           h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建分类'; })
         ]),
         h('div', { class: 'panel' }, [
@@ -738,22 +759,19 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '帮助文档'), h('p', '编写并发布给客户端展示的帮助内容')]),
-          h('div', { class: 'flex gap-2' }, [
-            h(ElementPlus.ElSelect, {
-              modelValue: self.categoryId,
-              'onUpdate:modelValue': function (v) { self.categoryId = v; self.load(); },
-              clearable: true,
-              placeholder: '全部分类',
-              style: 'width:160px'
-            }, function () {
-              return (self.cats || []).map(function (c) {
-                return h(ElementPlus.ElOption, { label: c.name, value: String(c.id) });
-              });
-            }),
-            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建文档'; })
-          ])
+        pageHead('帮助文档', '编写并发布给客户端展示的帮助内容', [
+          h(ElementPlus.ElSelect, {
+            modelValue: self.categoryId,
+            'onUpdate:modelValue': function (v) { self.categoryId = v; self.load(); },
+            clearable: true,
+            placeholder: '全部分类',
+            style: 'width:160px'
+          }, function () {
+            return (self.cats || []).map(function (c) {
+              return h(ElementPlus.ElOption, { label: c.name, value: String(c.id) });
+            });
+          }),
+          h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建文档'; })
         ]),
         h('div', { class: 'panel' }, [
           h(ElementPlus.ElTable, { data: self.rows, stripe: true, style: 'width:100%' }, function () {
@@ -938,35 +956,29 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [
-            h('h2', '环境安装包'),
-            h('p', '分别维护 Windows / macOS 的 Node.js 与比特浏览器安装包，供客户端直链下载安装')
-          ]),
-          h('div', { class: 'flex gap-2 flex-wrap' }, [
-            h(ElementPlus.ElSelect, {
-              modelValue: self.kind,
-              'onUpdate:modelValue': function (v) { self.kind = v; self.load(); },
-              clearable: true, placeholder: '全部类型', style: 'width:120px'
-            }, function () {
-              return [
-                h(ElementPlus.ElOption, { label: 'Node.js', value: 'node' }),
-                h(ElementPlus.ElOption, { label: '比特浏览器', value: 'bit' }),
-                h(ElementPlus.ElOption, { label: '自研浏览器', value: 'self' })
-              ];
-            }),
-            h(ElementPlus.ElSelect, {
-              modelValue: self.platform,
-              'onUpdate:modelValue': function (v) { self.platform = v; self.load(); },
-              clearable: true, placeholder: '全部系统', style: 'width:120px'
-            }, function () {
-              return [
-                h(ElementPlus.ElOption, { label: 'Windows', value: 'win' }),
-                h(ElementPlus.ElOption, { label: 'macOS', value: 'mac' })
-              ];
-            }),
-            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建'; })
-          ])
+        pageHead('环境安装包', '分别维护 Windows / macOS 的 Node.js 与比特浏览器安装包，供客户端直链下载安装', [
+          h(ElementPlus.ElSelect, {
+            modelValue: self.kind,
+            'onUpdate:modelValue': function (v) { self.kind = v; self.load(); },
+            clearable: true, placeholder: '全部类型', style: 'width:120px'
+          }, function () {
+            return [
+              h(ElementPlus.ElOption, { label: 'Node.js', value: 'node' }),
+              h(ElementPlus.ElOption, { label: '比特浏览器', value: 'bit' }),
+              h(ElementPlus.ElOption, { label: '自研浏览器', value: 'self' })
+            ];
+          }),
+          h(ElementPlus.ElSelect, {
+            modelValue: self.platform,
+            'onUpdate:modelValue': function (v) { self.platform = v; self.load(); },
+            clearable: true, placeholder: '全部系统', style: 'width:120px'
+          }, function () {
+            return [
+              h(ElementPlus.ElOption, { label: 'Windows', value: 'win' }),
+              h(ElementPlus.ElOption, { label: 'macOS', value: 'mac' })
+            ];
+          }),
+          h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建'; })
         ]),
         h('div', { class: 'panel' }, [
           h(ElementPlus.ElTable, { data: self.rows, stripe: true, style: 'width:100%' }, function () {
@@ -1110,12 +1122,7 @@
       render: function () {
         var self = this;
         return h('div', [
-          h('div', { class: 'page-head' }, [
-            h('div', [
-              h('h2', cfg.title),
-              h('p', cfg.subtitle)
-            ])
-          ]),
+          pageHead(cfg.title, cfg.subtitle),
           h('div', { class: 'panel', style: 'max-width:720px' }, [
             h(ElementPlus.ElAlert, {
               type: cfg.danger ? 'error' : 'warning',
@@ -1244,33 +1251,30 @@
     render: function () {
       var self = this;
       return h('div', [
-        h('div', { class: 'page-head' }, [
-          h('div', [h('h2', '官网咨询'), h('p', '落地页「联系我们」表单提交的留资')]),
-          h('div', { class: 'flex gap-2 flex-wrap' }, [
-            h(ElementPlus.ElInput, {
-              modelValue: self.keyword,
-              'onUpdate:modelValue': function (v) { self.keyword = v; },
-              placeholder: '姓名/手机/公司',
-              clearable: true,
-              style: 'width:180px',
-              onKeyup: function (e) { if (e.key === 'Enter') self.load(); }
-            }),
-            h(ElementPlus.ElSelect, {
-              modelValue: self.status,
-              'onUpdate:modelValue': function (v) { self.status = v; self.load(); },
-              clearable: true,
-              placeholder: '全部状态',
-              style: 'width:140px'
-            }, function () {
-              return [
-                h(ElementPlus.ElOption, { label: '新咨询', value: 'new' }),
-                h(ElementPlus.ElOption, { label: '跟进中', value: 'processing' }),
-                h(ElementPlus.ElOption, { label: '已完成', value: 'done' }),
-                h(ElementPlus.ElOption, { label: '垃圾', value: 'spam' })
-              ];
-            }),
-            h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
-          ])
+        pageHead('官网咨询', '落地页「联系我们」表单提交的留资', [
+          h(ElementPlus.ElInput, {
+            modelValue: self.keyword,
+            'onUpdate:modelValue': function (v) { self.keyword = v; },
+            placeholder: '姓名/手机/公司',
+            clearable: true,
+            style: 'width:180px',
+            onKeyup: function (e) { if (e.key === 'Enter') self.load(); }
+          }),
+          h(ElementPlus.ElSelect, {
+            modelValue: self.status,
+            'onUpdate:modelValue': function (v) { self.status = v; self.load(); },
+            clearable: true,
+            placeholder: '全部状态',
+            style: 'width:140px'
+          }, function () {
+            return [
+              h(ElementPlus.ElOption, { label: '新咨询', value: 'new' }),
+              h(ElementPlus.ElOption, { label: '跟进中', value: 'processing' }),
+              h(ElementPlus.ElOption, { label: '已完成', value: 'done' }),
+              h(ElementPlus.ElOption, { label: '垃圾', value: 'spam' })
+            ];
+          }),
+          h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
         ]),
         h('div', { class: 'panel' }, [
           h(ElementPlus.ElTable, { data: self.rows, vLoading: self.loading, stripe: true, style: 'width:100%' }, function () {
@@ -1399,10 +1403,7 @@
     render: function () {
       var self = this;
       return h('div', { class: 'page' }, [
-        h('div', { class: 'page-head' }, [
-          h('h2', { class: 'page-title' }, '官网设置'),
-          h('p', { class: 'page-desc' }, '配置首页与轮播区的 Windows / macOS 客户端下载链接。支持站内路径（如 /lastest.exe）或完整外链（如 GitHub Release 地址）。')
-        ]),
+        pageHead('官网设置', '配置首页与轮播区的 Windows / macOS 客户端下载链接。支持站内路径（如 /lastest.exe）或完整外链。'),
         h(ElementPlus.ElCard, { shadow: 'never', vLoading: self.loading }, {
           default: function () {
             return h(ElementPlus.ElForm, { labelWidth: '140px', style: 'max-width:720px' }, function () {
