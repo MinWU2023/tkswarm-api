@@ -273,12 +273,14 @@ class GroupController extends Controller
 
         $gid = (int)$id;
         $row = DB::table('groups')->where('id', $gid)->first();
-        if ($err = DataScope::assertGroupOwns($row)) {
-            return $err;
+        if (!$row) {
+            return $this->error('分组不存在', 404);
         }
         if (($row['type'] ?? '') !== 'account') {
             return $this->error('仅支持账号分组分配用户', 422);
         }
+        // 超管/运营管理可分配任意账号分组（不要求分组当前归属本人）
+        // 其它角色本就不会进入此接口（上方 canAssignGroupOwners 已拦截）
 
         $targetOwnerId = (int)$request->input('ownerId', $request->input('userId', 0));
         $companyId = $request->input('companyId', $request->input('company_id'));
