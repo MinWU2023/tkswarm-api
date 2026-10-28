@@ -1763,6 +1763,42 @@ class AccountController extends Controller
         return $this->success($result, $msg);
     }
 
+    /**
+     * 查看数据弹框：开启/关闭「拉取数据后自动邮件推送」计划任务开关。
+     */
+    public function patchDataMailPush(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $aid = (int)$id;
+        $account = DB::selectOne('SELECT id, owner_id, company_id, data_mail_push FROM accounts WHERE id=?', [$aid]);
+        if ($err = $this->assertAccountOwns($account)) {
+            return $err;
+        }
+        $enabledRaw = $request->input('enabled', $request->input('dataMailPush', $request->input('data_mail_push')));
+        if ($enabledRaw === null) {
+            return $this->error('请传入 enabled', 422);
+        }
+        $enabled = filter_var($enabledRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if ($enabled === null) {
+            $enabled = in_array((string)$enabledRaw, ['1', 'true', 'on', 'yes'], true);
+        }
+        $val = $enabled ? 1 : 0;
+        DB::query(
+            'UPDATE accounts SET data_mail_push=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$val, $aid]
+        );
+        $cancelled = 0;
+        if ($val === 0) {
+            $cancelled = PullDataAnalysisService::cancelPendingForAccount($aid, '账号已关闭数据邮件推送');
+        }
+        return $this->success([
+            'accountId' => $aid,
+            'dataMailPush' => $val,
+            'cancelledPending' => $cancelled,
+        ], $val ? '已开启数据邮件推送' : '已关闭数据邮件推送');
+    }
+
     public function tiktokStats(Request $request, string $id): Response
     {
         $this->ensureSchema();
@@ -2806,6 +2842,14 @@ class AccountController extends Controller
             } catch (\Throwable $e) {
             }
         }
+        // 数据邮件推送开关：同样每次校验，避免常驻进程漏迁移（默认开启，兼容原自动发信）
+        if (!$this->hasColumn('accounts', 'data_mail_push')) {
+            try {
+                DB::query('ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1');
+                self::bustColumnCache('accounts');
+            } catch (\Throwable $e) {
+            }
+        }
         static $done = false;
         if ($done) {
             return;
@@ -2847,6 +2891,8 @@ class AccountController extends Controller
                 'profile_bio' => 'ALTER TABLE accounts ADD COLUMN profile_bio TEXT NULL',
                 'profile_avatar' => "ALTER TABLE accounts ADD COLUMN profile_avatar VARCHAR(512) NOT NULL DEFAULT ''",
                 'nickname_changed_at' => 'ALTER TABLE accounts ADD COLUMN nickname_changed_at DATETIME NULL DEFAULT NULL',
+                // 拉取数据分析邮件计划任务开关：1=允许自动入队发信，0=关闭（默认开启）
+                'data_mail_push' => 'ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1',
             ],
             'proxies' => [
                 'use_count' => 'ALTER TABLE proxies ADD COLUMN use_count INT NOT NULL DEFAULT 0',

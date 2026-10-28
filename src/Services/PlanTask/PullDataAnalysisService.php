@@ -27,6 +27,7 @@ class PullDataAnalysisService
         }
         $done = true;
         PlanTaskRecipientResolver::ensureAdminEmailColumn();
+        self::ensureAccountDataMailPushColumn();
         MailTemplateCatalog::ensure();
         AiPromptCatalog::ensure();
         DB::query(
@@ -140,6 +141,56 @@ class PullDataAnalysisService
         return $result;
     }
 
+    public static function ensureAccountDataMailPushColumn(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM accounts') ?: [], 'Field');
+            if (!in_array('data_mail_push', $cols, true)) {
+                DB::query('ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1');
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /** 账号是否开启「拉取数据后自动邮件推送」 */
+    public static function isDataMailPushEnabled(int $accountId): bool
+    {
+        if ($accountId <= 0) {
+            return false;
+        }
+        self::ensureAccountDataMailPushColumn();
+        try {
+            $row = DB::selectOne('SELECT data_mail_push FROM accounts WHERE id=? LIMIT 1', [$accountId]);
+            return (int)($row['data_mail_push'] ?? 0) === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * 关闭推送时取消该账号待处理的自动分析发信任务（不影响手动「发送邮件通知」）。
+     */
+    public static function cancelPendingForAccount(int $accountId, string $reason = '账号已关闭数据邮件推送'): int
+    {
+        self::ensureSchema();
+        if ($accountId <= 0) {
+            return 0;
+        }
+        $stmt = DB::query(
+            "UPDATE plan_tasks
+             SET status='cancelled', error_message=?, finished_at=NOW(), updated_at=NOW()
+             WHERE type=? AND account_id=? AND status IN ('pending','failed')
+               AND source_type<>'manual_view_data'",
+            [mb_substr($reason, 0, 500), self::TYPE, $accountId]
+        );
+        return (int)$stmt->rowCount();
+    }
+
     /**
      * 工作项完成钩子：仅 pull_stats + completed 时尝试入队。
      *
@@ -158,6 +209,10 @@ class PullDataAnalysisService
         $batchId = (int)($item['batch_id'] ?? 0);
         if ($accountId <= 0 || $workItemId <= 0) {
             return ['ok' => false, 'skipped' => true, 'reason' => 'missing_ids'];
+        }
+
+        if (!self::isDataMailPushEnabled($accountId)) {
+            return ['ok' => false, 'skipped' => true, 'reason' => 'data_mail_push_disabled'];
         }
 
         $exist = DB::selectOne(
@@ -258,6 +313,14 @@ class PullDataAnalysisService
             return ['ok' => false, 'id' => $id, 'error' => '仅 pending/failed 可执行，当前=' . $status];
         }
 
+        $sourceType = (string)($row['source_type'] ?? '');
+        $accountId = (int)($row['account_id'] ?? 0);
+        // 自动计划任务受账号推送开关控制；手动「发送邮件通知」不受影响
+        if ($sourceType !== 'manual_view_data' && !self::isDataMailPushEnabled($accountId)) {
+            self::finish($id, 'cancelled', null, null, [], '账号已关闭数据邮件推送');
+            return ['ok' => true, 'id' => $id, 'status' => 'cancelled', 'skipped' => true];
+        }
+
         DB::query(
             "UPDATE plan_tasks SET status='running', started_at=COALESCE(started_at, NOW()), error_message='', updated_at=NOW() WHERE id=?",
             [$id]
@@ -276,7 +339,7 @@ class PullDataAnalysisService
             $emails = array_values(array_unique(array_filter($emails, static fn ($e) => $e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL))));
             if (!$emails) {
                 // 运行时再解析一次
-                $resolved = PlanTaskRecipientResolver::resolveForAccount((int)$row['account_id']);
+                $resolved = PlanTaskRecipientResolver::resolveForAccount($accountId);
                 $emails = $resolved['emails'];
                 $recipients = $resolved['recipients'];
                 DB::query(

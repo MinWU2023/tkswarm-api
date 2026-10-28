@@ -253,6 +253,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/accounts/{id}/tiktok-videos', AccountController::class . '@tiktokVideos');
     Router::get('/api/accounts/{id}/tiktok-stats', AccountController::class . '@tiktokStats');
     Router::post('/api/accounts/{id}/send-data-analysis-mail', AccountController::class . '@sendDataAnalysisMail');
+    Router::patch('/api/accounts/{id}/data-mail-push', AccountController::class . '@patchDataMailPush');
     Router::get('/api/accounts/{id}/notifications', AccountController::class . '@notifications');
     Router::get('/api/accounts/{id}/notifications/{noticeId}', AccountController::class . '@notificationDetail');
     Router::patch('/api/accounts/{id}/ban-status', AccountController::class . '@patchBanStatus');
