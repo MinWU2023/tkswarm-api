@@ -1069,6 +1069,27 @@ class DataScope
         return self::mapAccountAssignTargets($rows);
     }
 
+    /**
+     * 分组分配用户候选：超管看全部启用用户；运营管理仍限运营专员/企业客户。
+     *
+     * @return list<array{id:int,username:string,nickname:string,roleName:string,roleType:string,companies:list<array{id:int,name:string}>}>
+     */
+    public static function groupAssignTargets(): array
+    {
+        if (!self::canAssignGroupOwners()) {
+            return [];
+        }
+        CompanyService::ensureSchema();
+        if (self::isLoginSuper()) {
+            $rows = self::queryFilterUsers('', null, null, 2000);
+        } elseif (self::isLoginOpsAdmin()) {
+            $rows = self::queryFilterUsers('', ['运营专员', '企业客户'], null);
+        } else {
+            return [];
+        }
+        return self::mapAccountAssignTargets($rows);
+    }
+
     /** @param list<array<string,mixed>> $rows */
     private static function mapAccountAssignTargets(array $rows): array
     {
@@ -1093,12 +1114,18 @@ class DataScope
                     }
                 }
             }
+            $roleType = 'other';
+            if ($isEnterprise) {
+                $roleType = 'enterprise';
+            } elseif (str_contains($roleName, '运营专员')) {
+                $roleType = 'operator';
+            }
             $out[] = [
                 'id' => $uid,
                 'username' => (string)($row['username'] ?? ''),
                 'nickname' => (string)($row['nickname'] ?? ''),
                 'roleName' => $roleName,
-                'roleType' => $isEnterprise ? 'enterprise' : 'operator',
+                'roleType' => $roleType,
                 'companies' => $companies,
             ];
         }
@@ -1590,7 +1617,7 @@ class DataScope
     }
 
     /** @param list<string>|null $rolePatterns @param list<int>|null $companyIds */
-    private static function queryFilterUsers(string $keyword, ?array $rolePatterns, ?array $companyIds): array
+    private static function queryFilterUsers(string $keyword, ?array $rolePatterns, ?array $companyIds, int $limit = 200): array
     {
         $sql = 'SELECT u.id, u.username, u.nickname, u.role_id, u.status FROM admin_users u';
         $params = [];
@@ -1619,8 +1646,9 @@ class DataScope
             $params[] = '%' . $keyword . '%';
             $params[] = '%' . $keyword . '%';
         }
+        $limit = max(1, min(5000, $limit));
         $sql .= $joins ? ' ' . implode(' ', $joins) : '';
-        $sql .= ' WHERE ' . implode(' AND ', $filters) . ' ORDER BY u.id ASC LIMIT 200';
+        $sql .= ' WHERE ' . implode(' AND ', $filters) . ' ORDER BY u.id ASC LIMIT ' . $limit;
         $rows = DB::select($sql, $params) ?: [];
         $roles = DB::table('admin_roles')->get();
         $roleMap = [];

@@ -331,7 +331,11 @@ class GroupController extends Controller
         $roleName = DataScope::roleNameOfUser($target);
         $isEnterprise = str_contains($roleName, '企业客户');
         $isOperator = str_contains($roleName, '运营专员');
+        // 超管可分配给任意启用用户；运营管理仍限运营专员/企业客户
         if (!$isEnterprise && !$isOperator) {
+            if (DataScope::isLoginSuper()) {
+                return [$targetOwnerId, null, null];
+            }
             return [0, null, $this->error('只能分配给运营专员或企业客户', 422)];
         }
         if ($isOperator) {

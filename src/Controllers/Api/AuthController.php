@@ -172,6 +172,11 @@ class AuthController extends Controller
         return $this->success(DataScope::accountAssignTargets());
     }
 
+    public function groupAssignTargets(Request $request): Response
+    {
+        return $this->success(DataScope::groupAssignTargets());
+    }
+
     public function proxyAssignTargets(Request $request): Response
     {
         return $this->success(DataScope::proxyAssignTargets());

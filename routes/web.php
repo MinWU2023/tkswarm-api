@@ -102,6 +102,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/auth/switchable-users', AuthController::class . '@switchableUsers');
     Router::get('/api/auth/account-filter-options', AuthController::class . '@accountFilterOptions');
     Router::get('/api/auth/account-assign-targets', AuthController::class . '@accountAssignTargets');
+    Router::get('/api/auth/group-assign-targets', AuthController::class . '@groupAssignTargets');
     Router::get('/api/auth/proxy-assign-targets', AuthController::class . '@proxyAssignTargets');
     Router::put('/api/auth/password', AuthController::class . '@updatePassword');
 
