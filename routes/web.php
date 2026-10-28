@@ -283,6 +283,9 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/proxies/fetch', ProxyController::class . '@fetch');
     Router::post('/api/proxies', ProxyController::class . '@create');
     Router::put('/api/proxies/{id}', ProxyController::class . '@update');
+    Router::get('/api/proxies/{id}/accounts', ProxyController::class . '@accounts');
+    Router::post('/api/proxies/{id}/bind-accounts', ProxyController::class . '@bindAccounts');
+    Router::post('/api/proxies/{id}/unbind-accounts', ProxyController::class . '@unbindAccounts');
     Router::post('/api/proxies/{id}/test', ProxyController::class . '@test');
     Router::delete('/api/proxies/{id}', ProxyController::class . '@delete');
 

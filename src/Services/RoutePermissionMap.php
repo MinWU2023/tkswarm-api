@@ -112,6 +112,9 @@ class RoutePermissionMap
 
             // —— 代理 ——
             ['method' => 'GET', 'pattern' => '#^/api/proxies/export#', 'codes' => ['proxy.view', 'proxy.create']],
+            ['method' => 'GET', 'pattern' => '#^/api/proxies/\d+/accounts#', 'codes' => ['proxy.view', 'proxy.create', 'proxy.update']],
+            ['method' => 'POST', 'pattern' => '#^/api/proxies/\d+/bind-accounts#', 'codes' => ['proxy.update', 'proxy.create']],
+            ['method' => 'POST', 'pattern' => '#^/api/proxies/\d+/unbind-accounts#', 'codes' => ['proxy.update', 'proxy.create']],
             ['method' => 'POST', 'pattern' => '#^/api/proxies/batch-import#', 'codes' => ['proxy.import']],
             ['method' => 'POST', 'pattern' => '#^/api/proxies/batch-delete#', 'codes' => ['proxy.delete', 'proxy.create']],
             ['method' => 'POST', 'pattern' => '#^/api/proxies/batch-unassign-owner#', 'codes' => ['proxy.update', 'proxy.create']],

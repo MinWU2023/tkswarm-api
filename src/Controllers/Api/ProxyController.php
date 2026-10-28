@@ -147,6 +147,167 @@ class ProxyController extends Controller
         return $this->success(null, '代理已删除');
     }
 
+    /** 查看代理已绑定的账号明细 */
+    public function accounts(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $pid = (int)$id;
+        $proxy = DB::selectOne('SELECT id, name, host, port, protocol, owner_id FROM proxies WHERE id=?', [$pid]);
+        if ($err = $this->assertProxyRowAccess($proxy)) {
+            return $err;
+        }
+        $rows = DB::select(
+            'SELECT a.id, a.username, a.nickname, a.login_status, a.enabled, a.owner_id, a.group_id,
+                    g.name AS group_name
+             FROM accounts a
+             LEFT JOIN `groups` g ON g.id = a.group_id
+             WHERE a.proxy_id=?
+             ORDER BY a.id ASC',
+            [$pid]
+        ) ?: [];
+        $items = array_map(static function (array $r) {
+            return [
+                'id' => (int)$r['id'],
+                'username' => (string)($r['username'] ?? ''),
+                'nickname' => (string)($r['nickname'] ?? ''),
+                'loginStatus' => (string)($r['login_status'] ?? ''),
+                'enabled' => (int)($r['enabled'] ?? 0),
+                'ownerId' => (int)($r['owner_id'] ?? 0),
+                'groupId' => (int)($r['group_id'] ?? 0),
+                'groupName' => (string)($r['group_name'] ?? ''),
+            ];
+        }, $rows);
+        $canEdit = DataScope::canEditProxyRow($proxy);
+        return $this->success([
+            'proxy' => [
+                'id' => $pid,
+                'name' => (string)($proxy['name'] ?? ''),
+                'host' => (string)($proxy['host'] ?? ''),
+                'port' => (int)($proxy['port'] ?? 0),
+                'protocol' => (string)($proxy['protocol'] ?? ''),
+                'ownerId' => (int)($proxy['owner_id'] ?? 0),
+            ],
+            'items' => $items,
+            'bound' => count($items),
+            'limit' => self::PROXY_BIND_LIMIT,
+            'remaining' => max(0, self::PROXY_BIND_LIMIT - count($items)),
+            'canEdit' => $canEdit,
+        ]);
+    }
+
+    /** 解绑代理上的账号 */
+    public function unbindAccounts(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $pid = (int)$id;
+        $proxy = DB::selectOne('SELECT id, owner_id FROM proxies WHERE id=?', [$pid]);
+        if ($err = $this->assertCanEditProxyRow($proxy)) {
+            return $err;
+        }
+        $ids = $this->idList($request->input('accountIds', []), 100);
+        if (!$ids) {
+            return $this->error('请选择要解绑的账号', 400);
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        [$ownSql, $ownParams] = $this->accountScopeSql('owner_id');
+        $existing = array_map('intval', array_column(
+            DB::select(
+                "SELECT id FROM accounts WHERE proxy_id=? AND id IN ({$ph}){$ownSql}",
+                array_merge([$pid], $ids, $ownParams)
+            ) ?: [],
+            'id'
+        ));
+        if (!$existing) {
+            return $this->error('没有可解绑的账号（可能不在当前数据范围内）', 404);
+        }
+        $ph2 = implode(',', array_fill(0, count($existing), '?'));
+        $stmt = DB::query(
+            "UPDATE accounts SET proxy_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE id IN ({$ph2})",
+            $existing
+        );
+        return $this->success([
+            'proxyId' => $pid,
+            'unbound' => $stmt->rowCount(),
+            'accountIds' => $existing,
+        ], '已解绑 ' . $stmt->rowCount() . ' 个账号');
+    }
+
+    /** 为代理绑定账号（单代理最多 PROXY_BIND_LIMIT 个） */
+    public function bindAccounts(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $pid = (int)$id;
+        $proxy = DB::selectOne('SELECT id, owner_id FROM proxies WHERE id=?', [$pid]);
+        if ($err = $this->assertCanEditProxyRow($proxy)) {
+            return $err;
+        }
+        $ids = $this->idList($request->input('accountIds', []), 100);
+        if (!$ids) {
+            return $this->error('请选择要绑定的账号', 400);
+        }
+        $current = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM accounts WHERE proxy_id=?', [$pid])['c'] ?? 0);
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $already = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM accounts WHERE proxy_id=? AND id IN ({$ph})",
+            array_merge([$pid], $ids)
+        )['c'] ?? 0);
+        $need = count($ids) - $already;
+        if ($current - $already + count($ids) > self::PROXY_BIND_LIMIT) {
+            $limit = self::PROXY_BIND_LIMIT;
+            $remain = max(0, $limit - $current);
+            return $this->error(
+                "该代理已绑定 {$current} 个账号，最多 {$limit} 个；还可绑定 {$remain} 个",
+                422
+            );
+        }
+        if ($need < 1 && $already === count($ids)) {
+            return $this->success([
+                'proxyId' => $pid,
+                'bound' => 0,
+                'already' => $already,
+                'current' => $current,
+                'limit' => self::PROXY_BIND_LIMIT,
+            ], '所选账号均已绑定该代理');
+        }
+
+        [$ownSql, $ownParams] = $this->accountScopeSql('owner_id');
+        $accounts = DB::select(
+            "SELECT id, proxy_id FROM accounts WHERE id IN ({$ph}){$ownSql}",
+            array_merge($ids, $ownParams)
+        ) ?: [];
+        if (!$accounts) {
+            return $this->error('没有可绑定的账号（可能不在当前数据范围内）', 404);
+        }
+
+        $bound = 0;
+        foreach ($accounts as $acc) {
+            $aid = (int)$acc['id'];
+            if ((int)($acc['proxy_id'] ?? 0) === $pid) {
+                continue;
+            }
+            DB::query(
+                'UPDATE accounts SET proxy_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$pid, $aid]
+            );
+            DB::query(
+                'UPDATE proxies SET use_count=use_count+1, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$pid]
+            );
+            $bound++;
+        }
+        $after = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM accounts WHERE proxy_id=?', [$pid])['c'] ?? 0);
+        return $this->success([
+            'proxyId' => $pid,
+            'bound' => $bound,
+            'current' => $after,
+            'limit' => self::PROXY_BIND_LIMIT,
+            'remaining' => max(0, self::PROXY_BIND_LIMIT - $after),
+        ], $bound ? "已绑定 {$bound} 个账号" : '没有新账号被绑定');
+    }
+
     public function batchImport(Request $request): Response
     {
         if ($err = $this->assertCanImportProxies()) {
