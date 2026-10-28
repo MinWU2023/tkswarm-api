@@ -414,14 +414,22 @@ class AccountController extends Controller
             $extraSets = [];
             $extraParams = [];
             if ($overrideOwnerId !== null) {
-                $finalCompanyId = $overrideCompanyId;
-                if ($hasCompanyInput && ($overrideCompanyId === null || $overrideCompanyId <= 0)) {
-                    $finalCompanyId = $explicitCompanyId;
+                // 0 = 清除关联人员（同时清空企业绑定）
+                if ((int)$overrideOwnerId <= 0) {
+                    $extraSets[] = 'owner_id=?';
+                    $extraParams[] = null;
+                    $extraSets[] = 'company_id=?';
+                    $extraParams[] = null;
+                } else {
+                    $finalCompanyId = $overrideCompanyId;
+                    if ($hasCompanyInput && ($overrideCompanyId === null || $overrideCompanyId <= 0)) {
+                        $finalCompanyId = $explicitCompanyId;
+                    }
+                    $extraSets[] = 'owner_id=?';
+                    $extraParams[] = $overrideOwnerId;
+                    $extraSets[] = 'company_id=?';
+                    $extraParams[] = $finalCompanyId;
                 }
-                $extraSets[] = 'owner_id=?';
-                $extraParams[] = $overrideOwnerId;
-                $extraSets[] = 'company_id=?';
-                $extraParams[] = $finalCompanyId;
             } elseif ($hasCompanyInput) {
                 $extraSets[] = 'company_id=?';
                 $extraParams[] = $explicitCompanyId;
@@ -1142,21 +1150,38 @@ class AccountController extends Controller
         }
 
         if (array_key_exists('ownerId', $fields) || array_key_exists('owner_id', $fields)) {
-            $targetOwnerId = (int)($fields['ownerId'] ?? $fields['owner_id'] ?? 0);
-            $companyId = isset($fields['companyId']) || isset($fields['company_id'])
-                ? (int)($fields['companyId'] ?? $fields['company_id'] ?? 0)
-                : null;
-            [$resolvedOwner, $resolvedCompany, $assignErr] = $this->resolveOwnerAssignment($targetOwnerId, $companyId);
-            if ($assignErr) {
-                return $assignErr;
-            }
-            $sets[] = 'owner_id=?';
-            $bind[] = $resolvedOwner;
-            $sets[] = 'company_id=?';
-            $bind[] = $resolvedCompany;
-            $changed[] = 'owner';
-            if ($resolvedCompany !== null && $resolvedCompany > 0) {
+            $rawOwner = $fields['ownerId'] ?? $fields['owner_id'] ?? null;
+            $clearOwner = $rawOwner === '__clear__'
+                || $rawOwner === ''
+                || $rawOwner === null
+                || (int)$rawOwner === 0;
+            if ($clearOwner) {
+                if (!DataScope::canAssignAccountOwners()) {
+                    return $this->error('当前角色无权清除账号关联人员', 403);
+                }
+                $sets[] = 'owner_id=?';
+                $bind[] = null;
+                $sets[] = 'company_id=?';
+                $bind[] = null;
+                $changed[] = 'owner';
                 $changed[] = 'company';
+            } else {
+                $targetOwnerId = (int)$rawOwner;
+                $companyId = isset($fields['companyId']) || isset($fields['company_id'])
+                    ? (int)($fields['companyId'] ?? $fields['company_id'] ?? 0)
+                    : null;
+                [$resolvedOwner, $resolvedCompany, $assignErr] = $this->resolveOwnerAssignment($targetOwnerId, $companyId);
+                if ($assignErr) {
+                    return $assignErr;
+                }
+                $sets[] = 'owner_id=?';
+                $bind[] = $resolvedOwner;
+                $sets[] = 'company_id=?';
+                $bind[] = $resolvedCompany;
+                $changed[] = 'owner';
+                if ($resolvedCompany !== null && $resolvedCompany > 0) {
+                    $changed[] = 'company';
+                }
             }
         }
 
@@ -1536,24 +1561,19 @@ class AccountController extends Controller
         }
     }
 
-    /** 将账号归属分配给指定管理用户（超管任意；有子级者仅可分给本人或直接子级） */
+    /** 将账号归属分配给指定管理用户（超管任意；有子级者仅可分给本人或直接子级）；clear=true 或 ownerId=__clear__ 时清除关联 */
     public function batchAssignOwner(Request $request): Response
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
         $ids = $this->idList($request->input('accountIds', []));
-        $targetOwnerId = (int)$request->input('ownerId', $request->input('userId', 0));
+        $rawOwner = $request->input('ownerId', $request->input('userId', $request->input('owner_id')));
+        $clear = (bool)$request->input('clear', false) || $rawOwner === '__clear__';
         $companyId = $request->input('companyId', $request->input('company_id'));
         $companyId = ($companyId === null || $companyId === '') ? null : (int)$companyId;
         if (!$ids) {
             return $this->error('请选择账号', 400);
         }
-        [$resolvedOwner, $resolvedCompany, $assignErr] = $this->resolveOwnerAssignment($targetOwnerId, $companyId);
-        if ($assignErr) {
-            return $assignErr;
-        }
-
-        $target = DB::table('admin_users')->where('id', $resolvedOwner)->first();
 
         $ph = implode(',', array_fill(0, count($ids), '?'));
         [$ownSql, $ownParams] = $this->accountScopeSql('owner_id');
@@ -1566,6 +1586,32 @@ class AccountController extends Controller
         }
 
         $ph2 = implode(',', array_fill(0, count($existing), '?'));
+
+        if ($clear) {
+            if (!DataScope::canAssignAccountOwners()) {
+                return $this->error('当前角色无权清除账号关联人员', 403);
+            }
+            $stmt = DB::query(
+                "UPDATE accounts SET owner_id=NULL, company_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE id IN ({$ph2})",
+                $existing
+            );
+            return $this->success([
+                'requested' => count($ids),
+                'updated' => $stmt->rowCount(),
+                'cleared' => true,
+                'ownerId' => null,
+                'companyId' => null,
+            ], '已清除账号关联人员');
+        }
+
+        $targetOwnerId = (int)$rawOwner;
+        [$resolvedOwner, $resolvedCompany, $assignErr] = $this->resolveOwnerAssignment($targetOwnerId, $companyId);
+        if ($assignErr) {
+            return $assignErr;
+        }
+
+        $target = DB::table('admin_users')->where('id', $resolvedOwner)->first();
+
         $stmt = DB::query(
             "UPDATE accounts SET owner_id=?, company_id=?, updated_at=CURRENT_TIMESTAMP WHERE id IN ({$ph2})",
             array_merge([$resolvedOwner, $resolvedCompany], $existing)
@@ -2455,6 +2501,7 @@ class AccountController extends Controller
     /**
      * 解析可分配的后台用户与企业。
      * 未传 ownerId 时返回 [null, null, null]（创建走默认归属，更新不改归属）。
+     * 传 __clear__ / 空 / 0 时返回 [0, null, null]（清除关联人员）。
      * @return array{0:?int,1:?int,2:?Response}
      */
     private function parseAssignableOwner(Request $request): array
@@ -2463,7 +2510,14 @@ class AccountController extends Controller
         if (!array_key_exists('ownerId', $all) && !array_key_exists('owner_id', $all)) {
             return [null, null, null];
         }
-        $targetOwnerId = (int)$request->input('ownerId', $request->input('owner_id', 0));
+        $raw = $request->input('ownerId', $request->input('owner_id'));
+        if ($raw === '__clear__' || $raw === '' || $raw === null || (int)$raw === 0) {
+            if (!DataScope::canAssignAccountOwners()) {
+                return [null, null, $this->error('当前角色无权清除账号关联人员', 403)];
+            }
+            return [0, null, null];
+        }
+        $targetOwnerId = (int)$raw;
         $companyRaw = $request->input('companyId', $request->input('company_id'));
         $companyId = ($companyRaw === null || $companyRaw === '') ? null : (int)$companyRaw;
         return $this->resolveOwnerAssignment($targetOwnerId, $companyId);

@@ -84,6 +84,24 @@ class AccountBrowserEnvService
             if (!in_array('owner_user_id', $envCols, true)) {
                 DB::query("ALTER TABLE account_browser_envs ADD COLUMN owner_user_id INT NOT NULL DEFAULT 0 AFTER account_id");
             }
+            // 跨机环境包元数据
+            $packCols = [
+                'pack_path' => "ALTER TABLE account_browser_envs ADD COLUMN pack_path VARCHAR(512) NOT NULL DEFAULT '' AFTER label",
+                'pack_sha256' => "ALTER TABLE account_browser_envs ADD COLUMN pack_sha256 VARCHAR(64) NOT NULL DEFAULT '' AFTER pack_path",
+                'pack_bytes' => "ALTER TABLE account_browser_envs ADD COLUMN pack_bytes BIGINT NOT NULL DEFAULT 0 AFTER pack_sha256",
+                'pack_revision' => "ALTER TABLE account_browser_envs ADD COLUMN pack_revision INT NOT NULL DEFAULT 0 AFTER pack_bytes",
+                'pack_updated_at' => "ALTER TABLE account_browser_envs ADD COLUMN pack_updated_at DATETIME NULL AFTER pack_revision",
+                'pack_host_id' => "ALTER TABLE account_browser_envs ADD COLUMN pack_host_id VARCHAR(128) NOT NULL DEFAULT '' AFTER pack_updated_at",
+            ];
+            foreach ($packCols as $col => $sql) {
+                if (!in_array($col, $envCols, true)) {
+                    try {
+                        DB::query($sql);
+                        $envCols[] = $col;
+                    } catch (\Throwable $e) {
+                    }
+                }
+            }
         } catch (\Throwable $e) {
         }
         try {
@@ -722,5 +740,179 @@ class AccountBrowserEnvService
             'profiles' => array_values(array_unique($profiles)),
             'batch_ids' => array_values(array_unique($batchIds)),
         ];
+    }
+
+    public const PACK_MAX_BYTES = 524288000; // 500MB
+    public const PACK_LEASE_PREFIX = 'packhost:';
+
+    public static function packStorageDir(): string
+    {
+        $dir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'browser-env-packs';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        return $dir;
+    }
+
+    /** @return array<string,mixed>|null */
+    public static function findByProfileId(string $profileId): ?array
+    {
+        self::ensureSchema();
+        $profileId = trim($profileId);
+        if ($profileId === '') {
+            return null;
+        }
+        $row = DB::selectOne(
+            'SELECT * FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
+            [$profileId]
+        );
+        return $row ?: null;
+    }
+
+    /** @return array<string,mixed> */
+    public static function packMeta(string $profileId): array
+    {
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return [
+                'exists' => false,
+                'hasPack' => false,
+                'profileId' => $profileId,
+            ];
+        }
+        $path = trim((string)($env['pack_path'] ?? ''));
+        $hasFile = $path !== '' && is_file($path);
+        $leaseUntil = (string)($env['lease_until'] ?? '');
+        $lockedBy = (string)($env['locked_by'] ?? '');
+        $leaseActive = ($env['saturation'] ?? '') === 'busy'
+            && $leaseUntil !== ''
+            && strtotime($leaseUntil) > time();
+        return [
+            'exists' => true,
+            'hasPack' => $hasFile && (int)($env['pack_revision'] ?? 0) > 0,
+            'profileId' => (string)$env['browser_profile_id'],
+            'accountId' => (int)($env['account_id'] ?? 0),
+            'envId' => (int)($env['id'] ?? 0),
+            'packSha256' => (string)($env['pack_sha256'] ?? ''),
+            'packBytes' => (int)($env['pack_bytes'] ?? 0),
+            'packRevision' => (int)($env['pack_revision'] ?? 0),
+            'packUpdatedAt' => $env['pack_updated_at'] ?? null,
+            'packHostId' => (string)($env['pack_host_id'] ?? ''),
+            'saturation' => (string)($env['saturation'] ?? 'idle'),
+            'lockedBy' => $lockedBy,
+            'leaseUntil' => $leaseUntil ?: null,
+            'leaseActive' => $leaseActive,
+            'leaseHolder' => $leaseActive ? $lockedBy : '',
+        ];
+    }
+
+    /**
+     * 独占租约：打开/拉取前占用；locked_by = packhost:{hostId}
+     * @return array{ok:bool,message?:string,meta?:array<string,mixed>}
+     */
+    public static function acquirePackLease(string $profileId, string $hostId, int $leaseSeconds = 7200): array
+    {
+        self::ensureSchema();
+        self::reclaimExpiredEnvLeases();
+        $hostId = trim($hostId);
+        if ($hostId === '') {
+            return ['ok' => false, 'message' => '缺少 hostId'];
+        }
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return ['ok' => false, 'message' => '环境绑定不存在'];
+        }
+        $ourLock = self::PACK_LEASE_PREFIX . $hostId;
+        $lockedBy = (string)($env['locked_by'] ?? '');
+        $leaseUntil = (string)($env['lease_until'] ?? '');
+        $busy = ($env['saturation'] ?? '') === 'busy'
+            && $leaseUntil !== ''
+            && strtotime($leaseUntil) > time();
+
+        if ($busy && $lockedBy !== '' && $lockedBy !== $ourLock) {
+            return [
+                'ok' => false,
+                'message' => '该环境正在其它主机使用（' . $lockedBy . '），请稍后再试或等对方关闭后上传',
+                'meta' => self::packMeta($profileId),
+            ];
+        }
+
+        $until = date('Y-m-d H:i:s', time() + max(120, $leaseSeconds));
+        DB::query(
+            "UPDATE account_browser_envs
+             SET saturation='busy', locked_by=?, lease_until=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [$ourLock, $until, (int)$env['id']]
+        );
+        return ['ok' => true, 'meta' => self::packMeta($profileId)];
+    }
+
+    /** @return array{ok:bool,message?:string,meta?:array<string,mixed>} */
+    public static function releasePackLease(string $profileId, string $hostId, bool $force = false): array
+    {
+        self::ensureSchema();
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return ['ok' => false, 'message' => '环境绑定不存在'];
+        }
+        $ourLock = self::PACK_LEASE_PREFIX . trim($hostId);
+        $lockedBy = (string)($env['locked_by'] ?? '');
+        if (!$force && $lockedBy !== '' && $lockedBy !== $ourLock && str_starts_with($lockedBy, self::PACK_LEASE_PREFIX)) {
+            return ['ok' => false, 'message' => '租约属于其它主机，无法释放'];
+        }
+        // 仅释放 pack 租约；工作批任务租约留给原逻辑
+        if ($lockedBy === $ourLock || $force || str_starts_with($lockedBy, self::PACK_LEASE_PREFIX) || $lockedBy === '') {
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND (locked_by=? OR locked_by='' OR ?=1)",
+                [(int)$env['id'], $ourLock, $force ? 1 : 0]
+            );
+        }
+        return ['ok' => true, 'meta' => self::packMeta($profileId)];
+    }
+
+    /**
+     * 保存上传的环境包到磁盘并更新元数据。
+     * @return array{ok:bool,message?:string,meta?:array<string,mixed>}
+     */
+    public static function saveUploadedPack(string $profileId, string $tmpFile, string $hostId = ''): array
+    {
+        self::ensureSchema();
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return ['ok' => false, 'message' => '环境绑定不存在，无法保存包'];
+        }
+        if (!is_file($tmpFile)) {
+            return ['ok' => false, 'message' => '上传临时文件不存在'];
+        }
+        $bytes = (int)filesize($tmpFile);
+        if ($bytes < 64) {
+            return ['ok' => false, 'message' => '环境包过小或损坏'];
+        }
+        if ($bytes > self::PACK_MAX_BYTES) {
+            return ['ok' => false, 'message' => '环境包超过 500MB 上限'];
+        }
+        $sha = hash_file('sha256', $tmpFile) ?: '';
+        $dir = self::packStorageDir();
+        $safeId = preg_replace('/[^a-zA-Z0-9_-]/', '', $profileId) ?: ('env' . (int)$env['id']);
+        $dest = $dir . DIRECTORY_SEPARATOR . $safeId . '.tgz';
+        $old = trim((string)($env['pack_path'] ?? ''));
+        if (!@rename($tmpFile, $dest) && !@copy($tmpFile, $dest)) {
+            return ['ok' => false, 'message' => '保存环境包失败'];
+        }
+        @unlink($tmpFile);
+        if ($old !== '' && $old !== $dest && is_file($old)) {
+            @unlink($old);
+        }
+        $rev = (int)($env['pack_revision'] ?? 0) + 1;
+        DB::query(
+            "UPDATE account_browser_envs
+             SET pack_path=?, pack_sha256=?, pack_bytes=?, pack_revision=?,
+                 pack_updated_at=CURRENT_TIMESTAMP, pack_host_id=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [$dest, $sha, $bytes, $rev, mb_substr(trim($hostId), 0, 128), (int)$env['id']]
+        );
+        return ['ok' => true, 'meta' => self::packMeta($profileId)];
     }
 }

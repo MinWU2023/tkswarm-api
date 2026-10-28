@@ -2559,4 +2559,134 @@ class NodeBridgeController extends Controller
         }
         return null;
     }
+
+    /**
+     * 跨机环境包：按 profileId 定位绑定行（与 proxy-bundle 一样按全局事实，不按可见范围挡共用）。
+     * @return array{0:?array<string,mixed>,1:?Response}
+     */
+    private function resolveEnvRowForPack(string $profileId): array
+    {
+        DataScope::ensureColumns();
+        \App\Services\AccountBrowserEnvService::ensureSchema();
+        $profileId = trim($profileId);
+        if ($profileId === '') {
+            return [null, $this->error('缺少 profileId', 422)];
+        }
+        $env = \App\Services\AccountBrowserEnvService::findByProfileId($profileId);
+        if (!$env) {
+            return [null, $this->error('环境绑定不存在', 404)];
+        }
+        return [$env, null];
+    }
+
+    /** GET 环境包元数据（是否有包、revision、租约） */
+    public function browserProfilePackMeta(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        return $this->success(\App\Services\AccountBrowserEnvService::packMeta((string)$env['browser_profile_id']));
+    }
+
+    /** GET 下载环境包二进制 */
+    public function browserProfilePackDownload(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        $meta = \App\Services\AccountBrowserEnvService::packMeta((string)$env['browser_profile_id']);
+        if (empty($meta['hasPack'])) {
+            return $this->error('服务器尚无该环境包，请先在有数据的机器上打开并关闭一次以完成首传', 404);
+        }
+        $path = trim((string)($env['pack_path'] ?? ''));
+        if ($path === '' || !is_file($path)) {
+            return $this->error('环境包文件缺失', 404);
+        }
+        $name = basename($path) ?: ((string)$env['browser_profile_id'] . '.tgz');
+        return Response::file($path, 200, [
+            'Content-Type' => 'application/gzip',
+            'Content-Disposition' => 'attachment; filename="' . $name . '"',
+            'Content-Length' => (string)filesize($path),
+            'X-Pack-Sha256' => (string)($env['pack_sha256'] ?? ''),
+            'X-Pack-Revision' => (string)(int)($env['pack_revision'] ?? 0),
+        ]);
+    }
+
+    /** POST multipart 上传环境包字段 file */
+    public function browserProfilePackUpload(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return $this->error('请以 multipart 字段 file 上传 .tgz 环境包', 422);
+        }
+        $file = $_FILES['file'];
+        $tmp = (string)($file['tmp_name'] ?? '');
+        $size = (int)($file['size'] ?? 0);
+        if ($tmp === '' || !is_file($tmp)) {
+            return $this->error('上传临时文件无效', 422);
+        }
+        if ($size > \App\Services\AccountBrowserEnvService::PACK_MAX_BYTES) {
+            return $this->error('环境包超过 500MB 上限', 422);
+        }
+        $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
+        $hold = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tk-env-pack-' . bin2hex(random_bytes(8)) . '.tgz';
+        if (!@move_uploaded_file($tmp, $hold) && !@copy($tmp, $hold)) {
+            return $this->error('接收上传失败', 500);
+        }
+        $saved = \App\Services\AccountBrowserEnvService::saveUploadedPack(
+            (string)$env['browser_profile_id'],
+            $hold,
+            $hostId
+        );
+        if (empty($saved['ok'])) {
+            @unlink($hold);
+            return $this->error((string)($saved['message'] ?? '保存失败'), 422);
+        }
+        return $this->success($saved['meta'] ?? null, '环境包已上传');
+    }
+
+    /** POST 占用跨机独占租约 */
+    public function browserProfilePackLease(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
+        $seconds = (int)$request->input('leaseSeconds', $request->input('lease_seconds', 7200));
+        $out = \App\Services\AccountBrowserEnvService::acquirePackLease(
+            (string)$env['browser_profile_id'],
+            $hostId,
+            $seconds
+        );
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['message'] ?? '租约失败'), 409, $out['meta'] ?? null);
+        }
+        return $this->success($out['meta'] ?? null, '已占用环境租约');
+    }
+
+    /** POST 释放跨机独占租约 */
+    public function browserProfilePackLeaseRelease(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
+        $force = (bool)$request->input('force', false);
+        $out = \App\Services\AccountBrowserEnvService::releasePackLease(
+            (string)$env['browser_profile_id'],
+            $hostId,
+            $force
+        );
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['message'] ?? '释放失败'), 409, $out['meta'] ?? null);
+        }
+        return $this->success($out['meta'] ?? null, '已释放环境租约');
+    }
 }

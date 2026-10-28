@@ -477,6 +477,11 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/node/accounts/bindings', NodeBridgeController::class . '@accountBindings');
     Router::get('/api/node/accounts/by-profile/{profileId}', NodeBridgeController::class . '@accountByProfile');
     Router::get('/api/node/browser-profiles/{profileId}/proxy-bundle', NodeBridgeController::class . '@profileProxyBundle');
+    Router::get('/api/node/browser-profiles/{profileId}/pack-meta', NodeBridgeController::class . '@browserProfilePackMeta');
+    Router::get('/api/node/browser-profiles/{profileId}/pack', NodeBridgeController::class . '@browserProfilePackDownload');
+    Router::post('/api/node/browser-profiles/{profileId}/pack', NodeBridgeController::class . '@browserProfilePackUpload');
+    Router::post('/api/node/browser-profiles/{profileId}/pack-lease', NodeBridgeController::class . '@browserProfilePackLease');
+    Router::post('/api/node/browser-profiles/{profileId}/pack-lease/release', NodeBridgeController::class . '@browserProfilePackLeaseRelease');
     Router::get('/api/node/accounts/{id}/bundle', NodeBridgeController::class . '@accountBundle');
     Router::post('/api/node/accounts/{id}/browser-binding', NodeBridgeController::class . '@browserBinding');
     Router::post('/api/node/accounts/{id}/fingerprint', NodeBridgeController::class . '@fingerprint');
