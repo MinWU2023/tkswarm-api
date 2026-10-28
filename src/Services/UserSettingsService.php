@@ -81,6 +81,8 @@ class UserSettingsService
             'browserWindowMode' => 'visible',
             'enabledBrowsers' => ['bit'],
             'messageSyncInterval' => 10,
+            /** 本机自研浏览器任务并发（每登录用户独立；Node 执行器读取） */
+            'taskConcurrency' => 6,
             'privateMessageSync' => true,
             'messageSyncMode' => 'api',
             'dmSyncBitFallback' => true,

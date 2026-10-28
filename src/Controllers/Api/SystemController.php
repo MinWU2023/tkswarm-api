@@ -62,6 +62,9 @@ class SystemController extends Controller
         if (isset($all['fansSyncMaxPerRun'])) {
             $all['fansSyncMaxPerRun'] = max(50, min(2000, (int)$all['fansSyncMaxPerRun'] ?: 500));
         }
+        if (isset($all['taskConcurrency'])) {
+            $all['taskConcurrency'] = max(3, min(20, (int)$all['taskConcurrency'] ?: 6));
+        }
         $filtered = [];
         foreach ($all as $k => $v) {
             $secretKeys = ['browserApiToken', 'tkswarmBrowserApiToken', 'translationApiKey', 'smtp.password'];
