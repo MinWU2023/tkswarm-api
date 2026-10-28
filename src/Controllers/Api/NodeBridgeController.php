@@ -135,32 +135,32 @@ class NodeBridgeController extends Controller
 
     public function browserBinding(Request $request, string $id): Response
     {
-        DataScope::ensureColumns();
-        \App\Services\AccountBrowserEnvService::ensureSchema();
-        $row = DB::selectOne('SELECT * FROM accounts WHERE id=?', [(int)$id]);
-        if ($err = $this->assertNodeAccountRow($row)) {
-            return $err;
-        }
-        $profileId = trim((string)$request->input('profileId', $request->input('browserProfileId', '')));
-        $clear = (bool)$request->input('clear', false);
-        if ($clear || $profileId === '') {
-            if (!DataScope::canEditBrowserEnvs()) {
-                return $this->error('当前角色无权操作浏览器环境', 403);
-            }
-            // clear=true 且带 profileId：只解绑该环境；否则清空该账号全部环境
-            $only = $clear && $profileId !== '' ? $profileId : null;
-            \App\Services\AccountBrowserEnvService::unbind((int)$id, $only);
-            $envs = \App\Services\AccountBrowserEnvService::listByAccount((int)$id);
-            return $this->success([
-                'id' => (int)$id,
-                'browser_profile_id' => (string)($envs[0]['browser_profile_id'] ?? ''),
-                'envs' => $envs,
-            ], '已解除浏览器绑定');
-        }
-        if (!DataScope::canCreateBrowserEnvs()) {
-            return $this->error('当前角色无权创建/绑定浏览器环境', 403);
-        }
         try {
+            DataScope::ensureColumns();
+            \App\Services\AccountBrowserEnvService::ensureSchema();
+            $row = DB::selectOne('SELECT * FROM accounts WHERE id=?', [(int)$id]);
+            if ($err = $this->assertNodeAccountRow($row)) {
+                return $err;
+            }
+            $profileId = $request->stringInput('profileId', $request->stringInput('browserProfileId', ''));
+            $clear = $request->boolInput('clear', false);
+            if ($clear || $profileId === '') {
+                if (!DataScope::canEditBrowserEnvs()) {
+                    return $this->error('当前角色无权操作浏览器环境', 403);
+                }
+                // clear=true 且带 profileId：只解绑该环境；否则清空该账号全部环境
+                $only = $clear && $profileId !== '' ? $profileId : null;
+                \App\Services\AccountBrowserEnvService::unbind((int)$id, $only);
+                $envs = \App\Services\AccountBrowserEnvService::listByAccount((int)$id);
+                return $this->success([
+                    'id' => (int)$id,
+                    'browser_profile_id' => (string)($envs[0]['browser_profile_id'] ?? ''),
+                    'envs' => $envs,
+                ], '已解除浏览器绑定');
+            }
+            if (!DataScope::canCreateBrowserEnvs()) {
+                return $this->error('当前角色无权创建/绑定浏览器环境', 403);
+            }
             $existing = DB::selectOne(
                 'SELECT e.account_id, e.owner_user_id,
                         a.id AS account_pk, a.owner_id, a.company_id
@@ -183,14 +183,15 @@ class NodeBridgeController extends Controller
                 && !DataScope::isEnterpriseCustomer() && !DataScope::isOperator()) {
                 return $this->error('无权绑定未分配环境', 403);
             }
-            $asPrimary = (bool)$request->input('asPrimary', $request->input('as_primary', false));
+            $asPrimary = $request->boolInput('asPrimary', $request->boolInput('as_primary', false));
             $backend = \App\Services\AccountBrowserEnvService::normalizeBackend(
-                (string)$request->input('browserBackend', $request->input('browser_backend', 'bit'))
+                $request->stringInput('browserBackend', $request->stringInput('browser_backend', 'bit'))
             );
-            $ownerOverrideRaw = $request->input('ownerUserId', $request->input('owner_user_id', $request->input('ownerId')));
-            $ownerOverride = ($ownerOverrideRaw === null || $ownerOverrideRaw === '')
-                ? null
-                : (int)$ownerOverrideRaw;
+            $ownerOverrideRaw = $request->stringInput(
+                'ownerUserId',
+                $request->stringInput('owner_user_id', $request->stringInput('ownerId', ''))
+            );
+            $ownerOverride = $ownerOverrideRaw === '' ? null : (int)$ownerOverrideRaw;
             if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()) {
                 return $this->error('仅超级管理员可为环境指定管理用户归属', 403);
             }
@@ -225,8 +226,12 @@ class NodeBridgeController extends Controller
                 'envs' => $envs,
             ], '浏览器环境已绑定');
         } catch (\Throwable $e) {
-            $code = str_contains($e->getMessage(), '已绑定') ? 409 : 400;
-            return $this->error($e->getMessage(), $code);
+            $msg = $e->getMessage() !== '' ? $e->getMessage() : '浏览器绑定失败';
+            $code = str_contains($msg, '已绑定') ? 409 : 400;
+            if (str_contains($msg, 'Array to string')) {
+                $msg = '浏览器绑定参数异常（Array to string），请重试或检查 profileId/browserBackend';
+            }
+            return $this->error($msg, $code);
         }
     }
 

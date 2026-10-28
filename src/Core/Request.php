@@ -85,6 +85,49 @@ class Request
         return $this->params[$key] ?? $default;
     }
 
+    /**
+     * 取标量字符串；若 JSON/表单把字段解析成数组（重复 key），取第一个非数组叶子，避免 (string)$array 触发 500。
+     */
+    public function stringInput(string $key, string $default = ''): string
+    {
+        $v = $this->input($key, $default);
+        while (is_array($v)) {
+            $v = reset($v);
+            if ($v === false) {
+                return $default;
+            }
+        }
+        if ($v === null) {
+            return $default;
+        }
+        if (is_bool($v)) {
+            return $v ? '1' : '';
+        }
+        return trim((string)$v);
+    }
+
+    public function boolInput(string $key, bool $default = false): bool
+    {
+        $v = $this->input($key, $default);
+        while (is_array($v)) {
+            $v = reset($v);
+            if ($v === false) {
+                return $default;
+            }
+        }
+        if (is_bool($v)) {
+            return $v;
+        }
+        if (is_int($v) || is_float($v)) {
+            return (int)$v !== 0;
+        }
+        $s = strtolower(trim((string)($v ?? '')));
+        if ($s === '') {
+            return $default;
+        }
+        return in_array($s, ['1', 'true', 'yes', 'on'], true);
+    }
+
     /** 原始 JSON body（无则 null）；控制器里常用 `$request->json() ?: []` */
     public function json(): ?array
     {
