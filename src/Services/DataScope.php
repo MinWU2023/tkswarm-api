@@ -670,6 +670,12 @@ class DataScope
         return self::isSuper() || self::isOpsAdmin();
     }
 
+    /** 仅登录身份为超管/运营管理可将账号分组（及组内账号）分配给管理用户 */
+    public static function canAssignGroupOwners(): bool
+    {
+        return self::isLoginSuper() || self::isLoginOpsAdmin();
+    }
+
     /** 运营专员不可创建/导入代理 */
     public static function canCreateProxies(): bool
     {

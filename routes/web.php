@@ -121,6 +121,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
 
     Router::get('/api/groups', GroupController::class . '@list');
     Router::post('/api/groups', GroupController::class . '@create');
+    Router::post('/api/groups/{id}/assign-owner', GroupController::class . '@assignOwner');
     Router::put('/api/groups/{id}', GroupController::class . '@update');
     Router::delete('/api/groups/{id}', GroupController::class . '@delete');
 

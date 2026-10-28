@@ -52,6 +52,7 @@ class PermissionCatalog
             [104, 'group', 'group.create', '添加分组', 51],
             [105, 'group', 'group.update', '编辑分组', 52],
             [106, 'group', 'group.delete', '删除分组', 53],
+            [174, 'group', 'group.assign', '分配分组用户', 54],
 
             // —— 权限：管理用户 ——
             [110, 'rbac', 'rbac.users.view', '查看管理用户', 110],
@@ -159,6 +160,8 @@ class PermissionCatalog
             'group.create' => ['group.manage'],
             'group.update' => ['group.manage'],
             'group.delete' => ['group.manage'],
+            // 分配分组用户：不挂到 group.manage，仅超管(*) / 运营管理显式授权
+            'group.assign' => [],
             'group.manage' => [],
             'account.work' => [
                 'account.work.pause', 'account.work.delete', 'account.work.reset',
@@ -308,10 +311,16 @@ class PermissionCatalog
     /** 运营管理：保证可打开并维护「管理用户」列表（含选角色） */
     private static function ensureOpsAdminUserPerms(): void
     {
-        $needCodes = [
+        self::ensureRoleCodesByName('%运营管理%', [
             'rbac.users.view', 'rbac.users.create', 'rbac.users.update', 'rbac.users.delete',
             'rbac.roles.view',
-        ];
+            'group.assign',
+        ]);
+    }
+
+    /** @param list<string> $needCodes */
+    private static function ensureRoleCodesByName(string $roleNameLike, array $needCodes): void
+    {
         $codeToId = [];
         foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
             $codeToId[(string)$row['code']] = (int)$row['id'];
@@ -325,7 +334,7 @@ class PermissionCatalog
         if (!$needIds) {
             return;
         }
-        $roles = DB::select("SELECT id, permissions FROM admin_roles WHERE name LIKE '%运营管理%'");
+        $roles = DB::select('SELECT id, permissions FROM admin_roles WHERE name LIKE ?', [$roleNameLike]);
         foreach ($roles as $role) {
             $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
             if (!is_array($ids) || in_array('*', $ids, true)) {
@@ -522,6 +531,7 @@ class PermissionCatalog
             ['group.create', '分组·添加'],
             ['group.update', '分组·编辑'],
             ['group.delete', '分组·删除'],
+            ['group.assign', '分组·分配用户'],
             ['publish.tasks', '发布任务'],
             ['publish.mass', '群发任务'],
             ['publish.materials', '素材管理'],

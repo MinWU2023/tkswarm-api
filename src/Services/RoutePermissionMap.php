@@ -123,6 +123,7 @@ class RoutePermissionMap
 
             // —— 分组 ——
             ['method' => 'GET', 'pattern' => '#^/api/groups#', 'codes' => ['group.view', 'group.manage', 'account.view']],
+            ['method' => 'POST', 'pattern' => '#^/api/groups/\d+/assign-owner#', 'codes' => ['group.assign']],
             ['method' => 'POST', 'pattern' => '#^/api/groups$#', 'codes' => ['group.create', 'group.manage']],
             ['method' => 'PUT', 'pattern' => '#^/api/groups#', 'codes' => ['group.update', 'group.manage']],
             ['method' => 'DELETE', 'pattern' => '#^/api/groups#', 'codes' => ['group.delete', 'group.manage']],

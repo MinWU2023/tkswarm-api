@@ -7,6 +7,7 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
+use App\Services\CompanyService;
 use App\Services\DataScope;
 
 class GroupController extends Controller
@@ -243,6 +244,98 @@ class GroupController extends Controller
 
         DB::table('groups')->where('id', $gid)->delete();
         return $this->success(null, '分组已删除');
+    }
+
+    /**
+     * 将账号分组（含一级下子组）及组内账号一并分配给指定管理用户。
+     * 仅登录身份为超管 / 运营管理可操作。
+     */
+    public function assignOwner(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+
+        if (!DataScope::canAssignGroupOwners()) {
+            return $this->error('仅超级管理员或运营管理可分配分组用户', 403);
+        }
+
+        $gid = (int)$id;
+        $row = DB::table('groups')->where('id', $gid)->first();
+        if ($err = DataScope::assertGroupOwns($row)) {
+            return $err;
+        }
+        if (($row['type'] ?? '') !== 'account') {
+            return $this->error('仅支持账号分组分配用户', 422);
+        }
+
+        $targetOwnerId = (int)$request->input('ownerId', $request->input('userId', 0));
+        $companyId = $request->input('companyId', $request->input('company_id'));
+        $companyId = ($companyId === null || $companyId === '') ? null : (int)$companyId;
+
+        [$resolvedOwner, $resolvedCompany, $assignErr] = $this->resolveGroupOwnerAssignment($targetOwnerId, $companyId);
+        if ($assignErr) {
+            return $assignErr;
+        }
+
+        $target = DB::table('admin_users')->where('id', $resolvedOwner)->first();
+        $groupIds = self::expandAccountGroupIds($gid);
+        $ph = implode(',', array_fill(0, count($groupIds), '?'));
+
+        DB::query(
+            "UPDATE `groups` SET owner_id=?, updated_at=CURRENT_TIMESTAMP WHERE id IN ({$ph})",
+            array_merge([$resolvedOwner], $groupIds)
+        );
+
+        $accStmt = DB::query(
+            "UPDATE accounts SET owner_id=?, company_id=?, updated_at=CURRENT_TIMESTAMP WHERE group_id IN ({$ph})",
+            array_merge([$resolvedOwner, $resolvedCompany], $groupIds)
+        );
+
+        $ownerName = (string)(($target['nickname'] ?? '') ?: ($target['username'] ?? ''));
+        return $this->success([
+            'groupId' => $gid,
+            'groupIds' => $groupIds,
+            'groupsUpdated' => count($groupIds),
+            'accountsUpdated' => (int)$accStmt->rowCount(),
+            'ownerId' => $resolvedOwner,
+            'companyId' => $resolvedCompany,
+            'ownerName' => $ownerName,
+        ], '分组及组内账号已分配给 ' . $ownerName);
+    }
+
+    /**
+     * @return array{0:int,1:?int,2:?Response}
+     */
+    private function resolveGroupOwnerAssignment(int $targetOwnerId, ?int $companyId): array
+    {
+        if ($targetOwnerId < 1) {
+            return [0, null, $this->error('请选择管理用户', 422)];
+        }
+        $target = DB::table('admin_users')->where('id', $targetOwnerId)->first();
+        if (!$target || (int)($target['status'] ?? 0) !== 1) {
+            return [0, null, $this->error('目标管理用户不存在或已停用', 404)];
+        }
+
+        $roleName = DataScope::roleNameOfUser($target);
+        $isEnterprise = str_contains($roleName, '企业客户');
+        $isOperator = str_contains($roleName, '运营专员');
+        if (!$isEnterprise && !$isOperator) {
+            return [0, null, $this->error('只能分配给运营专员或企业客户', 422)];
+        }
+        if ($isOperator) {
+            return [$targetOwnerId, null, null];
+        }
+
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($targetOwnerId);
+        if (!$companyIds) {
+            return [0, null, $this->error('该企业客户未关联企业，请先在企业数据中绑定', 422)];
+        }
+        $resolvedCompany = ($companyId !== null && $companyId > 0) ? $companyId : (int)$companyIds[0];
+        if (!in_array($resolvedCompany, $companyIds, true)) {
+            return [0, null, $this->error('所选企业不属于该企业客户', 422)];
+        }
+        return [$targetOwnerId, $resolvedCompany, null];
     }
 
     /** 供 AccountController 复用：一级分组 → 自身 + 全部子组 id */

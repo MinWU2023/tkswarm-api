@@ -195,6 +195,7 @@ class SeedMeta
             ['group.create', '分组·添加'],
             ['group.update', '分组·编辑'],
             ['group.delete', '分组·删除'],
+            ['group.assign', '分组·分配用户'],
             ['group.manage', '分组·总控(兼容)'],
             ['publish.tasks', '发布任务'],
             ['publish.mass', '群发任务'],
