@@ -1772,16 +1772,17 @@ class AccountController extends Controller
         DataScope::ensureColumns();
         $aid = (int)$id;
         $account = DB::selectOne('SELECT id, owner_id, company_id, data_mail_push FROM accounts WHERE id=?', [$aid]);
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertAccountRowAccess($account)) {
             return $err;
         }
+        PullDataAnalysisService::ensureAccountDataMailPushColumn();
         $enabledRaw = $request->input('enabled', $request->input('dataMailPush', $request->input('data_mail_push')));
         if ($enabledRaw === null) {
             return $this->error('请传入 enabled', 422);
         }
         $enabled = filter_var($enabledRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
         if ($enabled === null) {
-            $enabled = in_array((string)$enabledRaw, ['1', 'true', 'on', 'yes'], true);
+            $enabled = in_array(strtolower((string)$enabledRaw), ['1', 'true', 'on', 'yes'], true);
         }
         $val = $enabled ? 1 : 0;
         DB::query(
@@ -1795,6 +1796,7 @@ class AccountController extends Controller
         return $this->success([
             'accountId' => $aid,
             'dataMailPush' => $val,
+            'data_mail_push' => $val,
             'cancelledPending' => $cancelled,
         ], $val ? '已开启数据邮件推送' : '已关闭数据邮件推送');
     }
@@ -1860,6 +1862,15 @@ class AccountController extends Controller
                 'text' => (string)($m['value_text'] ?? ''),
             ];
         }
+        $dataMailPush = 1;
+        try {
+            PullDataAnalysisService::ensureAccountDataMailPushColumn();
+            $pushRow = DB::selectOne('SELECT data_mail_push FROM accounts WHERE id=? LIMIT 1', [$aid]);
+            $dataMailPush = (int)($pushRow['data_mail_push'] ?? 1) === 1 ? 1 : 0;
+        } catch (\Throwable $e) {
+            $dataMailPush = 1;
+        }
+
         return $this->success([
             'snapshots' => $snapshots,
             'daily28' => $daily,
@@ -1867,6 +1878,8 @@ class AccountController extends Controller
             'studioMetrics' => $byTab,
             'studioContent' => $content,
             'studioSync' => $sync,
+            'dataMailPush' => $dataMailPush,
+            'data_mail_push' => $dataMailPush,
         ]);
     }
 
@@ -2759,6 +2772,10 @@ class AccountController extends Controller
         $row['last_video_at'] = (string)($row['last_video_at'] ?? '');
         $row['dm_used'] = (int)($row['dm_used'] ?? 0);
         $row['dm_limit'] = (int)($row['dm_limit'] ?? 0);
+        // 查看数据：拉取成功后是否自动入队邮件计划任务（缺省按开启）
+        $mailPush = array_key_exists('data_mail_push', $row) ? (int)$row['data_mail_push'] : 1;
+        $row['data_mail_push'] = $mailPush === 1 ? 1 : 0;
+        $row['dataMailPush'] = $row['data_mail_push'];
         return $row;
     }
 
