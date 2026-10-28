@@ -1204,6 +1204,16 @@ class AccountController extends Controller
             $changed[] = 'enabled';
         }
 
+        $batchMailPush = null;
+        if (array_key_exists('dataMailPush', $fields) || array_key_exists('data_mail_push', $fields)) {
+            PullDataAnalysisService::ensureAccountDataMailPushColumn();
+            $rawPush = $fields['dataMailPush'] ?? $fields['data_mail_push'];
+            $batchMailPush = ((int)$rawPush) ? 1 : 0;
+            $sets[] = 'data_mail_push=?';
+            $bind[] = $batchMailPush;
+            $changed[] = 'dataMailPush';
+        }
+
         if (array_key_exists('dmChannel', $fields) || array_key_exists('dm_channel', $fields)) {
             $ch = trim((string)($fields['dmChannel'] ?? $fields['dm_channel'] ?? ''));
             if (!in_array($ch, ['auto', 'api', 'browser'], true)) {
@@ -1261,10 +1271,21 @@ class AccountController extends Controller
             $updated = count($existing);
         }
 
+        $cancelledPending = 0;
+        if ($batchMailPush === 0) {
+            foreach ($existing as $aid) {
+                $cancelledPending += PullDataAnalysisService::cancelPendingForAccount(
+                    (int)$aid,
+                    '账号已批量关闭数据邮件推送'
+                );
+            }
+        }
+
         return $this->success([
             'requested' => count($ids),
             'updated' => $updated,
             'fields' => $changed,
+            'cancelledPending' => $cancelledPending,
         ], '账号已批量更新');
     }
 
@@ -1862,13 +1883,13 @@ class AccountController extends Controller
                 'text' => (string)($m['value_text'] ?? ''),
             ];
         }
-        $dataMailPush = 1;
+        $dataMailPush = 0;
         try {
             PullDataAnalysisService::ensureAccountDataMailPushColumn();
             $pushRow = DB::selectOne('SELECT data_mail_push FROM accounts WHERE id=? LIMIT 1', [$aid]);
-            $dataMailPush = (int)($pushRow['data_mail_push'] ?? 1) === 1 ? 1 : 0;
+            $dataMailPush = (int)($pushRow['data_mail_push'] ?? 0) === 1 ? 1 : 0;
         } catch (\Throwable $e) {
-            $dataMailPush = 1;
+            $dataMailPush = 0;
         }
 
         return $this->success([
@@ -2772,8 +2793,8 @@ class AccountController extends Controller
         $row['last_video_at'] = (string)($row['last_video_at'] ?? '');
         $row['dm_used'] = (int)($row['dm_used'] ?? 0);
         $row['dm_limit'] = (int)($row['dm_limit'] ?? 0);
-        // 查看数据：拉取成功后是否自动入队邮件计划任务（缺省按开启）
-        $mailPush = array_key_exists('data_mail_push', $row) ? (int)$row['data_mail_push'] : 1;
+        // 查看数据：拉取成功后是否自动入队邮件计划任务（缺省关闭）
+        $mailPush = array_key_exists('data_mail_push', $row) ? (int)$row['data_mail_push'] : 0;
         $row['data_mail_push'] = $mailPush === 1 ? 1 : 0;
         $row['dataMailPush'] = $row['data_mail_push'];
         return $row;
@@ -2862,7 +2883,7 @@ class AccountController extends Controller
         // 数据邮件推送开关：同样每次校验，避免常驻进程漏迁移（默认开启，兼容原自动发信）
         if (!$this->hasColumn('accounts', 'data_mail_push')) {
             try {
-                DB::query('ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1');
+                DB::query('ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 0');
                 self::bustColumnCache('accounts');
             } catch (\Throwable $e) {
             }
@@ -2908,8 +2929,8 @@ class AccountController extends Controller
                 'profile_bio' => 'ALTER TABLE accounts ADD COLUMN profile_bio TEXT NULL',
                 'profile_avatar' => "ALTER TABLE accounts ADD COLUMN profile_avatar VARCHAR(512) NOT NULL DEFAULT ''",
                 'nickname_changed_at' => 'ALTER TABLE accounts ADD COLUMN nickname_changed_at DATETIME NULL DEFAULT NULL',
-                // 拉取数据分析邮件计划任务开关：1=允许自动入队发信，0=关闭（默认开启）
-                'data_mail_push' => 'ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1',
+                // 拉取数据分析邮件计划任务开关：1=允许自动入队发信，0=关闭（默认关闭）
+                'data_mail_push' => 'ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 0',
             ],
             'proxies' => [
                 'use_count' => 'ALTER TABLE proxies ADD COLUMN use_count INT NOT NULL DEFAULT 0',

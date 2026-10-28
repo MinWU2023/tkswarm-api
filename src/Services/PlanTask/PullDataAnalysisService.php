@@ -151,7 +151,26 @@ class PullDataAnalysisService
         try {
             $cols = array_column(DB::select('SHOW COLUMNS FROM accounts') ?: [], 'Field');
             if (!in_array('data_mail_push', $cols, true)) {
-                DB::query('ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 1');
+                DB::query(
+                    "ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 0 COMMENT '拉取数据后自动邮件推送：1开 0关（默认关）'"
+                );
+            } else {
+                // 已有列也统一默认值为关闭
+                try {
+                    DB::query(
+                        "ALTER TABLE accounts MODIFY COLUMN data_mail_push TINYINT NOT NULL DEFAULT 0 COMMENT '拉取数据后自动邮件推送：1开 0关（默认关）'"
+                    );
+                } catch (\Throwable $e) {
+                }
+            }
+            // 一次性把历史账号推送状态全部置为关闭（可在弹框/批量编辑再开）
+            $flag = DB::selectOne("SELECT `value` FROM settings WHERE `key`='schema.data_mail_push_default_off' LIMIT 1");
+            if (!$flag || (string)($flag['value'] ?? '') !== '1') {
+                DB::query('UPDATE accounts SET data_mail_push=0 WHERE data_mail_push<>0');
+                DB::query(
+                    "INSERT INTO settings (`key`, `value`) VALUES ('schema.data_mail_push_default_off', '1')
+                     ON DUPLICATE KEY UPDATE `value`='1'"
+                );
             }
         } catch (\Throwable $e) {
         }
