@@ -31,6 +31,16 @@ class AutoFollowService
               follow_count INT NOT NULL DEFAULT 0,
               min_interval_hours DECIMAL(10,2) NOT NULL DEFAULT 1,
               max_interval_hours DECIMAL(10,2) NOT NULL DEFAULT 2,
+              search_keyword VARCHAR(255) NOT NULL DEFAULT '',
+              stay_seconds_min INT NOT NULL DEFAULT 8,
+              stay_seconds_max INT NOT NULL DEFAULT 20,
+              watch_video_count INT NOT NULL DEFAULT 3,
+              like_rate INT NOT NULL DEFAULT 40,
+              comment_rate INT NOT NULL DEFAULT 20,
+              comment_mode VARCHAR(16) NOT NULL DEFAULT 'ai',
+              comment_ai_template_id INT NOT NULL DEFAULT 0,
+              comment_ai_prompt TEXT NULL,
+              comment_text VARCHAR(512) NOT NULL DEFAULT '',
               status VARCHAR(32) NOT NULL DEFAULT 'pending',
               scheduled_count INT NOT NULL DEFAULT 0,
               enqueued_count INT NOT NULL DEFAULT 0,
@@ -44,8 +54,9 @@ class AutoFollowService
               KEY idx_aft_status (status),
               KEY idx_aft_target_acc (target_account_id),
               KEY idx_aft_target_uid (target_tiktok_uid)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            )             ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+        self::ensureTaskHomepageColumns();
 
         DB::query(
             "CREATE TABLE IF NOT EXISTS auto_follow_task_items (
@@ -54,6 +65,7 @@ class AutoFollowService
               source_account_id INT NOT NULL DEFAULT 0,
               owner_id INT NOT NULL DEFAULT 0,
               scheduled_at DATETIME NOT NULL,
+              action_plan_json MEDIUMTEXT NULL,
               status VARCHAR(32) NOT NULL DEFAULT 'pending',
               work_item_id INT NOT NULL DEFAULT 0,
               error_message VARCHAR(512) NOT NULL DEFAULT '',
@@ -66,6 +78,7 @@ class AutoFollowService
               KEY idx_afti_owner (owner_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+        self::ensureItemPlanColumn();
 
         DB::query(
             "CREATE TABLE IF NOT EXISTS account_follow_relations (
@@ -85,6 +98,42 @@ class AutoFollowService
               KEY idx_afr_followed_user (followed_username)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+    }
+
+    private static function ensureTaskHomepageColumns(): void
+    {
+        $cols = array_column(DB::select('SHOW COLUMNS FROM auto_follow_tasks') ?: [], 'Field');
+        $alters = [
+            'search_keyword' => "ADD COLUMN search_keyword VARCHAR(255) NOT NULL DEFAULT '' AFTER max_interval_hours",
+            'stay_seconds_min' => "ADD COLUMN stay_seconds_min INT NOT NULL DEFAULT 8 AFTER search_keyword",
+            'stay_seconds_max' => "ADD COLUMN stay_seconds_max INT NOT NULL DEFAULT 20 AFTER stay_seconds_min",
+            'watch_video_count' => "ADD COLUMN watch_video_count INT NOT NULL DEFAULT 3 AFTER stay_seconds_max",
+            'like_rate' => "ADD COLUMN like_rate INT NOT NULL DEFAULT 40 AFTER watch_video_count",
+            'comment_rate' => "ADD COLUMN comment_rate INT NOT NULL DEFAULT 20 AFTER like_rate",
+            'comment_mode' => "ADD COLUMN comment_mode VARCHAR(16) NOT NULL DEFAULT 'ai' AFTER comment_rate",
+            'comment_ai_template_id' => "ADD COLUMN comment_ai_template_id INT NOT NULL DEFAULT 0 AFTER comment_mode",
+            'comment_ai_prompt' => "ADD COLUMN comment_ai_prompt TEXT NULL AFTER comment_ai_template_id",
+            'comment_text' => "ADD COLUMN comment_text VARCHAR(512) NOT NULL DEFAULT '' AFTER comment_ai_prompt",
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query("ALTER TABLE auto_follow_tasks {$sql}");
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+    }
+
+    private static function ensureItemPlanColumn(): void
+    {
+        $cols = array_column(DB::select('SHOW COLUMNS FROM auto_follow_task_items') ?: [], 'Field');
+        if (!in_array('action_plan_json', $cols, true)) {
+            try {
+                DB::query('ALTER TABLE auto_follow_task_items ADD COLUMN action_plan_json MEDIUMTEXT NULL AFTER scheduled_at');
+            } catch (\Throwable $e) {
+            }
+        }
     }
 
     public static function buildTaskName(): string
@@ -400,6 +449,10 @@ class AutoFollowService
 
         $picked = self::pickRandom($eligible, $followCount);
         $schedule = self::buildSchedule($picked, $minH, $maxH);
+        $homeCfg = AutoFollowHomepagePlan::normalizeTaskConfig($input, null);
+        if ($homeCfg['searchKeyword'] === '') {
+            $homeCfg['searchKeyword'] = (string)$target['targetUsername'];
+        }
         $name = self::buildTaskName();
 
         $taskId = DB::transaction(static function () use (
@@ -409,13 +462,17 @@ class AutoFollowService
             $followCount,
             $minH,
             $maxH,
-            $schedule
+            $schedule,
+            $homeCfg
         ) {
             DB::query(
                 "INSERT INTO auto_follow_tasks
                  (owner_id, name, target_account_id, target_tiktok_uid, target_username, target_display,
-                  follow_count, min_interval_hours, max_interval_hours, status, scheduled_count)
-                 VALUES (?,?,?,?,?,?,?,?,?,'pending',?)",
+                  follow_count, min_interval_hours, max_interval_hours,
+                  search_keyword, stay_seconds_min, stay_seconds_max, watch_video_count,
+                  like_rate, comment_rate, comment_mode, comment_ai_template_id, comment_ai_prompt, comment_text,
+                  status, scheduled_count)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)",
                 [
                     $ownerId,
                     $name,
@@ -426,11 +483,21 @@ class AutoFollowService
                     $followCount,
                     $minH,
                     $maxH,
+                    $homeCfg['searchKeyword'],
+                    $homeCfg['staySecondsMin'],
+                    $homeCfg['staySecondsMax'],
+                    $homeCfg['watchVideoCount'],
+                    $homeCfg['likeRate'],
+                    $homeCfg['commentRate'],
+                    $homeCfg['commentMode'],
+                    $homeCfg['commentAiTemplateId'],
+                    $homeCfg['commentAiPrompt'],
+                    $homeCfg['commentText'],
                     count($schedule),
                 ]
             );
             $id = (int)DB::getPdo()->lastInsertId();
-            self::insertItems($id, $schedule);
+            self::insertItems($id, $schedule, $homeCfg, $target);
             return $id;
         });
 
@@ -483,14 +550,32 @@ class AutoFollowService
 
         $picked = self::pickRandom($eligible, $followCount);
         $schedule = self::buildSchedule($picked, $minH, $maxH);
+        $homeCfg = AutoFollowHomepagePlan::normalizeTaskConfig($input, [
+            'search_keyword' => $row['search_keyword'] ?? '',
+            'stay_seconds_min' => $row['stay_seconds_min'] ?? 8,
+            'stay_seconds_max' => $row['stay_seconds_max'] ?? 20,
+            'watch_video_count' => $row['watch_video_count'] ?? 3,
+            'like_rate' => $row['like_rate'] ?? 40,
+            'comment_rate' => $row['comment_rate'] ?? 20,
+            'comment_mode' => $row['comment_mode'] ?? 'ai',
+            'comment_ai_template_id' => $row['comment_ai_template_id'] ?? 0,
+            'comment_ai_prompt' => $row['comment_ai_prompt'] ?? '',
+            'comment_text' => $row['comment_text'] ?? '',
+        ]);
+        if ($homeCfg['searchKeyword'] === '') {
+            $homeCfg['searchKeyword'] = (string)$target['targetUsername'];
+        }
 
-        DB::transaction(static function () use ($id, $target, $followCount, $minH, $maxH, $schedule) {
+        DB::transaction(static function () use ($id, $target, $followCount, $minH, $maxH, $schedule, $homeCfg) {
             DB::query('DELETE FROM auto_follow_task_items WHERE task_id=?', [$id]);
-            self::insertItems($id, $schedule);
+            self::insertItems($id, $schedule, $homeCfg, $target);
             DB::query(
                 "UPDATE auto_follow_tasks SET
                    target_account_id=?, target_tiktok_uid=?, target_username=?, target_display=?,
                    follow_count=?, min_interval_hours=?, max_interval_hours=?,
+                   search_keyword=?, stay_seconds_min=?, stay_seconds_max=?, watch_video_count=?,
+                   like_rate=?, comment_rate=?, comment_mode=?, comment_ai_template_id=?,
+                   comment_ai_prompt=?, comment_text=?,
                    status='pending', scheduled_count=?, enqueued_count=0, success_count=0, failed_count=0,
                    error_message='', updated_at=CURRENT_TIMESTAMP
                  WHERE id=?",
@@ -502,6 +587,16 @@ class AutoFollowService
                     $followCount,
                     $minH,
                     $maxH,
+                    $homeCfg['searchKeyword'],
+                    $homeCfg['staySecondsMin'],
+                    $homeCfg['staySecondsMax'],
+                    $homeCfg['watchVideoCount'],
+                    $homeCfg['likeRate'],
+                    $homeCfg['commentRate'],
+                    $homeCfg['commentMode'],
+                    $homeCfg['commentAiTemplateId'],
+                    $homeCfg['commentAiPrompt'],
+                    $homeCfg['commentText'],
                     count($schedule),
                     $id,
                 ]
@@ -618,6 +713,36 @@ class AutoFollowService
 
         try {
             $ownerId = self::resolveItemOwnerId($sourceAccountId);
+            $actionPlan = [];
+            $rawPlan = (string)($itemRow['action_plan_json'] ?? '');
+            if ($rawPlan !== '') {
+                $decoded = json_decode($rawPlan, true);
+                if (is_array($decoded)) {
+                    $actionPlan = $decoded;
+                }
+            }
+            if (!$actionPlan) {
+                $homeCfg = AutoFollowHomepagePlan::normalizeTaskConfig([], [
+                    'search_keyword' => $taskRow['search_keyword'] ?? '',
+                    'stay_seconds_min' => $taskRow['stay_seconds_min'] ?? 8,
+                    'stay_seconds_max' => $taskRow['stay_seconds_max'] ?? 20,
+                    'watch_video_count' => $taskRow['watch_video_count'] ?? 3,
+                    'like_rate' => $taskRow['like_rate'] ?? 40,
+                    'comment_rate' => $taskRow['comment_rate'] ?? 20,
+                    'comment_mode' => $taskRow['comment_mode'] ?? 'ai',
+                    'comment_ai_template_id' => $taskRow['comment_ai_template_id'] ?? 0,
+                    'comment_ai_prompt' => $taskRow['comment_ai_prompt'] ?? '',
+                    'comment_text' => $taskRow['comment_text'] ?? '',
+                ]);
+                $actionPlan = AutoFollowHomepagePlan::build($homeCfg, [
+                    'targetUsername' => (string)($taskRow['target_username'] ?? ''),
+                    'targetDisplay' => (string)($taskRow['target_display'] ?? ''),
+                ]);
+                DB::query(
+                    'UPDATE auto_follow_task_items SET action_plan_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [json_encode($actionPlan, JSON_UNESCAPED_UNICODE), $itemId]
+                );
+            }
             $payload = [
                 'taskId' => $taskId,
                 'itemId' => $itemId,
@@ -625,6 +750,8 @@ class AutoFollowService
                 'targetTiktokUid' => (string)($taskRow['target_tiktok_uid'] ?? ''),
                 'targetUsername' => (string)($taskRow['target_username'] ?? ''),
                 'targetDisplay' => (string)($taskRow['target_display'] ?? ''),
+                'searchKeyword' => (string)($actionPlan['searchKeyword'] ?? $taskRow['search_keyword'] ?? ''),
+                'actionPlan' => $actionPlan,
             ];
             $enqueued = AccountWorkBatchService::enqueueItem(
                 $sourceAccountId,
@@ -886,15 +1013,23 @@ class AutoFollowService
 
     /**
      * @param list<array{source_account_id:int,scheduled_at:string}> $schedule
+     * @param array<string,mixed> $homeCfg
+     * @param array{targetUsername?:string,targetDisplay?:string} $target
      */
-    private static function insertItems(int $taskId, array $schedule): void
+    private static function insertItems(int $taskId, array $schedule, array $homeCfg = [], array $target = []): void
     {
         foreach ($schedule as $row) {
+            $plan = AutoFollowHomepagePlan::build($homeCfg, $target);
             DB::query(
                 "INSERT INTO auto_follow_task_items
-                 (task_id, source_account_id, scheduled_at, status)
-                 VALUES (?,?,?,'pending')",
-                [$taskId, (int)$row['source_account_id'], $row['scheduled_at']]
+                 (task_id, source_account_id, scheduled_at, action_plan_json, status)
+                 VALUES (?,?,?,?,'pending')",
+                [
+                    $taskId,
+                    (int)$row['source_account_id'],
+                    $row['scheduled_at'],
+                    json_encode($plan, JSON_UNESCAPED_UNICODE),
+                ]
             );
         }
     }
@@ -913,6 +1048,16 @@ class AutoFollowService
             'followCount' => (int)($row['follow_count'] ?? 0),
             'minIntervalHours' => (float)($row['min_interval_hours'] ?? 0),
             'maxIntervalHours' => (float)($row['max_interval_hours'] ?? 0),
+            'searchKeyword' => (string)($row['search_keyword'] ?? ''),
+            'staySecondsMin' => (int)($row['stay_seconds_min'] ?? 8),
+            'staySecondsMax' => (int)($row['stay_seconds_max'] ?? 20),
+            'watchVideoCount' => (int)($row['watch_video_count'] ?? 3),
+            'likeRate' => (int)($row['like_rate'] ?? 40),
+            'commentRate' => (int)($row['comment_rate'] ?? 20),
+            'commentMode' => (string)($row['comment_mode'] ?? 'ai'),
+            'commentAiTemplateId' => (int)($row['comment_ai_template_id'] ?? 0),
+            'commentAiPrompt' => (string)($row['comment_ai_prompt'] ?? ''),
+            'commentText' => (string)($row['comment_text'] ?? ''),
             'status' => (string)($row['status'] ?? 'pending'),
             'scheduledCount' => (int)($row['scheduled_count'] ?? 0),
             'enqueuedCount' => (int)($row['enqueued_count'] ?? 0),
@@ -930,6 +1075,14 @@ class AutoFollowService
     {
         $uname = ltrim(trim((string)($row['source_username'] ?? '')), '@');
         $nick = trim((string)($row['source_nickname'] ?? ''));
+        $plan = null;
+        $raw = (string)($row['action_plan_json'] ?? '');
+        if ($raw !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $plan = $decoded;
+            }
+        }
         return [
             'id' => (int)$row['id'],
             'taskId' => (int)($row['task_id'] ?? 0),
@@ -939,6 +1092,7 @@ class AutoFollowService
             'sourceLabel' => $nick !== '' ? ($nick . ' (@' . $uname . ')') : ('@' . $uname . ' #' . (int)($row['source_account_id'] ?? 0)),
             'ownerId' => (int)($row['owner_id'] ?? 0),
             'scheduledAt' => (string)($row['scheduled_at'] ?? ''),
+            'actionPlan' => $plan,
             'status' => (string)($row['status'] ?? 'pending'),
             'workItemId' => (int)($row['work_item_id'] ?? 0),
             'errorMessage' => (string)($row['error_message'] ?? ''),
