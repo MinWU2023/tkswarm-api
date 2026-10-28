@@ -1651,6 +1651,11 @@ class DataScope
      *  1) 纯服务调用：既没有登录态也没有 X-Acting-As（执行器/定时任务上下文里跑），
      *     此时请求已由 node token 鉴权，不再按「账号归属」拦——否则后台任务会莫名 403；
      *  2) 带用户身份：沿用列表/详情的可见范围，避免「列表里看得见、一执行就 403」。
+     *
+     * 注意「环境共用」与「账号包」分工：
+     *  - 打开/列表/代理补全按 profileId，不走本方法（见 accountBindings / profileProxyBundle）；
+     *  - 账号密文包、任务派发仍按可见范围，防止跨租户拖库。
+     *  - 登录态回写在 AccountController::patchStatus 对已绑定环境单独放行。
      */
     public static function assertNodeAccount(?array $account): ?Response
     {
