@@ -489,16 +489,99 @@ class AccountBrowserEnvService
         return ['browser_backend' => $backend, 'browser_profile_id' => $profileId, 'typed_column' => $col];
     }
 
+    /** 删除环境行对应的中心库环境包文件（忽略失败） */
+    private static function unlinkPackFilesForRows(array $rows): int
+    {
+        $n = 0;
+        foreach ($rows as $row) {
+            $path = trim((string)($row['pack_path'] ?? ''));
+            if ($path === '' || !is_file($path)) {
+                continue;
+            }
+            if (@unlink($path)) {
+                $n += 1;
+            }
+        }
+        return $n;
+    }
+
+    /**
+     * 超管维护：清空中心库全部环境绑定 + 环境包文件 + 账号上的环境 ID 列。
+     * 不删本机浏览器实体（本机需 Node /browser/profiles/batch-delete）。
+     *
+     * @return array{envRows:int,packFiles:int,accountsCleared:int,packDirCleared:int}
+     */
+    public static function wipeAllCenterEnvData(): array
+    {
+        self::ensureSchema();
+        $rows = DB::select('SELECT id, pack_path FROM account_browser_envs') ?: [];
+        $packFiles = self::unlinkPackFilesForRows($rows);
+        $envRows = count($rows);
+        DB::query('DELETE FROM account_browser_envs');
+
+        // 清掉账号上残留的环境 ID，防止 backfill 再写回
+        $accountsCleared = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM accounts
+             WHERE TRIM(COALESCE(browser_profile_id,''))<>''
+                OR TRIM(COALESCE(tkswarm_browser_profile_id,''))<>''
+                OR TRIM(COALESCE(linux_browser_profile_id,''))<>''
+                OR COALESCE(browser_backend,'') NOT IN ('','bit')"
+        )['c'] ?? 0);
+        DB::query(
+            "UPDATE accounts SET browser_profile_id='', browser_backend='bit',
+             tkswarm_browser_profile_id='', linux_browser_profile_id='',
+             updated_at=CURRENT_TIMESTAMP
+             WHERE TRIM(COALESCE(browser_profile_id,''))<>''
+                OR TRIM(COALESCE(tkswarm_browser_profile_id,''))<>''
+                OR TRIM(COALESCE(linux_browser_profile_id,''))<>''
+                OR COALESCE(browser_backend,'') NOT IN ('','bit')"
+        );
+
+        // 再扫一遍包目录，删掉孤儿 .tgz
+        $packDirCleared = 0;
+        $dir = self::packStorageDir();
+        if (is_dir($dir)) {
+            foreach (scandir($dir) ?: [] as $name) {
+                if ($name === '.' || $name === '..') {
+                    continue;
+                }
+                $full = $dir . DIRECTORY_SEPARATOR . $name;
+                if (is_file($full) && preg_match('/\.(tgz|tar\.gz|tkpack)$/i', $name)) {
+                    if (@unlink($full)) {
+                        $packDirCleared += 1;
+                    }
+                }
+            }
+        }
+
+        return [
+            'envRows' => $envRows,
+            'packFiles' => $packFiles,
+            'accountsCleared' => $accountsCleared,
+            'packDirCleared' => $packDirCleared,
+        ];
+    }
+
     /** 解绑：可按 profile 或清空该账号全部 */
     public static function unbind(int $accountId, ?string $profileId = null): void
     {
         self::ensureSchema();
         if ($profileId !== null && trim($profileId) !== '') {
+            $doomed = DB::select(
+                'SELECT pack_path FROM account_browser_envs WHERE account_id=? AND browser_profile_id=?',
+                [$accountId, trim($profileId)]
+            ) ?: [];
+            self::unlinkPackFilesForRows($doomed);
             DB::query(
                 'DELETE FROM account_browser_envs WHERE account_id=? AND browser_profile_id=?',
                 [$accountId, trim($profileId)]
             );
         } else {
+            $doomed = DB::select(
+                'SELECT pack_path FROM account_browser_envs WHERE account_id=?',
+                [$accountId]
+            ) ?: [];
+            self::unlinkPackFilesForRows($doomed);
             DB::query('DELETE FROM account_browser_envs WHERE account_id=?', [$accountId]);
         }
 

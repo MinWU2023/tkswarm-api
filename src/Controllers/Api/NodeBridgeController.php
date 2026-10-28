@@ -2694,4 +2694,25 @@ class NodeBridgeController extends Controller
         }
         return $this->success($out['meta'] ?? null, '已释放环境租约');
     }
+
+    /**
+     * 超管：清空中心库全部环境绑定 + 环境包文件 + 账号环境 ID 列。
+     * POST body 需 confirm=WIPE-ALL-ENV-DATA
+     */
+    public function wipeAllBrowserEnvData(Request $request): Response
+    {
+        if (!DataScope::isLoginSuper() && !DataScope::isSuper()) {
+            return $this->error('仅超级管理员可清空全部环境数据', 403);
+        }
+        $confirm = trim((string)$request->input('confirm', $request->input('Confirm', '')));
+        if ($confirm !== 'WIPE-ALL-ENV-DATA') {
+            return $this->error('请传 confirm=WIPE-ALL-ENV-DATA 以确认危险操作', 422);
+        }
+        try {
+            $stats = \App\Services\AccountBrowserEnvService::wipeAllCenterEnvData();
+            return $this->success($stats, '中心库环境数据已清空（本机浏览器环境需另行删除）');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage() ?: '清空失败', 500);
+        }
+    }
 }
