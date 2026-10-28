@@ -331,7 +331,7 @@ class SeedMeta
             ['aiLeads', '拓客任务', '配置拓客规则、关联账号与私信明细'],
             ['aiLeadClues', '拓客线索', '查看拓客跑出的意向用户与评论，支持换号与导出'],
             ['aiLeadClueData', '拓客结果', '查看共享给当前账号的评论线索，含行业筛选'],
-            ['autoFollow', '自动增粉', '选择被增粉账号与数量，按间隔调度系统账号关注'],
+            ['autoFollow', '增粉任务', '选择被增粉账号与数量，按间隔调度系统账号关注'],
             ['rbac.permissions', '权限节点管理', '维护系统细粒度 API 路由鉴权与动作拦截节点'],
             ['rbac.roles', '用户角色管理', '配置管理角色并分配操作与功能节点权限'],
             ['rbac.users', '系统管理员用户', '维护平台管理员登录账户、密码与角色分配'],
@@ -494,8 +494,9 @@ class SeedMeta
               (351, 356, '拓客任务', 'user-plus', '', 'aiLeads', 'list', 1, 1),
               (352, 356, '拓客线索', 'users', '', 'aiLeads', 'clues', 2, 1),
               (353, 356, '拓客结果', 'database', '', 'aiLeads', 'clue_data', 3, 1),
-              (354, 350, '自动增粉任务', 'user-plus', '', 'autoFollow', 'list', 2, 1),
-              (355, 350, '创建增粉任务', 'plus', '', 'autoFollow', 'create', 3, 1)"
+              (357, 350, 'AI增粉', 'user-plus', '', 'autoFollow', 'list', 2, 1),
+              (354, 357, '增粉任务', 'user-plus', '', 'autoFollow', 'list', 1, 1),
+              (355, 357, '创建任务', 'plus', '', 'autoFollow', 'create', 2, 1)"
         );
         try {
             DB::query("UPDATE navigation_menus SET parent_id=NULL, title='AI营销', icon='sparkles', path='', view='aiLeads', subview='list', sort_order=4, visible=1 WHERE id=350");
@@ -503,8 +504,9 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET parent_id=356, title='拓客任务', icon='user-plus', path='', view='aiLeads', subview='list', sort_order=1, visible=1 WHERE id=351 OR (view='aiLeads' AND subview='list' AND title IN ('AI拓客','拓客任务') AND id<>356)");
             DB::query("UPDATE navigation_menus SET parent_id=356, title='拓客线索', icon='users', path='', view='aiLeads', subview='clues', sort_order=2, visible=1 WHERE id=352 OR (view='aiLeads' AND subview='clues')");
             DB::query("UPDATE navigation_menus SET parent_id=356, title='拓客结果', icon='database', path='', view='aiLeads', subview='clue_data', sort_order=3, visible=1 WHERE id=353 OR (view='aiLeads' AND subview='clue_data')");
-            DB::query("UPDATE navigation_menus SET parent_id=350, title='自动增粉任务', icon='user-plus', path='', view='autoFollow', subview='list', sort_order=2, visible=1 WHERE id=354 OR (view='autoFollow' AND subview='list')");
-            DB::query("UPDATE navigation_menus SET parent_id=350, title='创建增粉任务', icon='plus', path='', view='autoFollow', subview='create', sort_order=3, visible=1 WHERE id=355 OR (view='autoFollow' AND subview='create')");
+            DB::query("UPDATE navigation_menus SET parent_id=350, title='AI增粉', icon='user-plus', path='', view='autoFollow', subview='list', sort_order=2, visible=1 WHERE id=357");
+            DB::query("UPDATE navigation_menus SET parent_id=357, title='增粉任务', icon='user-plus', path='', view='autoFollow', subview='list', sort_order=1, visible=1 WHERE id=354 OR (view='autoFollow' AND subview='list' AND title IN ('自动增粉任务','增粉任务') AND id<>357)");
+            DB::query("UPDATE navigation_menus SET parent_id=357, title='创建任务', icon='plus', path='', view='autoFollow', subview='create', sort_order=2, visible=1 WHERE id=355 OR (view='autoFollow' AND subview='create')");
             DB::query("UPDATE navigation_menus SET sort_order=5 WHERE id=400");
             DB::query("UPDATE navigation_menus SET sort_order=6 WHERE id=500");
             DB::query("UPDATE navigation_menus SET sort_order=7 WHERE id=600");

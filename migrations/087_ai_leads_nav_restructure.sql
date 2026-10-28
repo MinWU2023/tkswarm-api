@@ -24,12 +24,3 @@ UPDATE `navigation_menus`
 SET `parent_id`=356, `title`='拓客结果', `icon`='database', `path`='', `view`='aiLeads', `subview`='clue_data', `sort_order`=3, `visible`=1
 WHERE `id`=353
    OR (`view`='aiLeads' AND `subview`='clue_data');
-
--- 增粉项仍挂在 AI营销 下，排序顺延
-UPDATE `navigation_menus`
-SET `parent_id`=350, `sort_order`=2
-WHERE `id`=354 OR (`view`='autoFollow' AND `subview`='list');
-
-UPDATE `navigation_menus`
-SET `parent_id`=350, `sort_order`=3
-WHERE `id`=355 OR (`view`='autoFollow' AND `subview`='create');
