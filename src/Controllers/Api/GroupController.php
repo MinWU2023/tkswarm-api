@@ -35,7 +35,19 @@ class GroupController extends Controller
             $creatorId = DataScope::groupCreatorId();
             if ($forceOwner !== null && $forceOwner !== '') {
                 $want = (int)$forceOwner;
-                if ($creatorId === null || $want !== $creatorId) {
+                $allowed = $creatorId !== null && $want === $creatorId;
+                // 超管/运营管理：可按归属用户查看分组（账号侧栏筛选，不切换身份）
+                if (!$allowed && $want > 0 && (DataScope::isSuper() || DataScope::isOpsAdmin())) {
+                    $allowed = DataScope::isAccountOwnerVisible($want);
+                }
+                // 有下级：可查看本人或直属下级分组
+                if (!$allowed && $want > 0 && !DataScope::isEnterpriseCustomer() && !DataScope::isOperator()) {
+                    $loginId = (int)(DataScope::loginUser()['id'] ?? 0);
+                    if ($loginId > 0 && ($want === $loginId || in_array($want, DataScope::childIdsOf($loginId), true))) {
+                        $allowed = true;
+                    }
+                }
+                if (!$allowed) {
                     return $this->error('无权查看该用户的分组', 403);
                 }
                 $filters[] = 'g.owner_id = ?';

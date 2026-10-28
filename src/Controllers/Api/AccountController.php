@@ -74,7 +74,15 @@ class AccountController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        [$ownSql, $ownParams] = DataScope::accountListScopeSql('owner_id');
+        $ownerFilterId = $this->resolveAccountListOwnerFilterId($request);
+        if ($ownerFilterId !== null) {
+            $ownSql = ' AND owner_id = ?';
+            $ownSqlA = ' AND a.owner_id = ?';
+            $ownParams = [$ownerFilterId];
+        } else {
+            [$ownSql, $ownParams] = DataScope::accountListScopeSql('owner_id');
+            [$ownSqlA] = DataScope::accountListScopeSql('a.owner_id');
+        }
         $base = DB::selectOne("SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN login_status='online' THEN 1 ELSE 0 END) AS online,
@@ -97,7 +105,7 @@ class AccountController extends Controller
                         COALESCE(SUM(p.videos_count),0) AS videos
                  FROM tiktok_profiles p
                  INNER JOIN accounts a ON a.id=p.account_id
-                 WHERE 1=1{$ownSql}",
+                 WHERE 1=1{$ownSqlA}",
                 $ownParams
             );
             $followers = (int)($social['followers'] ?? 0);
@@ -544,6 +552,11 @@ class AccountController extends Controller
             return $this->error('登录状态无效', 422);
         }
         DB::query('UPDATE accounts SET login_status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$status, (int)$id]);
+        // 退出/标为离线：删除该 TikTok 唯一会话日志（下次登录重新表单或重新写入）
+        if ($status === 'offline' || $status === 'expired') {
+            DB::query('DELETE FROM account_sessions WHERE account_id=?', [(int)$id]);
+            DB::query('UPDATE accounts SET has_session=0, updated_at=CURRENT_TIMESTAMP WHERE id=?', [(int)$id]);
+        }
         $this->syncLegacyStatus((int)$id, $status, null);
         return $this->success(null, '账号状态已更新');
     }
@@ -2097,19 +2110,30 @@ class AccountController extends Controller
         if (!$account) {
             return $this->error('账号不存在', 404);
         }
-        $session = DB::selectOne('SELECT cookie_encrypted, fingerprint FROM account_sessions WHERE account_id=?', [(int)$id]);
+        $session = DB::selectOne(
+            'SELECT cookie_encrypted, storage_encrypted, fingerprint, updated_at FROM account_sessions WHERE account_id=?',
+            [(int)$id]
+        );
         if (empty($session['cookie_encrypted'])) {
-            return $this->error('该账号没有已保存的 CK', 404);
+            return $this->error('该账号没有已保存的会话', 404);
         }
         $cookie = SecretStore::decrypt((string)$session['cookie_encrypted']);
         if ($cookie === '') {
-            return $this->error('CK 解密失败', 422);
+            return $this->error('会话 Cookie 解密失败', 422);
+        }
+        $storageRaw = trim((string)($session['storage_encrypted'] ?? ''));
+        $storage = '';
+        if ($storageRaw !== '') {
+            $storage = SecretStore::decrypt($storageRaw);
         }
         return $this->success([
             'accountId' => (int)$account['id'],
             'username' => $account['username'],
             'cookie' => $cookie,
+            'storage' => $storage,
+            'hasStorage' => $storage !== '',
             'fingerprint' => $session['fingerprint'] ?: ($account['fingerprint'] ?? ''),
+            'updatedAt' => $session['updated_at'] ?? null,
         ]);
     }
 
@@ -2125,22 +2149,56 @@ class AccountController extends Controller
         }
         $cookie = trim((string)$request->input('cookie', ''));
         $fingerprint = trim((string)$request->input('fingerprint', ''));
-        if ($cookie === '' || strlen($cookie) > 100000) {
+        $storage = trim((string)$request->input('storage', $request->input('localStorage', '')));
+        if ($cookie === '' || strlen($cookie) > 500000) {
             return $this->error('Cookie 不能为空', 422);
         }
         if (!preg_match('/sessionid|sid_tt/i', $cookie)) {
             return $this->error('Cookie 中未找到 sessionid', 422);
         }
+        if (strlen($storage) > 2000000) {
+            return $this->error('LocalStorage 过大', 422);
+        }
+        // 每 TikTok 账号仅保留一条最新会话（主键 account_id）
         DB::query(
-            'INSERT INTO account_sessions(account_id, cookie_encrypted, fingerprint, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)
-             ON DUPLICATE KEY UPDATE cookie_encrypted=VALUES(cookie_encrypted), fingerprint=VALUES(fingerprint), updated_at=CURRENT_TIMESTAMP',
-            [(int)$id, SecretStore::encrypt($cookie), mb_substr($fingerprint, 0, 2000)]
+            'INSERT INTO account_sessions(account_id, cookie_encrypted, storage_encrypted, fingerprint, updated_at)
+             VALUES (?,?,?,?,CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE
+               cookie_encrypted=VALUES(cookie_encrypted),
+               storage_encrypted=VALUES(storage_encrypted),
+               fingerprint=VALUES(fingerprint),
+               updated_at=CURRENT_TIMESTAMP',
+            [
+                (int)$id,
+                SecretStore::encrypt($cookie),
+                $storage !== '' ? SecretStore::encrypt($storage) : null,
+                mb_substr($fingerprint, 0, 2000),
+            ]
         );
         DB::query(
             "UPDATE accounts SET has_session=1, fingerprint=IF(?='', fingerprint, ?), login_status='online', updated_at=CURRENT_TIMESTAMP WHERE id=?",
             [$fingerprint, mb_substr($fingerprint, 0, 255), (int)$id]
         );
-        return $this->success(['accountId' => (int)$id, 'hasSession' => true], '会话 CK 已加密保存');
+        return $this->success(['accountId' => (int)$id, 'hasSession' => true, 'hasStorage' => $storage !== ''], '登录会话已加密保存（仅保留最新一条）');
+    }
+
+    /** 退出登录：删除该 TikTok 唯一会话日志 */
+    public function clearSession(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        if ($err = $this->assertCanEditAccounts()) {
+            return $err;
+        }
+        $account = DB::selectOne('SELECT id FROM accounts WHERE id=?', [(int)$id]);
+        if (!$account) {
+            return $this->error('账号不存在', 404);
+        }
+        DB::query('DELETE FROM account_sessions WHERE account_id=?', [(int)$id]);
+        DB::query(
+            "UPDATE accounts SET has_session=0, login_status='offline', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [(int)$id]
+        );
+        return $this->success(['accountId' => (int)$id, 'hasSession' => false], '会话日志已删除');
     }
 
     public function capcutAuthorize(Request $request, string $id): Response
@@ -2270,10 +2328,38 @@ class AccountController extends Controller
             $filters[] = "a.account_status='banned'";
         }
         DataScope::ensureColumns();
-        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
-        $this->applyAccountAdvancedFilters($request, $filters, $params);
+        $ownerFilterId = $this->resolveAccountListOwnerFilterId($request);
+        if ($ownerFilterId !== null) {
+            $filters[] = 'a.owner_id = ?';
+            $params[] = $ownerFilterId;
+        } else {
+            DataScope::applyAccountListScope('a.owner_id', $filters, $params);
+        }
+        $this->applyAccountAdvancedFilters($request, $filters, $params, $ownerFilterId !== null);
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         return [$where, $params];
+    }
+
+    /**
+     * 侧栏/高级筛选的归属用户：超管运营可见范围内可筛；有下级可筛本人或直属下级。
+     * 用于只筛列表，不依赖 Acting-As 切换身份。
+     */
+    private function resolveAccountListOwnerFilterId(Request $request): ?int
+    {
+        $ownerId = (int)$request->get('ownerId', $request->get('owner_id', 0));
+        if ($ownerId <= 0) {
+            return null;
+        }
+        if (DataScope::canUseAccountOwnerFilter() && DataScope::isAccountOwnerVisible($ownerId)) {
+            return $ownerId;
+        }
+        if (!DataScope::isEnterpriseCustomer() && !DataScope::isOperator()) {
+            $loginId = (int)(DataScope::loginUser()['id'] ?? 0);
+            if ($loginId > 0 && ($ownerId === $loginId || in_array($ownerId, DataScope::childIdsOf($loginId), true))) {
+                return $ownerId;
+            }
+        }
+        return null;
     }
 
     /** 账号系统通知列表（分页，供「查看通知」弹框） */
@@ -2411,19 +2497,21 @@ class AccountController extends Controller
         return null;
     }
 
-    private function applyAccountAdvancedFilters(Request $request, array &$filters, array &$params): void
+    private function applyAccountAdvancedFilters(Request $request, array &$filters, array &$params, bool $skipOwner = false): void
     {
         if (!DataScope::canUseAccountAdvancedFilter()) {
             return;
         }
-        $ownerId = (int)$request->get('ownerId', $request->get('owner_id', 0));
-        if ($ownerId > 0 && DataScope::canUseAccountOwnerFilter()) {
-            if (!DataScope::isAccountOwnerVisible($ownerId)) {
-                $filters[] = '1=0';
-                return;
+        if (!$skipOwner) {
+            $ownerId = (int)$request->get('ownerId', $request->get('owner_id', 0));
+            if ($ownerId > 0 && DataScope::canUseAccountOwnerFilter()) {
+                if (!DataScope::isAccountOwnerVisible($ownerId)) {
+                    $filters[] = '1=0';
+                    return;
+                }
+                $filters[] = 'a.owner_id = ?';
+                $params[] = $ownerId;
             }
-            $filters[] = 'a.owner_id = ?';
-            $params[] = $ownerId;
         }
         $companyId = (int)$request->get('companyId', $request->get('company_id', 0));
         if ($companyId > 0) {

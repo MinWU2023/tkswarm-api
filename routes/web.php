@@ -270,6 +270,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/accounts/{id}/diagnosis-records', AccountController::class . '@saveDiagnosisRecord');
     Router::get('/api/accounts/{id}/session', AccountController::class . '@getSession');
     Router::put('/api/accounts/{id}/session', AccountController::class . '@saveSession');
+    Router::delete('/api/accounts/{id}/session', AccountController::class . '@clearSession');
+    Router::post('/api/accounts/{id}/session/clear', AccountController::class . '@clearSession');
     Router::post('/api/accounts/{id}/capcut-authorize', AccountController::class . '@capcutAuthorize');
     Router::post('/api/accounts/{id}/capcut-revoke', AccountController::class . '@capcutRevoke');
     Router::post('/api/accounts/{id}/socks', AccountController::class . '@bindSocks');
