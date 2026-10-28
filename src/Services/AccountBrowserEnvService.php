@@ -516,8 +516,11 @@ class AccountBrowserEnvService
                 [$accountId, $primaryId]
             );
         } else {
+            // 全部解绑：主列 + 分类型列一并清空，避免 backfill 再从旧列恢复绑定
             DB::query(
-                "UPDATE accounts SET browser_profile_id='', browser_backend='bit', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                "UPDATE accounts SET browser_profile_id='', browser_backend='bit',
+                 tkswarm_browser_profile_id='', linux_browser_profile_id='',
+                 updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 [$accountId]
             );
         }
