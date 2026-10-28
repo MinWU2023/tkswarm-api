@@ -453,34 +453,154 @@ class AiLeadVideoWeightService
     }
 
     /**
-     * 保存租户权重阶梯（owner_id>0）；传空则恢复为系统默认。
+     * 阶梯阈值 → 区间展示（dayTo 空表示无上限）。
      * @param list<array{days?:int,dailyDmLimit?:int,daily_dm_limit?:int}> $tiers
-     * @return list<array{id:int,days:int,dailyDmLimit:int,sortOrder:int}>
+     * @return list<array{dayFrom:int,dayTo:?int,dailyDmLimit:int}>
      */
-    public static function saveTiers(int $ownerId, array $tiers): array
+    public static function tiersToRanges(array $tiers): array
     {
-        self::ensureSchema();
-        $ownerId = max(0, $ownerId);
-        if ($ownerId < 1) {
-            throw new \InvalidArgumentException('仅支持保存租户自定义权重');
-        }
-        DB::query('DELETE FROM account_video_weight_tiers WHERE owner_id=?', [$ownerId]);
-        $order = 0;
-        usort($tiers, static fn($a, $b) => ((int)($a['days'] ?? 0)) <=> ((int)($b['days'] ?? 0)));
+        $norm = [];
         foreach ($tiers as $tier) {
             if (!is_array($tier)) {
                 continue;
             }
-            $days = max(0, (int)($tier['days'] ?? 0));
-            $limit = max(1, (int)($tier['dailyDmLimit'] ?? $tier['daily_dm_limit'] ?? 1));
+            $norm[] = [
+                'days' => max(0, (int)($tier['days'] ?? 0)),
+                'dailyDmLimit' => max(1, (int)($tier['dailyDmLimit'] ?? $tier['daily_dm_limit'] ?? 1)),
+            ];
+        }
+        usort($norm, static fn($a, $b) => $a['days'] <=> $b['days']);
+        $out = [];
+        $n = count($norm);
+        for ($i = 0; $i < $n; $i++) {
+            $from = $norm[$i]['days'];
+            $to = null;
+            if ($i + 1 < $n) {
+                $to = max($from, $norm[$i + 1]['days'] - 1);
+            }
+            $out[] = [
+                'dayFrom' => $from,
+                'dayTo' => $to,
+                'dailyDmLimit' => $norm[$i]['dailyDmLimit'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * 区间表单 → 阶梯阈值（按 dayFrom 写入；校验不重叠）。
+     * @param list<array{dayFrom?:int,day_from?:int,dayTo?:int|null,day_to?:int|null,dailyDmLimit?:int,daily_dm_limit?:int}> $ranges
+     * @return list<array{days:int,dailyDmLimit:int}>
+     */
+    public static function rangesToTiers(array $ranges): array
+    {
+        $rows = [];
+        foreach ($ranges as $r) {
+            if (!is_array($r)) {
+                continue;
+            }
+            $from = max(0, (int)($r['dayFrom'] ?? $r['day_from'] ?? 0));
+            $toRaw = $r['dayTo'] ?? $r['day_to'] ?? null;
+            $to = ($toRaw === '' || $toRaw === null) ? null : max(0, (int)$toRaw);
+            $limit = max(1, (int)($r['dailyDmLimit'] ?? $r['daily_dm_limit'] ?? 1));
+            if ($to !== null && $to < $from) {
+                throw new \InvalidArgumentException("区间无效：起始天数 {$from} 大于结束天数 {$to}");
+            }
+            $rows[] = ['dayFrom' => $from, 'dayTo' => $to, 'dailyDmLimit' => $limit];
+        }
+        if ($rows === []) {
+            throw new \InvalidArgumentException('请至少配置一条区间规则');
+        }
+        usort($rows, static fn($a, $b) => $a['dayFrom'] <=> $b['dayFrom']);
+        $prevTo = null;
+        $prevFrom = null;
+        foreach ($rows as $row) {
+            if ($prevFrom !== null && $row['dayFrom'] === $prevFrom) {
+                throw new \InvalidArgumentException("起始天数重复：{$row['dayFrom']}");
+            }
+            if ($prevTo !== null && $row['dayFrom'] <= $prevTo) {
+                throw new \InvalidArgumentException(
+                    "区间重叠：{$row['dayFrom']} 与上一档结束日 {$prevTo} 冲突"
+                );
+            }
+            if ($prevTo !== null && $row['dayFrom'] > $prevTo + 1) {
+                // 允许空洞：空洞天数沿用上一档阈值逻辑（days>=prevFrom）
+            }
+            $prevFrom = $row['dayFrom'];
+            $prevTo = $row['dayTo'];
+        }
+        $tiers = [];
+        foreach ($rows as $row) {
+            $tiers[] = [
+                'days' => $row['dayFrom'],
+                'dailyDmLimit' => $row['dailyDmLimit'],
+            ];
+        }
+        return $tiers;
+    }
+
+    /**
+     * 保存权重阶梯。owner_id=0 为系统默认（仅超管接口调用）；>0 为租户自定义。
+     * 租户传空数组则清空自定义（回落到系统默认）；系统默认不允许清空。
+     * @param list<array{days?:int,dailyDmLimit?:int,daily_dm_limit?:int}> $tiers
+     * @return list<array{id:int,days:int,dailyDmLimit:int,sortOrder:int}>
+     */
+    public static function saveTiers(int $ownerId, array $tiers, bool $allowSystem = false): array
+    {
+        self::ensureSchema();
+        $ownerId = max(0, $ownerId);
+        if ($ownerId < 1 && !$allowSystem) {
+            throw new \InvalidArgumentException('仅支持保存租户自定义权重');
+        }
+        $normalized = [];
+        foreach ($tiers as $tier) {
+            if (!is_array($tier)) {
+                continue;
+            }
+            $normalized[] = [
+                'days' => max(0, (int)($tier['days'] ?? 0)),
+                'dailyDmLimit' => max(1, (int)($tier['dailyDmLimit'] ?? $tier['daily_dm_limit'] ?? 1)),
+            ];
+        }
+        usort($normalized, static fn($a, $b) => $a['days'] <=> $b['days']);
+        if ($ownerId < 1 && $normalized === []) {
+            throw new \InvalidArgumentException('系统默认权重至少保留一条规则');
+        }
+        DB::query('DELETE FROM account_video_weight_tiers WHERE owner_id=?', [$ownerId]);
+        $order = 0;
+        $seenDays = [];
+        foreach ($normalized as $tier) {
+            $days = $tier['days'];
+            if (isset($seenDays[$days])) {
+                continue;
+            }
+            $seenDays[$days] = true;
             $order++;
             DB::query(
                 'INSERT INTO account_video_weight_tiers (owner_id, days, daily_dm_limit, sort_order) VALUES (?,?,?,?)',
-                [$ownerId, $days, $limit, $order]
+                [$ownerId, $days, $tier['dailyDmLimit'], $order]
             );
+        }
+        if ($ownerId < 1) {
+            self::seedDefaultTiersIfEmpty();
         }
         self::refreshAllDailyQuotas();
         return self::listTiers($ownerId);
+    }
+
+    /**
+     * 超管保存系统默认区间规则（owner_id=0）。
+     * @param list<array{dayFrom?:int,dayTo?:int|null,dailyDmLimit?:int}> $ranges
+     * @return array{tiers:list,ranges:list}
+     */
+    public static function saveSystemRanges(array $ranges): array
+    {
+        $tiers = self::rangesToTiers($ranges);
+        $saved = self::saveTiers(0, $tiers, true);
+        return [
+            'tiers' => $saved,
+            'ranges' => self::tiersToRanges($saved),
+        ];
     }
 
     /** @return array<string,mixed> */

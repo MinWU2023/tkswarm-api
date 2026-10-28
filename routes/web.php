@@ -27,6 +27,7 @@ use App\Controllers\Api\ContactInquiryController;
 use App\Controllers\Api\EnvInstallerController;
 use App\Controllers\Api\AiPlatformController;
 use App\Controllers\Api\SmtpConfigController;
+use App\Controllers\Api\DmWeightConfigController;
 use App\Controllers\Api\AiPromptTemplateController;
 use App\Controllers\Api\AiCallLogController;
 use App\Controllers\Api\NodeBridgeController;
@@ -115,6 +116,12 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::put('/api/smtp-config', SmtpConfigController::class . '@save');
     Router::post('/api/smtp-config', SmtpConfigController::class . '@save');
     Router::post('/api/smtp-config/test', SmtpConfigController::class . '@test');
+
+    // 开发管理 · 日私信权重规则（仅超管）
+    Router::get('/api/dm-weight-config', DmWeightConfigController::class . '@get');
+    Router::put('/api/dm-weight-config', DmWeightConfigController::class . '@save');
+    Router::post('/api/dm-weight-config', DmWeightConfigController::class . '@save');
+    Router::post('/api/dm-weight-config/reset', DmWeightConfigController::class . '@reset');
 
     Router::get('/api/meta', MetaController::class . '@index');
     Router::get('/api/meta/dicts/{domain}', MetaController::class . '@dicts');
