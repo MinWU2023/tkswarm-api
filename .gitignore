@@ -1,0 +1,12 @@
+# 环境包云端落盘（体积大、含 Cookie/登录态，禁止提交）
+/storage/browser-env-packs/
+/storage/browser-env-packs/**
+
+# 本地 / 环境敏感配置
+.env
+.env.*
+!.env.example
+
+# 依赖与缓存
+/vendor/
+.phpunit.result.cache

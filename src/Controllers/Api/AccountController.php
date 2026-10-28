@@ -1822,6 +1822,9 @@ class AccountController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
+        if (DataScope::isEnterpriseCustomer()) {
+            return $this->error('企业客户无权发送邮件通知', 403);
+        }
         $aid = (int)$id;
         $account = DB::selectOne('SELECT id, owner_id, company_id FROM accounts WHERE id=?', [$aid]);
         if ($err = $this->assertAccountRowAccess($account)) {
@@ -1850,6 +1853,9 @@ class AccountController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
+        if (DataScope::isEnterpriseCustomer()) {
+            return $this->error('企业客户无权操作邮件推送', 403);
+        }
         $aid = (int)$id;
         $account = DB::selectOne('SELECT id, owner_id, company_id, data_mail_push FROM accounts WHERE id=?', [$aid]);
         if ($err = $this->assertAccountRowAccess($account)) {
@@ -2323,6 +2329,20 @@ class AccountController extends Controller
         }
         if ((string)$request->get('session', '') === '1') {
             $filters[] = '(a.has_session=1 OR s.account_id IS NOT NULL)';
+        }
+        // 是否绑定浏览器环境（任一后端列或 account_browser_envs）
+        $hasEnv = (string)$request->get('hasEnv', $request->get('envBound', ''));
+        if ($hasEnv === '1' || $hasEnv === '0') {
+            $boundSql = "(
+                TRIM(COALESCE(a.browser_profile_id, '')) <> ''
+                OR TRIM(COALESCE(a.tkswarm_browser_profile_id, '')) <> ''
+                OR TRIM(COALESCE(a.linux_browser_profile_id, '')) <> ''
+                OR EXISTS (
+                    SELECT 1 FROM account_browser_envs e
+                    WHERE e.account_id = a.id AND TRIM(COALESCE(e.browser_profile_id, '')) <> ''
+                )
+            )";
+            $filters[] = $hasEnv === '1' ? $boundSql : ('NOT ' . $boundSql);
         }
         if ((string)$request->get('banned', '') === '1') {
             $filters[] = "a.account_status='banned'";
