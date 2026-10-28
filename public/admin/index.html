@@ -3,23 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f3f6f9" />
   <title>TKSwarm 运营控制台</title>
   <link rel="icon" type="image/png" href="/images/favicon.png?v=2" sizes="64x64" />
   <link rel="icon" type="image/png" href="/images/icon.png?v=2" sizes="256x256" />
   <link rel="apple-touch-icon" href="/images/apple-touch-icon.png?v=2" sizes="180x180" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.css" />
-  <link rel="stylesheet" href="/admin/assets/css/admin.css" />
+  <link rel="stylesheet" href="/admin/assets/css/admin.css?v=2.0" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',900:'#0b1b33' },
-            ink: { DEFAULT:'#0f172a', soft:'#334155', mute:'#64748b' }
+            brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',900:'#0b1220' },
+            ink: { DEFAULT:'#0b1220', soft:'#334155', mute:'#7b8799' }
           },
-          fontFamily: { sans: ['Segoe UI','PingFang SC','Microsoft YaHei','system-ui','sans-serif'] }
+          fontFamily: {
+            sans: ['Manrope','Noto Sans SC','PingFang SC','Microsoft YaHei','system-ui','sans-serif']
+          },
+          borderRadius: {
+            lg: '14px',
+            xl: '18px'
+          }
         }
       }
     }
@@ -32,8 +42,8 @@
   <script src="https://cdn.jsdelivr.net/npm/vue-router@4.4.3/dist/vue-router.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
-  <script src="/admin/assets/js/api.js"></script>
-  <script src="/admin/assets/js/views.js"></script>
-  <script src="/admin/assets/js/app.js"></script>
+  <script src="/admin/assets/js/api.js?v=2.0"></script>
+  <script src="/admin/assets/js/views.js?v=2.0"></script>
+  <script src="/admin/assets/js/app.js?v=2.0"></script>
 </body>
 </html>

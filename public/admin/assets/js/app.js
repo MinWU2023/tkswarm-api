@@ -90,7 +90,7 @@
             h('div', { class: 'text-sm text-slate-500' }, self.$route.meta.title || '控制台'),
             h('div', { class: 'flex items-center gap-3' }, [
               h('span', { class: 'text-sm text-slate-600' }, (self.user && (self.user.nickname || self.user.username)) || '管理员'),
-              h(ElementPlus.ElButton, { size: 'small', onClick: function () { self.logout(); } }, function () { return '退出'; })
+              h(ElementPlus.ElButton, { size: 'small', plain: true, onClick: function () { self.logout(); } }, function () { return '退出'; })
             ])
           ]),
           h('main', { class: 'content' }, [h(VueRouter.RouterView)])
