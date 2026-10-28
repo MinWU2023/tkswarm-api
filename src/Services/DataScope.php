@@ -16,7 +16,7 @@ use App\Core\Response;
  * - 切换身份（Acting-As）：按目标角色的可见范围（含公海，企业客户除外）
  * - 账号/代理/环境创建·导入：超管/运营管理不绑定 owner/企业/行业；企业客户绑定本人+企业+行业；运营专员禁止创建/导入
  * - 运营专员可编辑账号，不可创建/导入账号、代理、环境
- * - 代理列表可见：超管/运营管理见未关联；运营专员见未关联+本人+关联企业客户；企业客户仅见本人归属
+ * - 代理列表可见：超管/运营管理见未关联；运营专员仅见「自己关联账号已绑定」的代理；企业客户仅见本人归属
  * - 代理可删除：超管/运营管理仅未关联；企业客户仅本人；运营专员不可删
  * - 代理可分配：仅超管/运营管理；运营专员与企业客户不可分配/认领
  * - 代理可导入：运营专员不可；其余可维护代理的角色需具备 proxy.import
@@ -846,19 +846,49 @@ class DataScope
             return $ownerId <= 0;
         }
         if (self::isOperator()) {
-            if ($ownerId <= 0) {
-                return true;
-            }
+            // 运营专员列表已改为按「关联账号已绑定代理」过滤；
+            // 此处仅用于按 ownerId 筛选时的权限预检（本人或关联企业客户）。
             $selfId = (int)(self::effectiveUser()['id'] ?? 0);
-            if ($ownerId === $selfId) {
+            if ($ownerId > 0 && $ownerId === $selfId) {
                 return true;
             }
-            return self::userHasScopedRole($ownerId, ['企业客户'], self::operatorCompanyIds());
+            if ($ownerId > 0) {
+                return self::userHasScopedRole($ownerId, ['企业客户'], self::operatorCompanyIds());
+            }
+            return false;
         }
         if (self::isEnterpriseCustomer()) {
             return $ownerId === (int)(self::effectiveUser()['id'] ?? 0);
         }
         return $ownerId === (int)(self::effectiveUser()['id'] ?? 0);
+    }
+
+    /** 运营专员：代理是否被其关联账号绑定（单行访问校验） */
+    public static function isProxyBoundToOperatorAccounts(int $proxyId): bool
+    {
+        if ($proxyId <= 0 || !self::isOperator()) {
+            return false;
+        }
+        [$sql, $params] = self::operatorBoundProxyIdsSubquery();
+        if ($sql === '') {
+            return false;
+        }
+        $row = DB::selectOne("SELECT 1 AS ok FROM ({$sql}) t WHERE t.proxy_id = ? LIMIT 1", array_merge($params, [$proxyId]));
+        return (bool)$row;
+    }
+
+    /**
+     * 代理行是否可见（列表/详情/测速等）。
+     * 运营专员按账号绑定关系判断，其余角色仍按 owner_id。
+     *
+     * @param array<string,mixed> $row
+     */
+    public static function isProxyRowVisible(array $row): bool
+    {
+        if (self::isOperator()) {
+            return self::isProxyBoundToOperatorAccounts((int)($row['id'] ?? 0));
+        }
+        return self::isProxyOwnerVisible((int)($row['owner_id'] ?? 0));
     }
 
     /** 是否可编辑该代理行（运营专员只读） */
@@ -969,14 +999,40 @@ class DataScope
         return "({$column} IS NULL OR {$column} = 0)";
     }
 
-    /** @return array{0:string,1:list<mixed>} */
+    /**
+     * 运营专员代理列表：仅「自己关联账号」已绑定的代理（不含公海未绑定池）。
+     * $column 形如 p.owner_id / owner_id，用于推导代理主键列 p.id / id。
+     *
+     * @return array{0:string,1:list<mixed>}
+     */
     private static function operatorProxyScopeSql(string $column): array
     {
+        $idColumn = preg_replace('/owner_id\b/', 'id', $column) ?: 'id';
+        [$subSql, $params] = self::operatorBoundProxyIdsSubquery();
+        if ($subSql === '') {
+            return [' AND 1=0', []];
+        }
+        return [" AND {$idColumn} IN ({$subSql})", $params];
+    }
+
+    /**
+     * 运营专员关联账号（本人 + 关联企业客户，不含公海）已绑定的 proxy_id 子查询。
+     *
+     * @return array{0:string,1:list<mixed>} SQL 子查询（无外层括号包裹的 SELECT）, 绑定参数
+     */
+    private static function operatorBoundProxyIdsSubquery(): array
+    {
         $selfId = (int)(self::effectiveUser()['id'] ?? 0);
+        if ($selfId <= 0) {
+            return ['', []];
+        }
         $companyIds = self::operatorCompanyIds();
-        $unscoped = self::unassignedProxyOwnerExpr($column);
         if (!$companyIds) {
-            return [" AND ({$column} = ? OR {$unscoped})", [$selfId]];
+            return [
+                'SELECT DISTINCT a.proxy_id FROM accounts a
+                 WHERE a.proxy_id IS NOT NULL AND a.proxy_id > 0 AND a.owner_id = ?',
+                [$selfId],
+            ];
         }
         $ph = implode(',', array_fill(0, count($companyIds), '?'));
         $customerSub = "SELECT u.id FROM admin_users u
@@ -984,7 +1040,9 @@ class DataScope
             INNER JOIN company_users cu ON cu.user_id = u.id
             WHERE u.status = 1 AND r.name LIKE '%企业客户%' AND cu.company_id IN ({$ph})";
         return [
-            " AND ({$column} = ? OR {$column} IN ({$customerSub}) OR {$unscoped})",
+            "SELECT DISTINCT a.proxy_id FROM accounts a
+             WHERE a.proxy_id IS NOT NULL AND a.proxy_id > 0
+               AND (a.owner_id = ? OR a.owner_id IN ({$customerSub}))",
             array_merge([$selfId], $companyIds),
         ];
     }
@@ -1574,13 +1632,13 @@ class DataScope
         return null;
     }
 
-    /** 代理读操作：与列表/检测可见范围一致（含公共池、运营可见客户代理） */
+    /** 代理读操作：与列表可见范围一致（运营专员按关联账号绑定；其余按 owner） */
     public static function assertProxyVisible(?array $row, string $field = 'owner_id'): ?Response
     {
         if (!$row) {
             return Response::error('资源不存在', 404);
         }
-        if (!self::isProxyOwnerVisible((int)($row[$field] ?? 0))) {
+        if (!self::isProxyRowVisible($row)) {
             return Response::error('无权访问该资源', 403);
         }
         return null;

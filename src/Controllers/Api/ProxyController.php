@@ -56,6 +56,10 @@ class ProxyController extends Controller
             }
             $filters[] = 'p.owner_id=?';
             $params[] = $targetOwnerId;
+            // 运营专员即使指定 ownerId，也必须落在「关联账号已绑定代理」范围内
+            if (DataScope::isOperator()) {
+                DataScope::applyProxyListScope('p.owner_id', $filters, $params);
+            }
         } else {
             DataScope::applyProxyListScope('p.owner_id', $filters, $params);
         }
@@ -1353,7 +1357,7 @@ class ProxyController extends Controller
         if (!$row) {
             return $this->error('资源不存在', 404);
         }
-        if (!DataScope::isProxyOwnerVisible((int)($row[$field] ?? 0))) {
+        if (!DataScope::isProxyRowVisible($row)) {
             return $this->error('无权访问该资源', 403);
         }
         return null;
