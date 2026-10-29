@@ -1199,8 +1199,16 @@
             group: '任务队列',
             items: [
               {
+                title: '清空计划任务数据',
+                desc: 'TRUNCATE tasks/task_* + 会话总/子任务。解决「任务汇总清了，开关一开又冒出私信同步/发布」——源头是仍 queued 的计划任务，不是 Redis。',
+                url: '/clear-plan-tasks-data.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认永久清空计划任务与会话总/子任务？不可撤销！'
+              },
+              {
                 title: '清空全部任务数据',
-                desc: 'TRUNCATE 会话总任务、计划任务、增粉/拉评/AI拓客衍生、plan_tasks 等。不可逆。',
+                desc: 'TRUNCATE 会话总任务、计划任务、增粉/拉评/AI拓客衍生、plan_tasks 等（比「清空计划任务」更全）。不可逆。',
                 url: '/clear-work-data.php',
                 danger: true,
                 confirm: true,

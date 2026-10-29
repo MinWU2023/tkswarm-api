@@ -2028,6 +2028,12 @@ class AccountWorkBatchService
             }
             $livePh = implode(',', array_fill(0, count($liveIds), '?'));
             try {
+                // 先收集关联的计划任务 id：仅清会话不改 tasks 时，Node 一开又会 attachDueQueuedTasks 再挂出来
+                $refRows = DB::select(
+                    "SELECT DISTINCT task_type, task_ref_id FROM account_work_items
+                     WHERE batch_id IN ({$livePh}) AND task_ref_id>0",
+                    $liveIds
+                ) ?: [];
                 DB::query(
                     "UPDATE account_work_items
                      SET status='cancelled',
@@ -2051,6 +2057,7 @@ class AccountWorkBatchService
                     $liveIds
                 );
                 AccountBrowserEnvService::releaseEnvByBatches($liveIds);
+                self::cancelParentTasksAfterBatchClear($refRows);
                 $deleted += count($liveIds);
                 $done = array_merge($done, $liveIds);
             } catch (\Throwable $e) {
@@ -2064,6 +2071,47 @@ class AccountWorkBatchService
             'skipped' => $skipped,
             'ids' => $done,
         ];
+    }
+
+    /**
+     * 清除会话总任务后，取消仍可被 attachDueQueuedTasks 重新挂载的父级计划任务。
+     * 不含 ai_lead / auto_follow 等独立主表类型。
+     *
+     * @param list<array{task_type?:string,task_ref_id?:int|string}> $refRows
+     */
+    private static function cancelParentTasksAfterBatchClear(array $refRows): void
+    {
+        $reattachTypes = ['publish', 'message', 'warm', 'sync_fans', 'dm_sync', 'sync', 'profile'];
+        $taskIds = [];
+        foreach ($refRows as $row) {
+            $type = (string)($row['task_type'] ?? '');
+            $ref = (int)($row['task_ref_id'] ?? 0);
+            if ($ref < 1 || !in_array($type, $reattachTypes, true)) {
+                continue;
+            }
+            if (in_array($type, self::STANDALONE_TASK_TYPES, true)) {
+                continue;
+            }
+            $taskIds[$ref] = true;
+        }
+        $ids = array_keys($taskIds);
+        if (!$ids) {
+            return;
+        }
+        try {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            DB::query(
+                "UPDATE tasks
+                 SET status='cancelled',
+                     finished_at=COALESCE(finished_at, CURRENT_TIMESTAMP),
+                     updated_at=CURRENT_TIMESTAMP
+                 WHERE id IN ({$ph})
+                   AND status IN ('queued','running','paused','draft')",
+                $ids
+            );
+        } catch (\Throwable $e) {
+            // tasks 表异常时不阻断会话清除
+        }
     }
 
     public static function resumeBatch(int $batchId): array
