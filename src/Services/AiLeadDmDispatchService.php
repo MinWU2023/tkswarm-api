@@ -81,13 +81,14 @@ class AiLeadDmDispatchService
     /**
      * @return array{scanned:int,enqueued:int,skipped:int,failed:int,items:list<array<string,mixed>>}
      */
-    public static function tick(int $limit = 30): array
+    public static function tick(int $limit = 10): array
     {
         AiLeadExecutionService::ensureSchema();
         AiLeadVideoWeightService::ensureSchema();
         AccountWorkBatchService::ensureSchema();
 
-        $limit = max(1, min(100, $limit));
+        // 单轮入队上限收紧，避免短时间内灌太多 pending
+        $limit = max(1, min(30, $limit));
         $candidates = AiLeadExecutionService::listGlobalPendingDmTargets($limit * 3);
 
         $enqueued = 0;

@@ -13,8 +13,8 @@ use App\Services\AiLeadDmDispatchService;
  *   php artisan ai-lead:dm-dispatch
  *   php artisan ai-lead:dm-dispatch --limit=50
  *
- * crontab 示例（每分钟）:
- *   * * * * * cd /path/to/tkswarm-api && php artisan ai-lead:dm-dispatch >> /var/log/tkswarm-ai-lead-dm.log 2>&1
+ * crontab 示例（每 5 分钟；勿再挂每分钟，避免空扫过频）:
+ *   0,5,10,15,20,25,30,35,40,45,50,55 * * * * cd /path/to/tkswarm-api && php artisan ai-lead:dm-dispatch >> /var/log/tkswarm-ai-lead-dm.log 2>&1
  */
 class AiLeadDmDispatchCommand extends Command
 {
@@ -23,7 +23,7 @@ class AiLeadDmDispatchCommand extends Command
 
     public function handle(array $args = []): int
     {
-        $limit = 30;
+        $limit = 10;
         foreach ($args as $arg) {
             if (preg_match('/^--limit=(\d+)$/', (string)$arg, $m)) {
                 $limit = (int)$m[1];

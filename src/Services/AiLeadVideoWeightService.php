@@ -10,9 +10,11 @@ use App\Core\Database\DB;
  */
 class AiLeadVideoWeightService
 {
-    /** 系统默认私信间隔（秒） */
-    public const DEFAULT_INTERVAL_MIN_SEC = 180;
-    public const DEFAULT_INTERVAL_MAX_SEC = 600;
+    /** 系统默认私信间隔（秒）：同账号两次私信随机落在此区间 */
+    public const DEFAULT_INTERVAL_MIN_SEC = 600;   // 10 分钟
+    public const DEFAULT_INTERVAL_MAX_SEC = 1800;  // 30 分钟
+    /** 允许配置的最小下限（秒） */
+    public const INTERVAL_FLOOR_SEC = 120;
 
     /** @var list<array{days:int,daily_dm_limit:int}> */
     public const DEFAULT_TIERS = [
@@ -49,8 +51,8 @@ class AiLeadVideoWeightService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
             DB::query("CREATE TABLE IF NOT EXISTS `account_dm_settings` (
               `account_id` INT NOT NULL PRIMARY KEY,
-              `dm_interval_min_sec` INT NOT NULL DEFAULT 180,
-              `dm_interval_max_sec` INT NOT NULL DEFAULT 600,
+              `dm_interval_min_sec` INT NOT NULL DEFAULT 600,
+              `dm_interval_max_sec` INT NOT NULL DEFAULT 1800,
               `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
@@ -62,8 +64,28 @@ class AiLeadVideoWeightService
                 );
             }
             self::seedDefaultTiersIfEmpty();
+            self::migrateLegacyIntervalDefaults();
         } catch (\Throwable $e) {
             // ignore bootstrap races
+        }
+    }
+
+    /** 把仍停留在旧默认 180~600 的账号间隔抬到新默认 600~1800 */
+    private static function migrateLegacyIntervalDefaults(): void
+    {
+        static $migrated = false;
+        if ($migrated) {
+            return;
+        }
+        $migrated = true;
+        try {
+            DB::query(
+                'UPDATE account_dm_settings
+                 SET dm_interval_min_sec=?, dm_interval_max_sec=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE dm_interval_min_sec<=180 AND dm_interval_max_sec<=600',
+                [self::DEFAULT_INTERVAL_MIN_SEC, self::DEFAULT_INTERVAL_MAX_SEC]
+            );
+        } catch (\Throwable $e) {
         }
     }
 
@@ -169,7 +191,7 @@ class AiLeadVideoWeightService
             'SELECT dm_interval_min_sec, dm_interval_max_sec FROM account_dm_settings WHERE account_id=?',
             [$accountId]
         );
-        $min = max(30, (int)($row['dm_interval_min_sec'] ?? self::DEFAULT_INTERVAL_MIN_SEC));
+        $min = max(self::INTERVAL_FLOOR_SEC, (int)($row['dm_interval_min_sec'] ?? self::DEFAULT_INTERVAL_MIN_SEC));
         $max = max($min, (int)($row['dm_interval_max_sec'] ?? self::DEFAULT_INTERVAL_MAX_SEC));
         return ['minSec' => $min, 'maxSec' => $max];
     }
@@ -181,7 +203,7 @@ class AiLeadVideoWeightService
         if ($accountId < 1) {
             throw new \InvalidArgumentException('accountId 无效');
         }
-        $minSec = max(30, $minSec);
+        $minSec = max(self::INTERVAL_FLOOR_SEC, $minSec);
         $maxSec = max($minSec, $maxSec);
         DB::query(
             'INSERT INTO account_dm_settings (account_id, dm_interval_min_sec, dm_interval_max_sec)
