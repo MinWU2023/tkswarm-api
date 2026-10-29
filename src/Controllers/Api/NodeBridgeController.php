@@ -1532,10 +1532,13 @@ class NodeBridgeController extends Controller
                 $skipped += 1;
                 continue;
             }
-            $title = mb_substr(trim((string)($row['title'] ?? $row['shareTitle'] ?? $row['share_title'] ?? '')), 0, 500);
-            if ($title === '') {
-                $title = $videoId !== '' ? ('视频 ' . $videoId) : '线上视频';
+            // materials.name 多为 VARCHAR(255)；share_title 多为 500。分开截断避免 1406
+            $titleRaw = trim((string)($row['title'] ?? $row['shareTitle'] ?? $row['share_title'] ?? ''));
+            if ($titleRaw === '') {
+                $titleRaw = $videoId !== '' ? ('视频 ' . $videoId) : '线上视频';
             }
+            $name = mb_substr($titleRaw, 0, 191);
+            $shareTitle = mb_substr($titleRaw, 0, 500);
             $coverUrl = trim((string)($row['coverUrl'] ?? $row['cover_url'] ?? $row['thumbnailUrl'] ?? ''));
             // cover_base64 字段可存 http(s) 封面 URL（列表/拉取数据展示用）
             $coverStore = '';
@@ -1567,82 +1570,90 @@ class NodeBridgeController extends Controller
                 );
             }
 
-            if ($exist) {
-                $mid = (int)$exist['id'];
-                $sets = [
-                    "publish_status='published'",
-                    'publish_account_id=?',
-                    'publish_account=?',
-                    'platform_video_id=IF(?=\'\', platform_video_id, ?)',
-                    'platform_video_url=IF(?=\'\', platform_video_url, ?)',
-                    'share_title=IF(?=\'\', share_title, ?)',
-                    'view_count=IF(?=0, view_count, ?)',
-                    'like_count=IF(?=0, like_count, ?)',
-                    'comment_count=IF(?=0, comment_count, ?)',
-                    'updated_at=CURRENT_TIMESTAMP',
-                ];
-                $bind = [
-                    $aid,
-                    mb_substr($accName, 0, 191),
-                    $videoId, $videoId,
-                    mb_substr($videoUrl, 0, 500), mb_substr($videoUrl, 0, 500),
-                    $title, $title,
-                    $views, $views,
-                    $likes, $likes,
-                    $comments, $comments,
-                ];
-                $oldCover = trim((string)($exist['cover_base64'] ?? ''));
-                if ($coverStore !== '' && ($oldCover === '' || str_starts_with($oldCover, 'http'))) {
-                    $sets[] = 'cover_base64=?';
-                    $bind[] = $coverStore;
+            try {
+                if ($exist) {
+                    $mid = (int)$exist['id'];
+                    $sets = [
+                        "publish_status='published'",
+                        'publish_account_id=?',
+                        'publish_account=?',
+                        'platform_video_id=IF(?=\'\', platform_video_id, ?)',
+                        'platform_video_url=IF(?=\'\', platform_video_url, ?)',
+                        'share_title=IF(?=\'\', share_title, ?)',
+                        'name=IF(?=\'\', name, ?)',
+                        'view_count=IF(?=0, view_count, ?)',
+                        'like_count=IF(?=0, like_count, ?)',
+                        'comment_count=IF(?=0, comment_count, ?)',
+                        'updated_at=CURRENT_TIMESTAMP',
+                    ];
+                    $bind = [
+                        $aid,
+                        mb_substr($accName, 0, 191),
+                        mb_substr($videoId, 0, 64), mb_substr($videoId, 0, 64),
+                        mb_substr($videoUrl, 0, 500), mb_substr($videoUrl, 0, 500),
+                        $shareTitle, $shareTitle,
+                        $name, $name,
+                        $views, $views,
+                        $likes, $likes,
+                        $comments, $comments,
+                    ];
+                    $oldCover = trim((string)($exist['cover_base64'] ?? ''));
+                    if ($coverStore !== '' && ($oldCover === '' || str_starts_with($oldCover, 'http'))) {
+                        $sets[] = 'cover_base64=?';
+                        $bind[] = $coverStore;
+                    }
+                    if ($postedSql !== null) {
+                        $sets[] = 'platform_published_at=COALESCE(platform_published_at, ?)';
+                        $bind[] = $postedSql;
+                    }
+                    $bind[] = $mid;
+                    DB::query('UPDATE materials SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
+                    $updated += 1;
+                    continue;
                 }
-                if ($postedSql !== null) {
-                    $sets[] = 'platform_published_at=COALESCE(platform_published_at, ?)';
-                    $bind[] = $postedSql;
-                }
-                $bind[] = $mid;
-                DB::query('UPDATE materials SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
-                $updated += 1;
-                continue;
-            }
 
-            // 新建线上素材：无本机文件，素材库默认隐藏
-            $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.mp4';
-            DB::query(
-                "INSERT INTO materials(
-                    name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
-                    publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
-                    sha256, cover_base64, share_title, share_caption, owner_id, origin,
-                    view_count, like_count, comment_count, platform_published_at
-                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                    $title,
-                    '',
-                    $fileName,
-                    'mp4',
-                    'video/mp4',
-                    0,
-                    'Studio 线上视频',
-                    'online-studio',
-                    'ready',
-                    'published',
-                    $aid,
-                    mb_substr($accName, 0, 191),
-                    mb_substr($videoId, 0, 64),
-                    mb_substr($videoUrl, 0, 500),
-                    '',
-                    $coverStore !== '' ? $coverStore : null,
-                    $title,
-                    '',
-                    $ownerId > 0 ? $ownerId : null,
-                    'online',
-                    $views,
-                    $likes,
-                    $comments,
-                    $postedSql,
-                ]
-            );
-            $created += 1;
+                // 新建线上素材：无本机文件，素材库默认隐藏
+                $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.mp4';
+                DB::query(
+                    "INSERT INTO materials(
+                        name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
+                        publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
+                        sha256, cover_base64, share_title, share_caption, owner_id, origin,
+                        view_count, like_count, comment_count, platform_published_at
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        $name,
+                        '',
+                        mb_substr($fileName, 0, 255),
+                        'mp4',
+                        'video/mp4',
+                        0,
+                        'Studio 线上视频',
+                        'online-studio',
+                        'ready',
+                        'published',
+                        $aid,
+                        mb_substr($accName, 0, 191),
+                        mb_substr($videoId, 0, 64),
+                        mb_substr($videoUrl, 0, 500),
+                        '',
+                        $coverStore !== '' ? $coverStore : null,
+                        $shareTitle,
+                        '',
+                        $ownerId > 0 ? $ownerId : null,
+                        'online',
+                        $views,
+                        $likes,
+                        $comments,
+                        $postedSql,
+                    ]
+                );
+                $created += 1;
+            } catch (\Throwable $e) {
+                $skipped += 1;
+                // 单条失败不阻断整批
+                error_log('[onlineMaterialsSync] account=' . $aid . ' video=' . $videoId . ' ' . $e->getMessage());
+            }
         }
 
         return $this->success([
