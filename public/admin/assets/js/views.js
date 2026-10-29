@@ -1221,6 +1221,22 @@
                 danger: true,
                 confirm: true,
                 confirmText: '确认立即终止全部 AI 拓客私信派发？'
+              },
+              {
+                title: '终止增粉间断关注派发',
+                desc: '关闭全部增粉任务自动化开关（dispatch_enabled），并取消队列中 pending/running 的 auto_follow。',
+                url: '/stop-auto-follow-dispatch.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认立即终止全部增粉间断关注派发？'
+              },
+              {
+                title: '终止养号常态化派发',
+                desc: '关闭全部养号任务常态化派发开关（recurring_dispatch_enabled），并取消队列中 pending/running 的 warm。',
+                url: '/stop-warm-recurring-dispatch.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认立即终止全部养号常态化派发？将同时取消队列中的 warm 子任务。'
               }
             ]
           },

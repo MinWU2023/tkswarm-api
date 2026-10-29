@@ -94,6 +94,72 @@ class AutoFollowController extends Controller
         }
     }
 
+    /**
+     * 单条开关：间断关注自动化派发（计划任务 auto-follow:dispatch）。
+     */
+    public function patchDispatch(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        AutoFollowService::ensureSchema();
+        $task = AutoFollowService::getTask((int)$id);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+            return $err;
+        }
+        $raw = $request->input('dispatchEnabled', $request->input('dispatch_enabled', null));
+        if ($raw === null) {
+            return $this->error('请提供 dispatchEnabled', 422);
+        }
+        $enabled = $raw === true || $raw === 1 || $raw === '1' || $raw === 'true';
+        try {
+            $out = AutoFollowService::setDispatchEnabled((int)$id, $enabled);
+            return $this->success($out, $enabled ? '已开启自动化派发' : '已关闭自动化派发');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /**
+     * 批量开关间断关注自动化派发。
+     */
+    public function batchDispatch(Request $request): Response
+    {
+        DataScope::ensureColumns();
+        AutoFollowService::ensureSchema();
+        $ids = $request->input('taskIds', $request->input('ids', []));
+        if (!is_array($ids)) {
+            $ids = [];
+        }
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if (!$ids) {
+            return $this->error('请选择任务', 400);
+        }
+        $raw = $request->input('dispatchEnabled', $request->input('dispatch_enabled', null));
+        if ($raw === null) {
+            return $this->error('请提供 dispatchEnabled', 422);
+        }
+        $enabled = $raw === true || $raw === 1 || $raw === '1' || $raw === 'true';
+
+        $allowed = [];
+        foreach ($ids as $id) {
+            $task = AutoFollowService::getTask($id);
+            if (!$task) {
+                continue;
+            }
+            if ($this->assertOwns(['owner_id' => $task['ownerId']])) {
+                continue;
+            }
+            $allowed[] = $id;
+        }
+        if (!$allowed) {
+            return $this->error('没有可操作的任务', 403);
+        }
+        $result = AutoFollowService::batchSetDispatchEnabled($allowed, $enabled);
+        return $this->success($result, $enabled ? '已批量开启自动化派发' : '已批量关闭自动化派发');
+    }
+
     public function delete(Request $request, string $id): Response
     {
         DataScope::ensureColumns();

@@ -22,13 +22,14 @@ class AutoFollowDispatchService
         $rows = DB::select(
             "SELECT i.*, t.id AS _task_id, t.status AS task_status,
                     t.target_account_id, t.target_tiktok_uid, t.target_username, t.target_display,
-                    t.owner_id AS task_owner_id
+                    t.owner_id AS task_owner_id, t.dispatch_enabled
              FROM auto_follow_task_items i
              INNER JOIN auto_follow_tasks t ON t.id=i.task_id
              WHERE i.status='pending'
                AND i.scheduled_at<=NOW()
                AND t.deleted_at IS NULL
                AND t.status NOT IN ('cancelled','failed')
+               AND COALESCE(t.dispatch_enabled, 1)=1
              ORDER BY i.scheduled_at ASC, i.id ASC
              LIMIT {$limit}"
         ) ?: [];
@@ -47,6 +48,7 @@ class AutoFollowDispatchService
                 'target_username' => (string)$row['target_username'],
                 'target_display' => (string)$row['target_display'],
                 'owner_id' => (int)$row['task_owner_id'],
+                'dispatch_enabled' => (int)($row['dispatch_enabled'] ?? 1),
             ];
             $result = AutoFollowService::enqueueDueItem($row, $taskRow);
             $items[] = array_merge(['id' => (int)$row['id'], 'taskId' => (int)$row['_task_id']], $result);

@@ -556,6 +556,84 @@ class TaskController extends Controller
         return $this->success(['requested' => count($ids), 'changed' => $changed], '批量重试已提交');
     }
 
+    /**
+     * 单条开关：养号常态化自动化派发（计划任务 warm:recurring）。
+     * 与任务 status / payload.recurring 配置独立；关闭后 cron 不再重置入队。
+     */
+    public function patchRecurringDispatch(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $task = DB::selectOne('SELECT * FROM tasks WHERE id=?', [(int)$id]);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        if ($err = $this->assertOwns($task)) {
+            return $err;
+        }
+        if ((string)($task['type'] ?? '') !== 'warm') {
+            return $this->error('仅养号任务支持常态化派发开关', 422);
+        }
+        $raw = $request->input('recurringDispatchEnabled', $request->input('recurring_dispatch_enabled', null));
+        if ($raw === null) {
+            return $this->error('请提供 recurringDispatchEnabled', 422);
+        }
+        $enabled = $raw === true || $raw === 1 || $raw === '1' || $raw === 'true';
+        DB::query(
+            'UPDATE tasks SET recurring_dispatch_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$enabled ? 1 : 0, (int)$id]
+        );
+        $this->event(
+            (int)$id,
+            'info',
+            $enabled ? '已开启常态化自动化派发' : '已关闭常态化自动化派发'
+        );
+        $fresh = DB::selectOne('SELECT t.*, g.name AS group_name FROM tasks t LEFT JOIN `groups` g ON g.id=t.group_id WHERE t.id=?', [(int)$id]);
+        return $this->success(
+            $this->mapTask($fresh ?: $task),
+            $enabled ? '已开启常态化自动化派发' : '已关闭常态化自动化派发'
+        );
+    }
+
+    /**
+     * 批量开关养号常态化自动化派发。
+     */
+    public function batchRecurringDispatch(Request $request): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $ids = $this->idList($request->input('taskIds', $request->input('ids', [])));
+        if (!$ids) {
+            return $this->error('请选择任务', 400);
+        }
+        $raw = $request->input('recurringDispatchEnabled', $request->input('recurring_dispatch_enabled', null));
+        if ($raw === null) {
+            return $this->error('请提供 recurringDispatchEnabled', 422);
+        }
+        $enabled = $raw === true || $raw === 1 || $raw === '1' || $raw === 'true';
+        $changed = 0;
+        foreach ($ids as $tid) {
+            $task = DB::selectOne('SELECT id, type, owner_id FROM tasks WHERE id=?', [$tid]);
+            if (!$task || (string)($task['type'] ?? '') !== 'warm' || !DataScope::ownsRow($task)) {
+                continue;
+            }
+            DB::query(
+                'UPDATE tasks SET recurring_dispatch_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$enabled ? 1 : 0, $tid]
+            );
+            $this->event(
+                $tid,
+                'info',
+                $enabled ? '已批量开启常态化自动化派发' : '已批量关闭常态化自动化派发'
+            );
+            $changed++;
+        }
+        return $this->success(
+            ['requested' => count($ids), 'changed' => $changed],
+            $enabled ? '已批量开启常态化自动化派发' : '已批量关闭常态化自动化派发'
+        );
+    }
+
     public function batchAction(Request $request): Response
     {
         $this->ensureSchema();
@@ -1069,6 +1147,8 @@ class TaskController extends Controller
     private function mapTask(array $row): array
     {
         $row['payload'] = json_decode((string)($row['payload'] ?? '{}'), true) ?: [];
+        $row['recurringDispatchEnabled'] = !array_key_exists('recurring_dispatch_enabled', $row)
+            || (int)($row['recurring_dispatch_enabled'] ?? 1) === 1;
         return $row;
     }
 
@@ -1169,6 +1249,7 @@ class TaskController extends Controller
             'scheduled_at' => 'ALTER TABLE tasks ADD COLUMN scheduled_at DATETIME NULL',
             'started_at' => 'ALTER TABLE tasks ADD COLUMN started_at DATETIME NULL',
             'finished_at' => 'ALTER TABLE tasks ADD COLUMN finished_at DATETIME NULL',
+            'recurring_dispatch_enabled' => "ALTER TABLE tasks ADD COLUMN recurring_dispatch_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '养号常态化派发开关'",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {

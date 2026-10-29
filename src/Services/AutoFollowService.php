@@ -114,6 +114,8 @@ class AutoFollowService
             'comment_ai_template_id' => "ADD COLUMN comment_ai_template_id INT NOT NULL DEFAULT 0 AFTER comment_mode",
             'comment_ai_prompt' => "ADD COLUMN comment_ai_prompt TEXT NULL AFTER comment_ai_template_id",
             'comment_text' => "ADD COLUMN comment_text VARCHAR(512) NOT NULL DEFAULT '' AFTER comment_ai_prompt",
+            // 计划任务推送开关：关闭后 auto-follow:dispatch 不再入队
+            'dispatch_enabled' => "ADD COLUMN dispatch_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否允许间断关注派发' AFTER status",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {
@@ -710,6 +712,9 @@ class AutoFollowService
         if (in_array($taskStatus, ['cancelled', 'failed'], true)) {
             return ['ok' => false, 'reason' => '主任务已取消或失败'];
         }
+        if (array_key_exists('dispatch_enabled', $taskRow) && (int)$taskRow['dispatch_enabled'] === 0) {
+            return ['ok' => false, 'reason' => '任务自动化派发已关闭'];
+        }
 
         try {
             $ownerId = self::resolveItemOwnerId($sourceAccountId);
@@ -1059,6 +1064,8 @@ class AutoFollowService
             'commentAiPrompt' => (string)($row['comment_ai_prompt'] ?? ''),
             'commentText' => (string)($row['comment_text'] ?? ''),
             'status' => (string)($row['status'] ?? 'pending'),
+            'dispatchEnabled' => !array_key_exists('dispatch_enabled', $row)
+                || (int)($row['dispatch_enabled'] ?? 1) === 1,
             'scheduledCount' => (int)($row['scheduled_count'] ?? 0),
             'enqueuedCount' => (int)($row['enqueued_count'] ?? 0),
             'successCount' => (int)($row['success_count'] ?? 0),
@@ -1068,6 +1075,55 @@ class AutoFollowService
             'updatedAt' => (string)($row['updated_at'] ?? ''),
             'canEdit' => $canEdit ?? self::canRebuildSchedule((int)$row['id']),
         ];
+    }
+
+    /**
+     * 开关间断关注自动化派发（与任务 status 独立）。
+     *
+     * @return array<string,mixed>
+     */
+    public static function setDispatchEnabled(int $id, bool $enabled): array
+    {
+        self::ensureSchema();
+        $n = DB::query(
+            'UPDATE auto_follow_tasks
+             SET dispatch_enabled=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id=? AND deleted_at IS NULL',
+            [$enabled ? 1 : 0, $id]
+        )->rowCount();
+        if ($n < 1) {
+            $exist = DB::selectOne('SELECT id FROM auto_follow_tasks WHERE id=? AND deleted_at IS NULL', [$id]);
+            if (!$exist) {
+                throw new \InvalidArgumentException('任务不存在');
+            }
+        }
+        $task = self::getTask($id);
+        if (!$task) {
+            throw new \InvalidArgumentException('任务不存在');
+        }
+        return $task;
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return array{requested:int,changed:int}
+     */
+    public static function batchSetDispatchEnabled(array $ids, bool $enabled): array
+    {
+        self::ensureSchema();
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        $ids = array_slice($ids, 0, 200);
+        if (!$ids) {
+            return ['requested' => 0, 'changed' => 0];
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = DB::query(
+            "UPDATE auto_follow_tasks
+             SET dispatch_enabled=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id IN ({$ph}) AND deleted_at IS NULL",
+            array_merge([$enabled ? 1 : 0], $ids)
+        );
+        return ['requested' => count($ids), 'changed' => (int)$stmt->rowCount()];
     }
 
     /** @param array<string,mixed> $row */

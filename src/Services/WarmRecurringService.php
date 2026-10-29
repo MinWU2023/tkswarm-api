@@ -21,11 +21,13 @@ class WarmRecurringService
     public static function tick(int $limit = 50): array
     {
         AccountWorkBatchService::ensureSchema();
+        self::ensureRecurringDispatchColumn();
         $limit = max(1, min(200, $limit));
 
         $tasks = DB::select(
             "SELECT * FROM tasks
              WHERE type='warm' AND status IN ('completed','failed')
+               AND COALESCE(recurring_dispatch_enabled, 1)=1
              ORDER BY COALESCE(finished_at, updated_at) ASC
              LIMIT {$limit}"
         ) ?: [];
@@ -41,6 +43,11 @@ class WarmRecurringService
             $payload = json_decode((string)($task['payload'] ?? '{}'), true) ?: [];
             if (!filter_var($payload['recurring'] ?? $payload['isRecurring'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
                 $skipped++;
+                continue;
+            }
+            if (array_key_exists('recurring_dispatch_enabled', $task) && (int)$task['recurring_dispatch_enabled'] === 0) {
+                $skipped++;
+                $items[] = ['id' => $id, 'ok' => false, 'reason' => '常态化自动化派发已关闭'];
                 continue;
             }
 
@@ -266,6 +273,7 @@ class WarmRecurringService
         $rows = DB::select(
             "SELECT id FROM tasks
              WHERE type='warm' AND status='queued'
+               AND COALESCE(recurring_dispatch_enabled, 1)=1
                AND NOT EXISTS (
                  SELECT 1 FROM account_work_items i
                  WHERE i.task_ref_id=tasks.id AND i.status IN ('pending','running')
@@ -283,6 +291,25 @@ class WarmRecurringService
             } catch (\Throwable $e) {
                 // ignore single failure
             }
+        }
+    }
+
+    private static function ensureRecurringDispatchColumn(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM tasks') ?: [], 'Field');
+            if (!in_array('recurring_dispatch_enabled', $cols, true)) {
+                DB::query(
+                    "ALTER TABLE tasks ADD COLUMN recurring_dispatch_enabled TINYINT(1) NOT NULL DEFAULT 1
+                     COMMENT '养号常态化派发开关'"
+                );
+            }
+        } catch (\Throwable $e) {
         }
     }
 }

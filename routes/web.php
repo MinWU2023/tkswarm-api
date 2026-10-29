@@ -164,10 +164,12 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
 
     Router::get('/api/auto-follow-tasks', AutoFollowController::class . '@list');
     Router::post('/api/auto-follow-tasks', AutoFollowController::class . '@create');
+    Router::post('/api/auto-follow-tasks/batch-dispatch', AutoFollowController::class . '@batchDispatch');
     Router::get('/api/auto-follow-tasks/eligible-count', AutoFollowController::class . '@eligibleCount');
     Router::get('/api/auto-follow-tasks/target-search', AutoFollowController::class . '@targetSearch');
     Router::get('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@detail');
     Router::put('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@update');
+    Router::patch('/api/auto-follow-tasks/{id}/dispatch', AutoFollowController::class . '@patchDispatch');
     Router::post('/api/auto-follow-tasks/{id}/cancel', AutoFollowController::class . '@cancel');
     Router::delete('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@delete');
 
@@ -307,6 +309,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/tasks/batch-retry', TaskController::class . '@batchRetry');
     Router::post('/api/tasks/batch-action', TaskController::class . '@batchAction');
     Router::post('/api/tasks/batch-delete', TaskController::class . '@batchDelete');
+    Router::post('/api/tasks/batch-recurring-dispatch', TaskController::class . '@batchRecurringDispatch');
     Router::get('/api/tasks', TaskController::class . '@list');
     Router::post('/api/tasks', TaskController::class . '@create');
     Router::put('/api/tasks/{id}', TaskController::class . '@update');
@@ -315,6 +318,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/tasks/{id}/pause', TaskController::class . '@pause');
     Router::post('/api/tasks/{id}/cancel', TaskController::class . '@cancel');
     Router::post('/api/tasks/{id}/retry', TaskController::class . '@retry');
+    Router::patch('/api/tasks/{id}/recurring-dispatch', TaskController::class . '@patchRecurringDispatch');
     Router::post('/api/tasks/{id}/preflight', TaskController::class . '@preflight');
     Router::post('/api/tasks/{id}/prepare', TaskController::class . '@prepare');
     Router::get('/api/tasks/{id}/plans', TaskController::class . '@plans');
