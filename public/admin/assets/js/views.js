@@ -1172,20 +1172,180 @@
   var TaskClearView = makeTaskToolView({
     name: 'TaskClearView',
     title: '清除任务数据',
-    subtitle: '永久清空总任务 / 子任务及相关业务任务表（TRUNCATE，不可逆）',
+    subtitle: '永久清空各类任务及衍生关联表（TRUNCATE，不可逆）',
     danger: true,
     alertTitle: '危险操作：数据将被永久删除',
-    alertDesc: '将清空 account_work_* 与 tasks / task_items 等关联表，并重置自增 ID。账号、素材、代理等主数据不受影响。',
+    alertDesc: '将清空会话总任务、计划任务、增粉/拉评/AI拓客衍生、plan_tasks 等，并重置自增 ID。账号、素材、代理主数据不受影响。',
     bullets: [
       '适用：测试环境洗库、或正式环境确认要丢掉全部任务历史',
-      '清空：account_work_batches / items / logs，以及 tasks 系列表',
+      '清空：account_work_*、tasks 系列、auto_follow_*、ai_lead*、pull_comment_*、plan_tasks 等',
       '执行前建议先备份数据库'
     ],
     confirmTitle: '确认永久删除全部任务数据？',
-    confirmText: '将 TRUNCATE 全部总任务、子任务及相关任务表，不可撤销！是否继续？',
-    confirmButton: '确认一键删除',
+    confirmText: '将 TRUNCATE 全部任务及衍生关联表，不可撤销！是否继续？',
+    confirmButton: '确认一键清空',
     toolUrl: '/clear-work-data.php'
   });
+
+  /**
+   * 快捷操作：汇总 public 下可浏览器直接访问的运维 PHP 工具
+   */
+  var QuickOpsView = {
+    name: 'QuickOpsView',
+    data: function () {
+      return {
+        tools: [
+          {
+            group: '任务队列',
+            items: [
+              {
+                title: '清空全部任务数据',
+                desc: 'TRUNCATE 会话总任务、计划任务、增粉/拉评/AI拓客衍生、plan_tasks 等。不可逆。',
+                url: '/clear-work-data.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认永久清空全部任务及衍生数据？不可撤销！'
+              },
+              {
+                title: '重置任务为待执行',
+                desc: '不删记录，把总任务/子任务改回 pending，清锁后可重新领取。',
+                url: '/reset-work-pending.php',
+                danger: false,
+                confirm: true,
+                confirmText: '确认将全部任务状态重置为待执行？'
+              }
+            ]
+          },
+          {
+            group: '浏览器环境',
+            items: [
+              {
+                title: '环境归属 / 绑定维护',
+                desc: '预览统计；可重置 owner、同步归属、回填绑定、清空全部环境绑定。',
+                url: '/clear-browser-env-owner.php',
+                danger: false,
+                confirm: false
+              }
+            ]
+          },
+          {
+            group: '代理 / 行业',
+            items: [
+              {
+                title: '解绑全部账号代理',
+                desc: 'accounts.proxy_id 置空，不删代理与账号。',
+                url: '/unbind-proxies.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认解除全部账号与代理的绑定？'
+              },
+              {
+                title: '识别代理国家',
+                desc: '按代理 host IP 写入 proxies.country / region / city（预览后确认）。',
+                url: '/detect-proxy-countries.php',
+                danger: false,
+                confirm: false
+              },
+              {
+                title: '行业数据管理',
+                desc: 'industry_data 树形编辑：展开、改名、排序、增删节点。',
+                url: '/industry-admin.php',
+                danger: false,
+                confirm: false
+              }
+            ]
+          }
+        ]
+      };
+    },
+    methods: {
+      openTool: function (item, withConfirm) {
+        var url = item.url;
+        if (withConfirm) {
+          url += (url.indexOf('?') >= 0 ? '&' : '?') + 'confirm=1';
+        }
+        window.open(url, '_blank', 'noopener');
+      },
+      runDanger: async function (item) {
+        try {
+          await ElMessageBox.confirm(
+            item.confirmText || ('确认执行：' + item.title + '？'),
+            item.danger ? '危险操作确认' : '操作确认',
+            {
+              type: item.danger ? 'error' : 'warning',
+              confirmButtonText: '打开并确认执行',
+              cancelButtonText: '取消'
+            }
+          );
+        } catch (e) {
+          return;
+        }
+        this.openTool(item, true);
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page' }, [
+        pageHead(
+          '快捷操作',
+          '浏览器可直接访问的运维工具入口。危险项会先二次确认，再打开对应 PHP 页执行。'
+        ),
+        h(ElementPlus.ElAlert, {
+          type: 'warning',
+          showIcon: true,
+          closable: false,
+          title: '生产环境请谨慎',
+          description: '清空/解绑类操作不可逆或影响全库；建议先点「预览统计」，确认后再执行。',
+          style: 'margin-bottom:16px'
+        }),
+        self.tools.map(function (group) {
+          return h('div', {
+            class: 'panel',
+            style: 'margin-bottom:16px'
+          }, [
+            panelHead(group.group),
+            h('div', {
+              style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:4px 0 8px'
+            }, group.items.map(function (item) {
+              return h('div', {
+                style: 'border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;background:#fff'
+              }, [
+                h('div', {
+                  style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px'
+                }, [
+                  h('b', { style: 'font-size:14px' }, item.title),
+                  item.danger
+                    ? h(ElementPlus.ElTag, { type: 'danger', size: 'small', effect: 'plain' }, function () { return '危险'; })
+                    : null
+                ].filter(Boolean)),
+                h('p', {
+                  class: 'text-sm text-slate-500',
+                  style: 'margin:0 0 12px;line-height:1.55;min-height:44px'
+                }, item.desc),
+                h('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+                  h(ElementPlus.ElButton, {
+                    size: 'small',
+                    onClick: function () { self.openTool(item, false); }
+                  }, function () { return item.confirm ? '预览统计' : '打开工具'; }),
+                  item.confirm
+                    ? h(ElementPlus.ElButton, {
+                      size: 'small',
+                      type: item.danger ? 'danger' : 'warning',
+                      onClick: function () { self.runDanger(item); }
+                    }, function () { return '确认执行'; })
+                    : null
+                ].filter(Boolean)),
+                h('p', {
+                  class: 'text-xs text-slate-400',
+                  style: 'margin:10px 0 0'
+                }, item.url)
+              ]);
+            }))
+          ]);
+        })
+      ]);
+    }
+  };
 
   var ContactInquiriesView = {
     name: 'ContactInquiriesView',
@@ -1448,6 +1608,7 @@
     HelpDocsView: HelpDocsView,
     EnvInstallersView: EnvInstallersView,
     TaskResetView: TaskResetView,
-    TaskClearView: TaskClearView
+    TaskClearView: TaskClearView,
+    QuickOpsView: QuickOpsView
   };
 })(window);

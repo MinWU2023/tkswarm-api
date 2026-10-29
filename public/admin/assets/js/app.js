@@ -15,8 +15,7 @@
     { path: '/env-installers', title: '环境安装包', icon: 'Download' },
     { path: '/help-categories', title: '帮助分类', icon: 'FolderOpened' },
     { path: '/help-docs', title: '帮助文档', icon: 'Document' },
-    { path: '/task-reset', title: '重置任务数据', icon: 'RefreshRight' },
-    { path: '/task-clear', title: '清除任务数据', icon: 'Delete' }
+    { path: '/quick-ops', title: '快捷操作', icon: 'Operation' }
   ];
 
   var AppLayout = {
@@ -118,8 +117,10 @@
         { path: 'env-installers', component: AdminViews.EnvInstallersView, meta: { title: '环境安装包' } },
         { path: 'help-categories', component: AdminViews.HelpCategoriesView, meta: { title: '帮助分类' } },
         { path: 'help-docs', component: AdminViews.HelpDocsView, meta: { title: '帮助文档' } },
-        { path: 'task-reset', component: AdminViews.TaskResetView, meta: { title: '重置任务数据' } },
-        { path: 'task-clear', component: AdminViews.TaskClearView, meta: { title: '清除任务数据' } }
+        { path: 'quick-ops', component: AdminViews.QuickOpsView, meta: { title: '快捷操作' } },
+        // 兼容旧书签
+        { path: 'task-reset', redirect: '/quick-ops' },
+        { path: 'task-clear', redirect: '/quick-ops' }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }
