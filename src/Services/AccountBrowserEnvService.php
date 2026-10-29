@@ -639,6 +639,17 @@ class AccountBrowserEnvService
         self::ensureSchema();
         self::reclaimExpiredEnvLeases();
 
+        // 同机仅占了 packhost 租约时，让给本机工作批（避免「本机开过窗 → 任务领不到 idle」）
+        $sameHost = self::hostIdFromWorkerOrLock($workerId);
+        if ($sameHost !== '') {
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE account_id=? AND saturation='busy' AND locked_by=?",
+                [$accountId, self::PACK_LEASE_PREFIX . $sameHost]
+            );
+        }
+
         $prefer = strtolower(trim((string)$preferredBackend));
         if ($prefer === 'linux' || $prefer === 'tkswarm' || $prefer === 'bit') {
             $prefer = self::normalizeBackend($prefer);
@@ -831,6 +842,45 @@ class AccountBrowserEnvService
     public const PACK_MAX_BYTES = 524288000; // 500MB
     public const PACK_LEASE_PREFIX = 'packhost:';
 
+    /**
+     * Node 工作批 workerId 形如 node-{hostname}；跨机包租约为 packhost:{hostname}。
+     * 二者共用 saturation/locked_by，必须识别「同一台机器」以免自相冲突。
+     */
+    public static function hostIdFromWorkerOrLock(string $workerOrLock): string
+    {
+        $v = trim($workerOrLock);
+        if ($v === '') {
+            return '';
+        }
+        if (str_starts_with($v, self::PACK_LEASE_PREFIX)) {
+            return substr($v, strlen(self::PACK_LEASE_PREFIX));
+        }
+        if (str_starts_with($v, 'node-')) {
+            return substr($v, strlen('node-'));
+        }
+        return $v;
+    }
+
+    /** 当前 locked_by 是否表示本机已占用（工作批或包租约） */
+    public static function isSameHostLock(string $lockedBy, string $hostId): bool
+    {
+        $hostId = trim($hostId);
+        $lockedBy = trim($lockedBy);
+        if ($hostId === '' || $lockedBy === '') {
+            return false;
+        }
+        if ($lockedBy === self::PACK_LEASE_PREFIX . $hostId) {
+            return true;
+        }
+        if ($lockedBy === 'node-' . $hostId) {
+            return true;
+        }
+        if ($lockedBy === $hostId) {
+            return true;
+        }
+        return self::hostIdFromWorkerOrLock($lockedBy) === $hostId;
+    }
+
     public static function packStorageDir(): string
     {
         $dir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'browser-env-packs';
@@ -894,6 +944,8 @@ class AccountBrowserEnvService
 
     /**
      * 独占租约：打开/拉取前占用；locked_by = packhost:{hostId}
+     * 注意：与工作批租约共用 saturation/locked_by。若本机工作批已占用（node-{host}），
+     * 视为同机兼容，直接放行且不改写 locked_by，否则会破坏批心跳/释放。
      * @return array{ok:bool,message?:string,meta?:array<string,mixed>}
      */
     public static function acquirePackLease(string $profileId, string $hostId, int $leaseSeconds = 7200): array
@@ -916,9 +968,19 @@ class AccountBrowserEnvService
             && strtotime($leaseUntil) > time();
 
         if ($busy && $lockedBy !== '' && $lockedBy !== $ourLock) {
+            // 本机 Node 工作批已占用该环境：打开/拉包是同机操作，不应报「其它主机」
+            if (self::isSameHostLock($lockedBy, $hostId)) {
+                return [
+                    'ok' => true,
+                    'meta' => self::packMeta($profileId),
+                    'coexistWithBatch' => true,
+                ];
+            }
+            $holderHost = self::hostIdFromWorkerOrLock($lockedBy);
+            $hint = $holderHost !== '' ? $holderHost : $lockedBy;
             return [
                 'ok' => false,
-                'message' => '该环境正在其它主机使用（' . $lockedBy . '），请稍后再试或等对方关闭后上传',
+                'message' => '该环境正在其它主机使用（' . $hint . '），请稍后再试或等对方关闭后上传',
                 'meta' => self::packMeta($profileId),
             ];
         }
@@ -941,10 +1003,16 @@ class AccountBrowserEnvService
         if (!$env) {
             return ['ok' => false, 'message' => '环境绑定不存在'];
         }
-        $ourLock = self::PACK_LEASE_PREFIX . trim($hostId);
+        $hostId = trim($hostId);
+        $ourLock = self::PACK_LEASE_PREFIX . $hostId;
         $lockedBy = (string)($env['locked_by'] ?? '');
         if (!$force && $lockedBy !== '' && $lockedBy !== $ourLock && str_starts_with($lockedBy, self::PACK_LEASE_PREFIX)) {
             return ['ok' => false, 'message' => '租约属于其它主机，无法释放'];
+        }
+        // 本机工作批占用中：pack 释放不能清掉批锁
+        if (!$force && $lockedBy !== '' && !str_starts_with($lockedBy, self::PACK_LEASE_PREFIX)
+            && self::isSameHostLock($lockedBy, $hostId)) {
+            return ['ok' => true, 'meta' => self::packMeta($profileId), 'skippedBatchLock' => true];
         }
         // 仅释放 pack 租约；工作批任务租约留给原逻辑
         if ($lockedBy === $ourLock || $force || str_starts_with($lockedBy, self::PACK_LEASE_PREFIX) || $lockedBy === '') {
@@ -992,13 +1060,23 @@ class AccountBrowserEnvService
             @unlink($old);
         }
         $rev = (int)($env['pack_revision'] ?? 0) + 1;
+        $hostId = mb_substr(trim($hostId), 0, 128);
         DB::query(
             "UPDATE account_browser_envs
              SET pack_path=?, pack_sha256=?, pack_bytes=?, pack_revision=?,
                  pack_updated_at=CURRENT_TIMESTAMP, pack_host_id=?, updated_at=CURRENT_TIMESTAMP
              WHERE id=?",
-            [$dest, $sha, $bytes, $rev, mb_substr(trim($hostId), 0, 128), (int)$env['id']]
+            [$dest, $sha, $bytes, $rev, $hostId, (int)$env['id']]
         );
+        // 上传成功 = 本机已交出最新包；清掉本机 packhost 租约（不动工作批 node-* 锁）
+        if ($hostId !== '') {
+            DB::query(
+                "UPDATE account_browser_envs
+                 SET saturation='idle', locked_by='', lease_until=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND locked_by=?",
+                [(int)$env['id'], self::PACK_LEASE_PREFIX . $hostId]
+            );
+        }
         return ['ok' => true, 'meta' => self::packMeta($profileId)];
     }
 }
