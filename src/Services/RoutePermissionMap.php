@@ -100,6 +100,8 @@ class RoutePermissionMap
             ['method' => 'POST', 'pattern' => '#^/api/system/restore#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
             // —— 账号 ——
+            // 列表只读：已登录即可（DataScope 仍按归属过滤），供「拉取视频列表」等全角色功能勾选账号
+            ['method' => 'GET', 'pattern' => '#^/api/accounts$#', 'codes' => []],
             ['method' => 'GET', 'pattern' => '#^/api/accounts/export#', 'codes' => ['account.export']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts/batch-import#', 'codes' => ['account.import']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts/batch-delete#', 'codes' => ['account.delete']],

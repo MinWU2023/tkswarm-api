@@ -33,6 +33,7 @@ class MenuController extends Controller
             if ($permCode === '') {
                 $permCode = MenuPermissionService::codeForMenuId((int)$item['id']);
             }
+            // public / * 保持原样，供全角色可见
             $map[$item['id']] = [
                 'id' => (int)$item['id'],
                 'parentId' => $item['parent_id'] ? (int)$item['parent_id'] : null,

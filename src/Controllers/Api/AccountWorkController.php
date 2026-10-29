@@ -418,4 +418,33 @@ class AccountWorkController extends Controller
             return $this->error($e->getMessage(), 400);
         }
     }
+
+    /** 拉取视频列表：全角色可入队（仅允许 pull_video_list） */
+    public function enqueuePullVideoList(Request $request): Response
+    {
+        AccountWorkBatchService::ensureSchema();
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $payload = $request->input('payload', []);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $payload['source'] = $payload['source'] ?? 'pull_video_list_wizard';
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
+        if ($err = $this->assertAccountOwns($account)) {
+            return $err;
+        }
+        try {
+            $out = AccountWorkBatchService::enqueueItem(
+                $accountId,
+                'pull_video_list',
+                $payload,
+                0,
+                $this->writeOwnerId()
+            );
+            return $this->success($out, '已挂入拉取视频列表任务');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 400);
+        }
+    }
 }

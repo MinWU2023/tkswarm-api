@@ -477,14 +477,25 @@ class SeedMeta
               (431, 430, '创建删除任务', 'trash-2', '', 'publish', 'create_delete', 1, 1),
               (440, 400, '视频评论', 'message-circle', '', 'publish', 'comment_reply_wizard', 4, 1),
               (441, 440, '回复视频评论', 'message-circle', '', 'publish', 'create_comment_reply', 1, 1),
-              (442, 440, '拉取视频数据', 'download', '', 'publish', 'pull_comments', 2, 1),
-              (443, 440, '创建拉取视频数据', 'download', '', 'publish', 'create_pull_comments', 3, 1)"
+              (444, 440, '拉取视频列表', 'list', '', 'publish', 'pull_video_list', 2, 1),
+              (445, 440, '创建拉取视频列表', 'list', '', 'publish', 'create_pull_video_list', 3, 1),
+              (442, 440, '拉取视频数据', 'download', '', 'publish', 'pull_comments', 4, 1),
+              (443, 440, '创建拉取视频数据', 'download', '', 'publish', 'create_pull_comments', 5, 1)"
         );
         try {
             DB::query("UPDATE navigation_menus SET parent_id=400, title='视频评论', icon='message-circle', view='publish', subview='comment_reply_wizard', sort_order=4, visible=1 WHERE id=440 OR (view='publish' AND subview='comment_reply_wizard') OR (title='回复评论' AND parent_id=400)");
             DB::query("UPDATE navigation_menus SET parent_id=440, title='回复视频评论', icon='message-circle', view='publish', subview='create_comment_reply', sort_order=1, visible=1 WHERE id=441 OR (view='publish' AND subview='create_comment_reply')");
-            DB::query("UPDATE navigation_menus SET parent_id=440, title='拉取视频数据', icon='download', view='publish', subview='pull_comments', sort_order=2, visible=1 WHERE id=442 OR (view='publish' AND subview='pull_comments')");
-            DB::query("UPDATE navigation_menus SET parent_id=440, title='创建拉取视频数据', icon='download', view='publish', subview='create_pull_comments', sort_order=3, visible=1 WHERE id=443 OR (view='publish' AND subview='create_pull_comments')");
+            DB::query(
+                "INSERT IGNORE INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible, permission_code)
+                 VALUES
+                  (444, 440, '拉取视频列表', 'list', '', 'publish', 'pull_video_list', 2, 1, 'public'),
+                  (445, 440, '创建拉取视频列表', 'list', '', 'publish', 'create_pull_video_list', 3, 1, 'public')"
+            );
+            DB::query("UPDATE navigation_menus SET parent_id=440, title='拉取视频列表', icon='list', view='publish', subview='pull_video_list', sort_order=2, visible=1, permission_code='public' WHERE id=444 OR (view='publish' AND subview='pull_video_list')");
+            DB::query("UPDATE navigation_menus SET parent_id=440, title='创建拉取视频列表', icon='list', view='publish', subview='create_pull_video_list', sort_order=3, visible=1, permission_code='public' WHERE id=445 OR (view='publish' AND subview='create_pull_video_list')");
+            DB::query("UPDATE navigation_menus SET parent_id=440, title='拉取视频数据', icon='download', view='publish', subview='pull_comments', sort_order=4, visible=1 WHERE id=442 OR (view='publish' AND subview='pull_comments')");
+            DB::query("UPDATE navigation_menus SET parent_id=440, title='创建拉取视频数据', icon='download', view='publish', subview='create_pull_comments', sort_order=5, visible=1 WHERE id=443 OR (view='publish' AND subview='create_pull_comments')");
         } catch (\Throwable $e) {
         }
         // AI营销 → AI拓客（二级）→ 拓客任务 / 拓客线索 / 拓客结果；增粉仍挂 AI营销

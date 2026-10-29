@@ -3135,6 +3135,7 @@ class AccountWorkBatchService
             'publish' => '发布视频',
             'comment_reply' => '回复评论',
             'pull_comments' => '拉取视频数据',
+            'pull_video_list' => '拉取视频列表',
             'auto_follow' => '自动增粉',
             'dm_reply' => '回复私信',
         ];

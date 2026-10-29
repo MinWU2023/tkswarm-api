@@ -49,7 +49,7 @@ class MenuPermissionService
     public static function syncAll(): int
     {
         self::ensureSchema();
-        $rows = DB::select('SELECT id, title, parent_id, view, subview FROM navigation_menus ORDER BY id ASC') ?: [];
+        $rows = DB::select('SELECT id, title, parent_id, view, subview, permission_code FROM navigation_menus ORDER BY id ASC') ?: [];
         $n = 0;
         foreach ($rows as $row) {
             self::syncOne($row);
@@ -65,6 +65,12 @@ class MenuPermissionService
         $id = (int)($menu['id'] ?? 0);
         if ($id <= 0) {
             return '';
+        }
+        // public / *：全角色可进，不覆盖为 menu.{id}
+        $existing = strtolower(trim((string)($menu['permission_code'] ?? '')));
+        if ($existing === 'public' || $existing === '*') {
+            DB::query('UPDATE navigation_menus SET permission_code=? WHERE id=?', [$existing, $id]);
+            return $existing;
         }
         $code = self::codeForMenuId($id);
         $title = trim((string)($menu['title'] ?? ''));
@@ -139,7 +145,7 @@ class MenuPermissionService
             return true;
         }
         $code = trim($permissionCode);
-        if ($code === '') {
+        if ($code === '' || $code === '*' || strcasecmp($code, 'public') === 0) {
             return true;
         }
         if (!$strictMenuMode) {
