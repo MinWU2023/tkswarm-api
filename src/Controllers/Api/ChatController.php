@@ -17,38 +17,157 @@ class ChatController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        $filters = ['a.enabled=1'];
-        $params = [];
-        $this->applyOwnerFilter('a.owner_id', $filters, $params);
-        $where = 'WHERE ' . implode(' AND ', $filters);
-        $rows = DB::select(
-            "SELECT a.id,a.username,a.nickname,a.login_status,a.chat_status,a.browser_profile_id,
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
+        $keyword = trim((string)$request->get('keyword', ''));
+        $includeId = (int)$request->get('includeId', $request->get('accountId', 0));
+
+        [$where, $params] = $this->chatAccountListFilters($request);
+        $from = 'FROM accounts a
+             LEFT JOIN chat_connections c ON c.account_id=a.id
+             LEFT JOIN agents ag ON ag.id=c.agent_id';
+        $select = "SELECT a.id,a.username,a.nickname,a.login_status,a.chat_status,a.browser_profile_id,a.owner_id,a.enabled,
                 COALESCE(c.status,'offline') AS connection_status,
                 COALESCE(c.auto_translate,0) AS auto_translate,
                 COALESCE(c.sync_messages,1) AS sync_messages,
                 COALESCE(c.ai_hosting,0) AS ai_hosting,
                 c.agent_id, ag.name AS agent_name, c.connected_at,
                 (SELECT COUNT(*) FROM chat_users f WHERE f.account_id=a.id) AS friend_count,
-                (SELECT COALESCE(SUM(f.unread_count),0) FROM chat_users f WHERE f.account_id=a.id) AS unread_count
-             FROM accounts a
-             LEFT JOIN chat_connections c ON c.account_id=a.id
-             LEFT JOIN agents ag ON ag.id=c.agent_id
-             {$where}
-             ORDER BY CASE a.login_status WHEN 'online' THEN 0 WHEN 'checking' THEN 1 ELSE 2 END, a.id DESC",
+                (SELECT COALESCE(SUM(f.unread_count),0) FROM chat_users f WHERE f.account_id=a.id) AS unread_count";
+
+        $stats = DB::selectOne(
+            "SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN a.login_status='online' THEN 1 ELSE 0 END) AS online
+             {$from} {$where}",
             $params
         );
-        $online = 0;
-        $unread = 0;
-        foreach ($rows as $x) {
-            if (($x['login_status'] ?? '') === 'online') {
-                $online++;
+        $unreadRow = DB::selectOne(
+            "SELECT COALESCE(SUM(f.unread_count),0) AS unread
+             FROM chat_users f
+             INNER JOIN accounts a ON a.id=f.account_id
+             {$where}",
+            $params
+        );
+        $stats['unread'] = (int)($unreadRow['unread'] ?? 0);
+
+        $total = (int)($stats['total'] ?? 0);
+        $pages = max(1, (int)ceil($total / $pageSize));
+        $page = min($page, $pages);
+        $offset = ($page - 1) * $pageSize;
+        $order = "ORDER BY CASE a.login_status WHEN 'online' THEN 0 WHEN 'checking' THEN 1 ELSE 2 END, a.id DESC";
+        $rows = DB::select(
+            "{$select} {$from} {$where} {$order} LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        );
+
+        $selected = null;
+        if ($includeId > 0) {
+            $onPage = false;
+            foreach ($rows as $x) {
+                if ((int)($x['id'] ?? 0) === $includeId) {
+                    $onPage = true;
+                    $selected = $x;
+                    break;
+                }
             }
-            $unread += (int)($x['unread_count'] ?? 0);
+            if (!$onPage) {
+                $oneFilters = ['a.id=?'];
+                $oneParams = [$includeId];
+                $ownerFilterId = $this->resolveChatAccountOwnerFilterId($request);
+                if ($ownerFilterId !== null) {
+                    $oneFilters[] = 'a.owner_id = ?';
+                    $oneParams[] = $ownerFilterId;
+                } else {
+                    DataScope::applyAccountListScope('a.owner_id', $oneFilters, $oneParams);
+                }
+                $oneWhere = 'WHERE ' . implode(' AND ', $oneFilters);
+                $selected = DB::selectOne("{$select} {$from} {$oneWhere} LIMIT 1", $oneParams);
+            }
         }
+
         return $this->success([
             'items' => $rows,
-            'stats' => ['total' => count($rows), 'online' => $online, 'unread' => $unread],
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'pageSize' => $pageSize,
+            'keyword' => $keyword,
+            'selected' => $selected,
+            'stats' => [
+                'total' => $total,
+                'online' => (int)($stats['online'] ?? 0),
+                'unread' => (int)($stats['unread'] ?? 0),
+            ],
         ]);
+    }
+
+    /**
+     * 与账号列表同一套可见范围（accountListScopeSql / ownerId 筛选），
+     * 保证各角色管理用户在客服聚合与账号页看到的账号集合一致。
+     *
+     * @return array{0:string,1:list<mixed>}
+     */
+    private function chatAccountListFilters(Request $request): array
+    {
+        $filters = [];
+        $params = [];
+        $keyword = trim((string)$request->get('keyword', ''));
+        if ($keyword !== '') {
+            $filters[] = '(a.username LIKE ? OR a.nickname LIKE ? OR CAST(a.id AS CHAR) LIKE ?)';
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+        }
+        $groupId = $request->get('groupId');
+        if ($groupId !== null && $groupId !== '') {
+            if ($groupId === 'none' || $groupId === '0') {
+                $filters[] = 'a.group_id IS NULL';
+            } else {
+                $gids = GroupController::expandAccountGroupIds((int)$groupId);
+                if (count($gids) === 1) {
+                    $filters[] = 'a.group_id=?';
+                    $params[] = $gids[0];
+                } elseif ($gids) {
+                    $ph = implode(',', array_fill(0, count($gids), '?'));
+                    $filters[] = "a.group_id IN ({$ph})";
+                    array_push($params, ...$gids);
+                }
+            }
+        }
+        $status = trim((string)$request->get('status', ''));
+        if ($status !== '') {
+            $filters[] = 'a.login_status=?';
+            $params[] = $status;
+        }
+
+        $ownerFilterId = $this->resolveChatAccountOwnerFilterId($request);
+        if ($ownerFilterId !== null) {
+            $filters[] = 'a.owner_id = ?';
+            $params[] = $ownerFilterId;
+        } else {
+            DataScope::applyAccountListScope('a.owner_id', $filters, $params);
+        }
+
+        $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
+        return [$where, $params];
+    }
+
+    private function resolveChatAccountOwnerFilterId(Request $request): ?int
+    {
+        $ownerId = (int)$request->get('ownerId', $request->get('owner_id', 0));
+        if ($ownerId <= 0) {
+            return null;
+        }
+        if (DataScope::canUseAccountOwnerFilter() && DataScope::isAccountOwnerVisible($ownerId)) {
+            return $ownerId;
+        }
+        if (!DataScope::isEnterpriseCustomer() && !DataScope::isOperator()) {
+            $loginId = (int)(DataScope::loginUser()['id'] ?? 0);
+            if ($loginId > 0 && ($ownerId === $loginId || in_array($ownerId, DataScope::childIdsOf($loginId), true))) {
+                return $ownerId;
+            }
+        }
+        return null;
     }
 
     public function connect(Request $request, string $id): Response
@@ -104,8 +223,8 @@ class ChatController extends Controller
         $errors = [];
         foreach ($ids as $id) {
             $account = DB::selectOne('SELECT id,username,browser_profile_id,login_status,owner_id FROM accounts WHERE id=? AND enabled=1', [$id]);
-            if (!$account || !DataScope::ownsRow($account)) {
-                $errors[] = ['id' => $id, 'reason' => '账号不存在'];
+            if (!$account || !DataScope::accountOwnsRow($account)) {
+                $errors[] = ['id' => $id, 'reason' => '账号不存在或无权访问'];
                 continue;
             }
             if (($account['browser_profile_id'] ?? '') === '') {
@@ -138,7 +257,7 @@ class ChatController extends Controller
         $closed = 0;
         foreach ($ids as $id) {
             $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$id]);
-            if (!$account || !DataScope::ownsRow($account)) {
+            if (!$account || !DataScope::accountOwnsRow($account)) {
                 continue;
             }
             $this->ensureConnection($id);
@@ -208,7 +327,8 @@ class ChatController extends Controller
             $filters[] = "CONCAT(',', REPLACE(IFNULL(f.tags,''), ' ', ''), ',') LIKE ?";
             $params[] = '%,' . str_replace(' ', '', $tag) . ',%';
         }
-        $this->applyOwnerFilter('a.owner_id', $filters, $params);
+        // 与客服账号列表 / 账号页同一套可见范围（勿用旧 applyOwnerFilter）
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         $from = 'FROM chat_users f JOIN accounts a ON a.id=f.account_id';
         $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$from} {$where}", $params)['c'] ?? 0);

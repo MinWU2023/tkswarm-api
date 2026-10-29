@@ -1201,8 +1201,7 @@ class AccountWorkBatchService
         if (!in_array($wantBackend, ['bit', 'tkswarm', 'linux'], true)) {
             $wantBackend = 'bit';
         }
-        // Linux 服务器浏览器：环境由 node 端任务首次执行时自动创建并复用，
-        // 这里既不预填也不绑定，避免每次推送都覆盖账号已有绑定。
+        // Linux 服务器浏览器：与桌面自研共用环境包；入队不强制绑，由 node 拉包/复用/补建。
         if ($wantBackend === 'linux') {
             self::assertServerBrowserTask($taskType);
         } else {
@@ -1471,7 +1470,7 @@ class AccountWorkBatchService
 
             $fresh = DB::selectOne('SELECT * FROM account_work_batches WHERE id=?', [$batchId]) ?: $fresh;
             $account = DB::selectOne(
-                'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
+                'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
                 [(int)$fresh['account_id']]
             );
             return self::enrichBatchClaim($fresh, $account, $env);
@@ -1518,7 +1517,7 @@ class AccountWorkBatchService
             );
             if ($pending) {
                 $account = DB::selectOne(
-                    'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
+                    'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
                     [(int)$batch['account_id']]
                 );
                 $env = null;
@@ -1635,7 +1634,7 @@ class AccountWorkBatchService
             // AI 拓客独立 batch：允许先推送，执行侧等待环境空闲，不 forceRelease 常规任务
             if (self::isAiLeadBatchRow($fresh)) {
                 $account = DB::selectOne(
-                    'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
+                    'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
                     [(int)$fresh['account_id']]
                 );
                 $formatted = self::enrichBatchClaim($fresh, $account, null);
@@ -1656,7 +1655,7 @@ class AccountWorkBatchService
 
         $fresh = DB::selectOne('SELECT * FROM account_work_batches WHERE id=?', [$batchId]) ?: $fresh;
         $account = DB::selectOne(
-            'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
+            'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
             [(int)$fresh['account_id']]
         );
         return self::enrichBatchClaim($fresh, $account, $env);
@@ -2643,7 +2642,7 @@ class AccountWorkBatchService
         $out = [];
         foreach ($rows as $fresh) {
             $account = DB::selectOne(
-                'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
+                'SELECT id, username, browser_profile_id, browser_backend, tkswarm_browser_profile_id, linux_browser_profile_id, login_status, has_session, enabled FROM accounts WHERE id=?',
                 [(int)$fresh['account_id']]
             );
             $env = null;
@@ -3048,8 +3047,8 @@ class AccountWorkBatchService
     }
 
     /**
-     * 服务器浏览器（Linux）的环境由 node 端按账号自动创建并复用，中心库不需要租用；
-     * 这里返回占位环境，让批次照常被领取（browser_profile_id 留空 → node 自动补建）。
+     * 服务器浏览器（Linux）：不走中心库环境租用锁（多人共用服务器）；
+     * 预填 linux / tkswarm 共用 profileId，供 node 拉包或复用；皆空则 node 补建。
      */
     private static function leaseOrServerEnv(
         int $accountId,
@@ -3059,10 +3058,18 @@ class AccountWorkBatchService
         ?string $preferredBackend = null
     ): ?array {
         if (strtolower(trim((string)$preferredBackend)) === 'linux') {
+            $acc = DB::selectOne(
+                'SELECT linux_browser_profile_id, tkswarm_browser_profile_id FROM accounts WHERE id=?',
+                [$accountId]
+            ) ?: [];
+            $profileId = trim((string)($acc['linux_browser_profile_id'] ?? ''));
+            if ($profileId === '') {
+                $profileId = trim((string)($acc['tkswarm_browser_profile_id'] ?? ''));
+            }
             return [
                 'id' => 0,
                 'account_id' => $accountId,
-                'browser_profile_id' => '',
+                'browser_profile_id' => $profileId,
                 'browser_backend' => 'linux',
                 'is_primary' => 0,
             ];
@@ -3182,8 +3189,11 @@ class AccountWorkBatchService
             $backend = 'bit';
         }
         if ($backend === 'linux') {
-            // 服务器浏览器环境由 node 自动创建，用 linux 绑定 ID（没有就留空）
-            $profileId = (string)($account['linux_browser_profile_id'] ?? '');
+            // 服务器与桌面自研共用环境包：优先 linux 绑定，其次 tkswarm 同 ID；仍空则 node 拉包/补建
+            $profileId = trim((string)($account['linux_browser_profile_id'] ?? ''));
+            if ($profileId === '') {
+                $profileId = trim((string)($account['tkswarm_browser_profile_id'] ?? ''));
+            }
         }
         $tkProfile = (string)($account['tkswarm_browser_profile_id'] ?? '');
         if ($backend === 'tkswarm' && $tkProfile === '' && $profileId !== '') {
@@ -3211,6 +3221,7 @@ class AccountWorkBatchService
                 'browser_profile_id' => $profileId,
                 'browser_backend' => $backend,
                 'tkswarm_browser_profile_id' => $tkProfile,
+                'linux_browser_profile_id' => (string)($account['linux_browser_profile_id'] ?? ''),
                 'login_status' => $account['login_status'] ?? 'offline',
                 'has_session' => !empty($account['has_session']),
                 'enabled' => !isset($account['enabled']) || !empty($account['enabled']),
