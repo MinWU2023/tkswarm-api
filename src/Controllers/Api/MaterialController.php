@@ -56,16 +56,19 @@ class MaterialController extends Controller
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         $page = (int)$request->input('page', 0);
         $pageSize = (int)$request->input('pageSize', $request->input('page_size', 12));
+        // 列表默认不返回 cover_base64（单条约百 KB～数 MB），否则一页/全量会卡死
+        $includeCover = filter_var($request->input('includeCover', $request->input('include_cover', false)), FILTER_VALIDATE_BOOLEAN);
+        $select = $this->listSelectSql($includeCover);
 
         if ($page > 0) {
-            $pageSize = max(1, min(48, $pageSize > 0 ? $pageSize : 12));
+            $pageSize = max(1, min(100, $pageSize > 0 ? $pageSize : 12));
             $totalRow = DB::selectOne("SELECT COUNT(*) AS c FROM materials m {$where}", $params);
             $total = (int)($totalRow['c'] ?? 0);
             $pages = max(1, (int)ceil($total / $pageSize));
             $page = min(max(1, $page), $pages);
             $offset = ($page - 1) * $pageSize;
             $rows = DB::select(
-                "SELECT m.*, u.username AS owner_name, a.username AS publish_account_name
+                "{$select}
                  FROM materials m
                  LEFT JOIN admin_users u ON u.id = m.owner_id
                  LEFT JOIN accounts a ON a.id = m.publish_account_id
@@ -75,7 +78,7 @@ class MaterialController extends Controller
                 $params
             );
             return $this->success([
-                'items' => array_map([$this, 'mapRow'], $rows ?: []),
+                'items' => array_map(fn ($r) => $this->mapRow($r, $includeCover), $rows ?: []),
                 'total' => $total,
                 'page' => $page,
                 'pageSize' => $pageSize,
@@ -83,16 +86,33 @@ class MaterialController extends Controller
             ]);
         }
 
+        // 无分页：仍排除封面，并硬顶 500，避免 loadRefs 拖垮
         $rows = DB::select(
-            "SELECT m.*, u.username AS owner_name, a.username AS publish_account_name
+            "{$select}
              FROM materials m
              LEFT JOIN admin_users u ON u.id = m.owner_id
              LEFT JOIN accounts a ON a.id = m.publish_account_id
              {$where}
-             ORDER BY m.id DESC",
+             ORDER BY m.id DESC
+             LIMIT 500",
             $params
         );
-        return $this->success(array_map([$this, 'mapRow'], $rows ?: []));
+        return $this->success(array_map(fn ($r) => $this->mapRow($r, $includeCover), $rows ?: []));
+    }
+
+    /** 列表字段：默认用 has_cover 标记，不读 LONGTEXT 封面 */
+    private function listSelectSql(bool $includeCover): string
+    {
+        $coverCol = $includeCover
+            ? 'm.cover_base64'
+            : "CASE WHEN m.cover_base64 IS NOT NULL AND TRIM(m.cover_base64) <> '' THEN 1 ELSE 0 END AS has_cover";
+        return "SELECT m.id, m.name, m.file_path, m.file_name, m.file_ext, m.mime_type, m.size_bytes,
+                m.description, m.tags, m.status, m.publish_status, m.publish_account_id, m.publish_account,
+                m.sha256, m.share_title, m.share_caption, m.owner_id, m.created_at, m.updated_at,
+                m.platform_video_id, m.platform_video_url, m.view_count, m.like_count, m.comment_count,
+                m.platform_published_at, m.last_comment_pulled_at,
+                {$coverCol},
+                u.username AS owner_name, a.username AS publish_account_name";
     }
 
     /** 按文件大小+后缀查询可能重复的素材（当前用户范围） */
@@ -913,7 +933,7 @@ class MaterialController extends Controller
         return $this->success($this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$id])), '素材已上传');
     }
 
-    private function mapRow(?array $row): ?array
+    private function mapRow(?array $row, bool $includeCover = true): ?array
     {
         if (!$row) {
             return null;
@@ -936,8 +956,14 @@ class MaterialController extends Controller
         $row['ownerName'] = $row['owner_name'] ?? '';
         $row['createdAt'] = $row['created_at'] ?? '';
         $row['updatedAt'] = $row['updated_at'] ?? '';
-        $row['coverBase64'] = (string)($row['cover_base64'] ?? '');
-        $row['hasCover'] = $row['coverBase64'] !== '';
+        if ($includeCover && array_key_exists('cover_base64', $row)) {
+            $row['coverBase64'] = (string)($row['cover_base64'] ?? '');
+        } else {
+            unset($row['cover_base64']);
+            $row['coverBase64'] = '';
+        }
+        // 注意：PHP empty("0")===false，必须用 intval 判断 has_cover
+        $row['hasCover'] = $row['coverBase64'] !== '' || (int)($row['has_cover'] ?? 0) === 1;
         $row['shareTitle'] = (string)($row['share_title'] ?? '');
         $row['shareCaption'] = (string)($row['share_caption'] ?? '');
         $row['viewCount'] = (int)($row['view_count'] ?? 0);
@@ -946,10 +972,50 @@ class MaterialController extends Controller
         $row['platformPublishedAt'] = (string)($row['platform_published_at'] ?? '');
         $row['lastCommentPulledAt'] = (string)($row['last_comment_pulled_at'] ?? '');
         $id = (int)($row['id'] ?? 0);
-        // 线下素材：预览走本机 Node /api/local-materials/*/stream
+        // 线下素材：预览走本机 Node；封面走独立接口，避免列表塞 base64
         $row['streamUrl'] = $id > 0 ? '/api/local-materials/' . $id . '/stream' : '';
         $row['playUrl'] = $row['streamUrl'];
+        $row['coverUrl'] = ($id > 0 && $row['hasCover']) ? ('/api/materials/' . $id . '/cover') : '';
         return $row;
+    }
+
+    /** 列表缩略图：按需读单条封面，不进列表 JSON */
+    public function cover(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $row = DB::selectOne(
+            'SELECT id, owner_id, publish_account_id, cover_base64 FROM materials WHERE id=?',
+            [(int)$id]
+        );
+        if ($err = $this->assertMaterialVisible($row)) {
+            return $err;
+        }
+        $raw = trim((string)($row['cover_base64'] ?? ''));
+        if ($raw === '') {
+            return $this->error('无封面', 404);
+        }
+        $mime = 'image/jpeg';
+        $bin = '';
+        if (preg_match('#^data:image/([\w+.-]+);base64,(.+)$#is', $raw, $m)) {
+            $subtype = strtolower((string)$m[1]);
+            if ($subtype === 'jpg') {
+                $subtype = 'jpeg';
+            }
+            $mime = 'image/' . $subtype;
+            $bin = (string)base64_decode(preg_replace('/\s+/', '', (string)$m[2]) ?: '', true);
+        } else {
+            $bin = (string)base64_decode(preg_replace('/\s+/', '', $raw) ?: '', true);
+        }
+        if ($bin === '') {
+            return $this->error('封面损坏', 404);
+        }
+        $cors = \App\Middlewares\CorsMiddleware::headers($request->getHeader('Origin'));
+        return Response::make($bin, 200, array_merge($cors, [
+            'Content-Type' => $mime,
+            'Content-Length' => (string)strlen($bin),
+            'Cache-Control' => 'private, max-age=3600',
+        ]));
     }
 
     private function normalizeCoverBase64(string $raw): string

@@ -365,6 +365,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/materials/import-template', MaterialController::class . '@importTemplate');
     Router::post('/api/materials/import-zip', MaterialController::class . '@importZip');
     Router::get('/api/materials/{id}/stream', MaterialController::class . '@stream');
+    Router::get('/api/materials/{id}/cover', MaterialController::class . '@cover');
     Router::put('/api/materials/{id}', MaterialController::class . '@update');
     Router::post('/api/materials/{id}/mark-published', MaterialController::class . '@markPublished');
     Router::put('/api/materials/{id}/rename', MaterialController::class . '@rename');
