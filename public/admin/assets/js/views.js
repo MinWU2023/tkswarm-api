@@ -1199,8 +1199,16 @@
             group: '任务队列',
             items: [
               {
+                title: '终止私信同步派发',
+                desc: '关闭全局 dmSyncDispatchEnabled，取消 dm_sync 计划/会话任务。清空后仍不断冒「私信同步」是因为 crontab 在跑 php artisan dm:sync。',
+                url: '/stop-dm-sync-dispatch.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认立即终止全部私信同步派发？'
+              },
+              {
                 title: '清空计划任务数据',
-                desc: 'TRUNCATE tasks/task_* + 会话总/子任务。解决「任务汇总清了，开关一开又冒出私信同步/发布」——源头是仍 queued 的计划任务，不是 Redis。',
+                desc: 'TRUNCATE tasks/task_* + 会话总/子任务，并关闭 dm:sync 全局派发，避免清空后 cron 立刻重建私信同步。',
                 url: '/clear-plan-tasks-data.php',
                 danger: true,
                 confirm: true,

@@ -15,6 +15,8 @@ class UserSettingsService
         'authEnabled',
         'landingDownloadWinUrl',
         'landingDownloadMacUrl',
+        /** 全局：php artisan dm:sync 是否允许入队（紧急终止工具可关闭） */
+        'dmSyncDispatchEnabled',
         'smtp.host',
         'smtp.port',
         'smtp.encryption',
@@ -84,6 +86,8 @@ class UserSettingsService
             /** 本机自研浏览器任务并发（每登录用户独立；Node 执行器读取） */
             'taskConcurrency' => 6,
             'privateMessageSync' => true,
+            /** 系统级：关闭后 cron dm:sync 不再为任何账号入队 */
+            'dmSyncDispatchEnabled' => true,
             'messageSyncMode' => 'api',
             'dmSyncBitFallback' => true,
             'notificationSync' => true,

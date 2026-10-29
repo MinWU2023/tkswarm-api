@@ -213,6 +213,35 @@ try {
         $results[$t] = 'truncated ' . $before . ' → 0';
     }
 
+    // 阻止 crontab dm:sync 立刻给所有账号重新 INSERT（清空后 last_synced 间隔仍到期）
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS settings (
+          `key` VARCHAR(100) NOT NULL PRIMARY KEY,
+          `value` TEXT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    $st = $pdo->prepare(
+        'INSERT INTO settings(`key`, `value`) VALUES (?,?)
+         ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), updated_at=CURRENT_TIMESTAMP'
+    );
+    $st->execute(['dmSyncDispatchEnabled', 'false']);
+    $syncedBump = 0;
+    if (tableExists($pdo, 'chat_connections')) {
+        // 旧版 dm:sync 认 sync_messages；未部署新代码时也能挡住立刻重建
+        $syncedBump = (int)$pdo->exec(
+            'UPDATE chat_connections
+             SET sync_messages=0, last_synced_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP'
+        );
+    }
+    if (tableExists($pdo, 'user_settings')) {
+        $pdo->exec(
+            "UPDATE user_settings SET `value`='false', updated_at=CURRENT_TIMESTAMP
+             WHERE `key`='privateMessageSync'"
+        );
+    }
+
     $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
 
     $list = '';
@@ -223,8 +252,11 @@ try {
     page('清空完成', '
       <h1 class="ok">已清空计划任务与会话数据</h1>
       <ul>' . $list . '</ul>
-      <p class="muted">浏览器环境任务锁释放：' . $envReleased . '。再开执行开关不应再出现旧的发布/私信同步挂载。</p>
+      <p class="muted">浏览器环境任务锁释放：' . $envReleased
+        . '；已关闭 <code>dmSyncDispatchEnabled</code>；刷新 last_synced_at：' . $syncedBump
+        . '。若仍要跑私信同步，请到快捷操作「终止私信同步派发」页点重新开启。</p>
       <a class="btn btn-ghost" href="?">查看当前状态</a>
+      <a class="btn btn-ghost" href="/stop-dm-sync-dispatch.php">私信同步派发控制</a>
       <a class="btn btn-ghost" href="/admin/#/quick-ops">返回快捷操作</a>
     ');
 } catch (Throwable $e) {

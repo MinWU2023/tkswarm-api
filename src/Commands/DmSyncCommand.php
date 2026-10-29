@@ -22,6 +22,15 @@ class DmSyncCommand extends Command
     {
         $this->ensureSchema();
 
+        $dispatchOn = filter_var(
+            UserSettingsService::setting('dmSyncDispatchEnabled', true),
+            FILTER_VALIDATE_BOOLEAN
+        );
+        if (!$dispatchOn) {
+            $this->warn('全局私信同步派发已关闭（settings.dmSyncDispatchEnabled=0），跳过入队');
+            return 0;
+        }
+
         $accounts = DB::select(
             "SELECT a.id, a.username, a.dm_channel, a.owner_id, a.fingerprint, a.browser_profile_id,
                     c.sync_messages, c.last_synced_at,
