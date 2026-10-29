@@ -263,6 +263,7 @@ class AiLeadController extends Controller
                 'limit_look' => $payload['limit_look'],
                 'keywords' => $payload['keywords'],
                 'dm_message' => $payload['dm_message'],
+                'dm_dispatch_enabled' => $payload['dm_dispatch_enabled'] ? 1 : 0,
                 'status' => $payload['status'],
                 'scrape_account_id' => $payload['scrape_account_id'],
                 'industry_id' => $payload['industry_id'],
@@ -301,7 +302,7 @@ class AiLeadController extends Controller
         try {
             $payload = $this->parseBody($request);
             DB::query(
-                'UPDATE ai_leads SET type=?, limit_follows=?, limit_likes=?, limit_look=?, keywords=?, dm_message=?, status=?, scrape_account_id=?, industry_id=?, browser_backend=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                'UPDATE ai_leads SET type=?, limit_follows=?, limit_likes=?, limit_look=?, keywords=?, dm_message=?, dm_dispatch_enabled=?, status=?, scrape_account_id=?, industry_id=?, browser_backend=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
                 [
                     $payload['type'],
                     $payload['limit_follows'],
@@ -309,6 +310,7 @@ class AiLeadController extends Controller
                     $payload['limit_look'],
                     $payload['keywords'],
                     $payload['dm_message'],
+                    $payload['dm_dispatch_enabled'] ? 1 : 0,
                     $payload['status'],
                     $payload['scrape_account_id'],
                     $payload['industry_id'],
@@ -387,6 +389,45 @@ class AiLeadController extends Controller
             'accountId' => (int)($schedule['account_id'] ?? 0),
             'batchId' => (int)($schedule['batch_id'] ?? 0),
         ], '私信测试已入队，将打开对方主页并尝试发信');
+    }
+
+    /**
+     * 单独开关私信常态派发（与任务 status 独立）。
+     * 关闭时取消该任务队列中 pending/running 的 ai_lead_dm。
+     */
+    public function patchDmDispatch(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        AccountWorkBatchService::ensureSchema();
+        DataScope::ensureColumns();
+        $old = DB::selectOne('SELECT * FROM ai_leads WHERE id=?', [(int)$id]);
+        if ($err = $this->assertAiLeadOwns($old)) {
+            return $err;
+        }
+        $raw = $request->input('dmDispatchEnabled', $request->input('dm_dispatch_enabled', null));
+        if ($raw === null) {
+            return $this->error('请提供 dmDispatchEnabled', 422);
+        }
+        $enabled = $raw === true || $raw === 1 || $raw === '1' || $raw === 'true';
+        DB::query(
+            'UPDATE ai_leads SET dm_dispatch_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$enabled ? 1 : 0, (int)$id]
+        );
+        $cancelled = 0;
+        if (!$enabled) {
+            try {
+                $cancelled = (int)AccountWorkBatchService::cancelItemsForTask('ai_lead_dm', (int)$id);
+            } catch (\Throwable $e) {
+                $cancelled = 0;
+            }
+        }
+        $fresh = DB::selectOne('SELECT * FROM ai_leads WHERE id=?', [(int)$id]);
+        $mapped = $this->mapLead($fresh);
+        $mapped['dmItemsCancelled'] = $cancelled;
+        return $this->success(
+            $mapped,
+            $enabled ? '已开启私信派发' : ('已关闭私信派发' . ($cancelled > 0 ? "，取消队列 {$cancelled} 条" : ''))
+        );
     }
 
     public function patchStatus(Request $request, string $id): Response
@@ -846,6 +887,10 @@ class AiLeadController extends Controller
             'limit_look' => max(0, (int)$request->input('limitLook', $request->input('limit_look', 0))),
             'keywords' => mb_substr($keywords, 0, 200),
             'dm_message' => mb_substr(trim((string)$request->input('dmMessage', $request->input('dm_message', ''))), 0, 2000),
+            'dm_dispatch_enabled' => $this->parseBoolInput(
+                $request->input('dmDispatchEnabled', $request->input('dm_dispatch_enabled', true)),
+                true
+            ),
             'status' => $status,
             'account_ids' => $accountIds,
             'scrape_account_id' => $scrapeAccountId,
@@ -853,6 +898,24 @@ class AiLeadController extends Controller
             'shared_user_ids' => $sharedUserIds,
             'browser_backend' => $browserBackend,
         ];
+    }
+
+    private function parseBoolInput(mixed $raw, bool $default = false): bool
+    {
+        if ($raw === null) {
+            return $default;
+        }
+        if (is_bool($raw)) {
+            return $raw;
+        }
+        if (is_int($raw) || is_float($raw)) {
+            return (int)$raw !== 0;
+        }
+        $s = strtolower(trim((string)$raw));
+        if ($s === '' || $s === 'null') {
+            return $default;
+        }
+        return in_array($s, ['1', 'true', 'yes', 'on'], true);
     }
 
     private function syncAccounts(int $leadId, array $accountIds, int $scrapeAccountId = 0): void
@@ -900,6 +963,8 @@ class AiLeadController extends Controller
             'limitLook' => (int)($row['limit_look'] ?? 0),
             'keywords' => (string)($row['keywords'] ?? ''),
             'dmMessage' => (string)($row['dm_message'] ?? ''),
+            'dmDispatchEnabled' => !array_key_exists('dm_dispatch_enabled', $row)
+                || (int)($row['dm_dispatch_enabled'] ?? 1) === 1,
             'browserBackend' => in_array(strtolower(trim((string)($row['browser_backend'] ?? 'bit'))), ['bit', 'tkswarm', 'linux'], true)
                 ? strtolower(trim((string)($row['browser_backend'] ?? 'bit')))
                 : 'bit',
@@ -1110,6 +1175,10 @@ class AiLeadController extends Controller
                 if (!in_array('browser_backend', $leadCols, true)) {
                     DB::query("ALTER TABLE ai_leads ADD COLUMN browser_backend VARCHAR(16) NOT NULL DEFAULT 'bit' AFTER industry_id");
                 }
+            } catch (\Throwable $e) {
+            }
+            try {
+                AiLeadExecutionService::ensureSchema();
             } catch (\Throwable $e) {
             }
             try {

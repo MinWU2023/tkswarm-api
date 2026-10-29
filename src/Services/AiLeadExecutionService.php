@@ -43,6 +43,13 @@ class AiLeadExecutionService
             if (!in_array('dm_message', $cols, true)) {
                 DB::query("ALTER TABLE ai_leads ADD COLUMN dm_message TEXT NULL AFTER keywords");
             }
+            // 私信常态派发开关：与任务 status 独立，关闭后 cron 不再入队 ai_lead_dm
+            if (!in_array('dm_dispatch_enabled', $cols, true)) {
+                DB::query(
+                    "ALTER TABLE ai_leads ADD COLUMN dm_dispatch_enabled TINYINT(1) NOT NULL DEFAULT 1
+                     COMMENT '是否允许私信派发' AFTER dm_message"
+                );
+            }
             $ccols = array_column(DB::select('SHOW COLUMNS FROM ai_lead_creators') ?: [], 'Field');
             if (!in_array('profile_url', $ccols, true)) {
                 DB::query("ALTER TABLE ai_lead_creators ADD COLUMN profile_url VARCHAR(512) NOT NULL DEFAULT '' AFTER avatar");
@@ -886,7 +893,9 @@ class AiLeadExecutionService
                     cm.comment_text, cm.intent_score, cm.lead_id,
                     l.owner_id, l.keywords, l.browser_backend, l.dm_message
              FROM ai_lead_comments cm
-             INNER JOIN ai_leads l ON l.id=cm.lead_id AND l.status='active'
+             INNER JOIN ai_leads l ON l.id=cm.lead_id
+               AND l.status='active'
+               AND COALESCE(l.dm_dispatch_enabled, 1)=1
              WHERE cm.ai_pass=1 AND cm.username<>''
                AND NOT EXISTS (
                  SELECT 1 FROM ai_lead_records r

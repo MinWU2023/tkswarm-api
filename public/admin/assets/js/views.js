@@ -1213,6 +1213,14 @@
                 danger: false,
                 confirm: true,
                 confirmText: '确认将全部任务状态重置为待执行？'
+              },
+              {
+                title: '终止 AI 拓客私信派发',
+                desc: '关闭全部任务私信派发开关，并取消队列中 pending/running 的 ai_lead_dm。清空任务数据后若仍在派发，用本工具止血。',
+                url: '/stop-ai-lead-dm-dispatch.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认立即终止全部 AI 拓客私信派发？'
               }
             ]
           },

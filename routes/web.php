@@ -155,6 +155,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/ai-leads/{id}', AiLeadController::class . '@detail');
     Router::put('/api/ai-leads/{id}', AiLeadController::class . '@update');
     Router::patch('/api/ai-leads/{id}/status', AiLeadController::class . '@patchStatus');
+    Router::patch('/api/ai-leads/{id}/dm-dispatch', AiLeadController::class . '@patchDmDispatch');
     Router::post('/api/ai-leads/{id}/test-dm', AiLeadController::class . '@testDm');
     Router::delete('/api/ai-leads/{id}', AiLeadController::class . '@delete');
     Router::post('/api/ai-leads/{id}/logs', AiLeadController::class . '@createLog');
