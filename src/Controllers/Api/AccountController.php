@@ -1938,6 +1938,59 @@ class AccountController extends Controller
                 $content = [];
             }
         }
+        // 读接口时补齐素材链接/封面（入库时 base64 过长可能未写 cover_url）
+        if ($content) {
+            foreach ($content as &$cRow) {
+                $mid = (int)($cRow['material_id'] ?? 0);
+                $needUrl = trim((string)($cRow['video_url'] ?? '')) === '';
+                $needCover = trim((string)($cRow['cover_url'] ?? '')) === '';
+                $needId = trim((string)($cRow['video_id'] ?? '')) === '';
+                if ($mid <= 0 && !$needUrl && !$needCover) {
+                    continue;
+                }
+                try {
+                    if ($mid <= 0) {
+                        $title = (string)($cRow['title'] ?? '');
+                        if (preg_match('/\bm-(\d{1,10})-\d{8,}\b/i', $title, $mm)) {
+                            $mid = (int)$mm[1];
+                            $cRow['material_id'] = $mid;
+                        }
+                    }
+                    if ($mid <= 0) {
+                        continue;
+                    }
+                    $mat = DB::selectOne(
+                        'SELECT platform_video_id, platform_video_url, cover_base64 FROM materials WHERE id=? LIMIT 1',
+                        [$mid]
+                    );
+                    if (!$mat) {
+                        continue;
+                    }
+                    if ($needId && trim((string)($mat['platform_video_id'] ?? '')) !== '') {
+                        $cRow['video_id'] = (string)$mat['platform_video_id'];
+                    }
+                    if ($needUrl && trim((string)($mat['platform_video_url'] ?? '')) !== '') {
+                        $cRow['video_url'] = (string)$mat['platform_video_url'];
+                    } elseif ($needUrl && trim((string)($cRow['video_id'] ?? $mat['platform_video_id'] ?? '')) !== '') {
+                        $vid = trim((string)($cRow['video_id'] ?? $mat['platform_video_id'] ?? ''));
+                        $cRow['video_url'] = 'https://www.tiktok.com/video/' . $vid;
+                    }
+                    if ($needCover) {
+                        $b64 = trim((string)($mat['cover_base64'] ?? ''));
+                        if ($b64 !== '') {
+                            if (str_starts_with($b64, 'http://') || str_starts_with($b64, 'https://') || str_starts_with($b64, 'data:')) {
+                                $cRow['cover_url'] = $b64;
+                            } else {
+                                $cRow['cover_url'] = 'data:image/jpeg;base64,' . $b64;
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // ignore enrich errors
+                }
+            }
+            unset($cRow);
+        }
         try {
             $sync = DB::selectOne('SELECT page_url, tab_count, api_count, status, message, meta_json, captured_at FROM tiktok_studio_sync WHERE account_id=?', [$aid]);
         } catch (\Throwable $e) {

@@ -567,37 +567,106 @@ class NodeBridgeController extends Controller
                     $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
                 }
                 $materialId = (int)($row['materialId'] ?? $row['material_id'] ?? 0);
-                if ($materialId <= 0 && ($videoId !== '' || $videoUrl !== '')) {
-                    $mat = null;
-                    try {
+                $mat = null;
+                try {
+                    // 标题里常见「m-{素材ID}-{时间戳}」
+                    if ($materialId <= 0 && preg_match('/\bm-(\d{1,10})-\d{8,}\b/i', $title, $mm)) {
+                        $materialId = (int)$mm[1];
+                    }
+                    if ($materialId > 0) {
+                        $mat = DB::selectOne(
+                            'SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                             FROM materials WHERE id=? LIMIT 1',
+                            [$materialId]
+                        );
+                        if (!$mat) {
+                            $materialId = 0;
+                        }
+                    }
+                    if ($materialId <= 0 && ($videoId !== '' || $videoUrl !== '')) {
                         if ($videoId !== '') {
                             $mat = DB::selectOne(
-                                'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_id=? LIMIT 1',
+                                'SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                                 FROM materials WHERE publish_account_id=? AND platform_video_id=? LIMIT 1',
                                 [$aid, $videoId]
                             );
                             if (!$mat) {
                                 $mat = DB::selectOne(
-                                    'SELECT id FROM materials WHERE platform_video_id=? LIMIT 1',
+                                    'SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                                     FROM materials WHERE platform_video_id=? LIMIT 1',
                                     [$videoId]
                                 );
                             }
                             if (!$mat) {
                                 $mat = DB::selectOne(
-                                    'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_url LIKE ? LIMIT 1',
+                                    'SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                                     FROM materials WHERE publish_account_id=? AND platform_video_url LIKE ? LIMIT 1',
                                     [$aid, '%/video/' . $videoId . '%']
                                 );
                             }
                         }
                         if (!$mat && $videoUrl !== '') {
                             $mat = DB::selectOne(
-                                'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_url=? LIMIT 1',
+                                'SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                                 FROM materials WHERE publish_account_id=? AND platform_video_url=? LIMIT 1',
                                 [$aid, $videoUrl]
                             );
                         }
-                    } catch (\Throwable $e) {
-                        $mat = null;
+                        $materialId = (int)($mat['id'] ?? 0);
                     }
-                    $materialId = (int)($mat['id'] ?? 0);
+                    // 按分享标题 / 素材名模糊匹配（Studio 内容列常是发布标题）
+                    if ($materialId <= 0 && $title !== '') {
+                        $titleNorm = preg_replace('/^\d{1,2}:\d{2}(?::\d{2})?\s+/u', '', $title) ?: $title;
+                        $cands = DB::select(
+                            "SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
+                             FROM materials
+                             WHERE publish_account_id=?
+                             ORDER BY id DESC LIMIT 120",
+                            [$aid]
+                        ) ?: [];
+                        foreach ($cands as $cand) {
+                            $keys = array_filter([
+                                trim((string)($cand['share_title'] ?? '')),
+                                trim((string)($cand['name'] ?? '')),
+                                trim((string)($cand['file_name'] ?? '')),
+                            ]);
+                            foreach ($keys as $key) {
+                                if ($key === '') {
+                                    continue;
+                                }
+                                if (mb_stripos($titleNorm, $key) !== false || mb_stripos($key, $titleNorm) !== false) {
+                                    $mat = $cand;
+                                    $materialId = (int)$cand['id'];
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $mat = null;
+                }
+                // 素材已回写平台链接/封面时，补全本行缺失字段
+                if (is_array($mat)) {
+                    if ($videoId === '') {
+                        $videoId = trim((string)($mat['platform_video_id'] ?? ''));
+                    }
+                    if ($videoUrl === '') {
+                        $videoUrl = trim((string)($mat['platform_video_url'] ?? ''));
+                    }
+                    if ($videoUrl === '' && $videoId !== '') {
+                        $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
+                    }
+                    if ($coverUrl === '') {
+                        $b64 = trim((string)($mat['cover_base64'] ?? ''));
+                        if ($b64 !== '') {
+                            if (str_starts_with($b64, 'http://') || str_starts_with($b64, 'https://') || str_starts_with($b64, 'data:')) {
+                                $coverUrl = mb_substr($b64, 0, 1000);
+                            } elseif (strlen($b64) < 900) {
+                                $coverUrl = 'data:image/jpeg;base64,' . $b64;
+                            }
+                            // 超长 base64 不落库，读接口时再拼
+                        }
+                    }
                 }
                 if ($materialId > 0) {
                     $matchedMaterials += 1;
