@@ -2834,6 +2834,16 @@ class AccountWorkBatchService
         }
         $platformVideoId = trim($platformVideoId);
         $platformVideoUrl = trim($platformVideoUrl);
+        // URL 有、ID 无：从链接提取
+        if ($platformVideoId === '' && $platformVideoUrl !== '' && preg_match('/\/video\/(\d{6,})/', $platformVideoUrl, $m)) {
+            $platformVideoId = $m[1];
+        }
+        // ID 有、URL 无：用账号用户名拼公开链接（拉取视频数据列表依赖 platform_video_url/id）
+        if ($platformVideoId !== '' && $platformVideoUrl === '') {
+            $platformVideoUrl = $accountName !== ''
+                ? ('https://www.tiktok.com/@' . rawurlencode($accountName) . '/video/' . $platformVideoId)
+                : ('https://www.tiktok.com/video/' . $platformVideoId);
+        }
 
         // 先写状态+账号（必成功），再补平台 video_id
         if ($deleteAfter) {
@@ -2860,6 +2870,9 @@ class AccountWorkBatchService
                  WHERE id=?",
                 [$platformVideoId, $platformVideoId, $platformVideoUrl, $platformVideoUrl, $materialId]
             );
+        } elseif ($accountId > 0) {
+            // Node 发布成功但没解析到 ID：尝试用账号已同步的最新 tiktok_videos 回填
+            self::backfillPlatformVideoFromSyncedVideos($materialId, $accountId);
         }
         if ($accountId > 0) {
             try {
@@ -2868,6 +2881,74 @@ class AccountWorkBatchService
             }
         }
         return true;
+    }
+
+    /**
+     * 已发布但缺平台链接时：取该账号 tiktok_videos 中尚未被其它素材占用的最新一条回填。
+     */
+    public static function backfillPlatformVideoFromSyncedVideos(int $materialId, int $accountId = 0): bool
+    {
+        if ($materialId < 1) {
+            return false;
+        }
+        self::ensureMaterialsPublishColumns();
+        $row = DB::selectOne(
+            'SELECT id, publish_account_id, publish_account, platform_video_id, platform_video_url, publish_status
+             FROM materials WHERE id=?',
+            [$materialId]
+        );
+        if (!$row || (string)($row['publish_status'] ?? '') !== 'published') {
+            return false;
+        }
+        if (trim((string)($row['platform_video_id'] ?? '')) !== '' || trim((string)($row['platform_video_url'] ?? '')) !== '') {
+            return true;
+        }
+        $aid = $accountId > 0 ? $accountId : (int)($row['publish_account_id'] ?? 0);
+        if ($aid < 1) {
+            return false;
+        }
+        $accountName = trim((string)($row['publish_account'] ?? ''));
+        if ($accountName === '') {
+            $acc = DB::selectOne('SELECT username FROM accounts WHERE id=?', [$aid]);
+            $accountName = trim((string)($acc['username'] ?? ''));
+        }
+        try {
+            $used = DB::select(
+                "SELECT platform_video_id FROM materials
+                 WHERE publish_account_id=? AND platform_video_id<>'' AND id<>?",
+                [$aid, $materialId]
+            ) ?: [];
+            $usedIds = array_flip(array_map(static fn($r) => (string)($r['platform_video_id'] ?? ''), $used));
+            $videos = DB::select(
+                'SELECT video_id, video_url FROM tiktok_videos
+                 WHERE account_id=? AND video_id<>\'\'
+                 ORDER BY last_synced_at DESC, id DESC
+                 LIMIT 30',
+                [$aid]
+            ) ?: [];
+            foreach ($videos as $v) {
+                $vid = trim((string)($v['video_id'] ?? ''));
+                if ($vid === '' || isset($usedIds[$vid])) {
+                    continue;
+                }
+                $url = trim((string)($v['video_url'] ?? ''));
+                if ($url === '') {
+                    $url = $accountName !== ''
+                        ? ('https://www.tiktok.com/@' . rawurlencode($accountName) . '/video/' . $vid)
+                        : ('https://www.tiktok.com/video/' . $vid);
+                }
+                DB::query(
+                    "UPDATE materials
+                     SET platform_video_id=?, platform_video_url=?, updated_at=CURRENT_TIMESTAMP
+                     WHERE id=? AND (platform_video_id='' OR platform_video_url='')",
+                    [$vid, $url, $materialId]
+                );
+                return true;
+            }
+        } catch (\Throwable $e) {
+            return false;
+        }
+        return false;
     }
 
     /** 确保 materials 发布相关列存在（避免迁移未跑导致整段 UPDATE 失败） */

@@ -1317,6 +1317,10 @@ class NodeBridgeController extends Controller
         $videoUrl = trim((string)$request->input('videoUrl', $request->input('video_url', $request->input('platformVideoUrl', ''))));
         try {
             $ok = AccountWorkBatchService::markMaterialPublished((int)$id, $accountId, $deleteAfter, $videoId, $videoUrl);
+            // 仍无平台链接时再尝试从已同步的 tiktok_videos 回填
+            if ($ok && $videoId === '' && $videoUrl === '') {
+                AccountWorkBatchService::backfillPlatformVideoFromSyncedVideos((int)$id, $accountId);
+            }
         } catch (\Throwable $e) {
             return $this->error('标记发布失败: ' . $e->getMessage(), 500);
         }

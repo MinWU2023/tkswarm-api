@@ -116,6 +116,27 @@ class PullCommentController extends Controller
     {
         DataScope::ensureColumns();
         PullCommentService::ensureSchema();
+        \App\Services\AccountWorkBatchService::ensureMaterialsPublishColumns();
+        // 已标记发布但缺平台链接：尽量用账号已同步的 tiktok_videos 回填，否则列表会一直空
+        try {
+            [$scopeSql, $scopeParams] = DataScope::materialListSql('m');
+            $need = DB::select(
+                "SELECT m.id, m.publish_account_id FROM materials m
+                 WHERE m.publish_status='published'
+                   AND m.publish_account_id>0
+                   AND m.platform_video_id='' AND m.platform_video_url=''" . $scopeSql . '
+                 ORDER BY m.id DESC LIMIT 50',
+                $scopeParams
+            ) ?: [];
+            foreach ($need as $row) {
+                \App\Services\AccountWorkBatchService::backfillPlatformVideoFromSyncedVideos(
+                    (int)($row['id'] ?? 0),
+                    (int)($row['publish_account_id'] ?? 0)
+                );
+            }
+        } catch (\Throwable $e) {
+            // 回填失败不阻断列表
+        }
         $filters = ["m.publish_status='published'"];
         $params = [];
         [$matSql, $matParams] = DataScope::materialListSql('m');
