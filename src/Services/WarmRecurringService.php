@@ -7,6 +7,11 @@ use App\Core\Database\DB;
 
 /**
  * 常态化自动养号：扫描已结束的养号任务，按间隔重新入队并挂到账号会话总任务。
+ *
+ * 入队约束（避免频繁推送 / 挤占高优先级任务）：
+ * 1) 同一 task 仍有 pending/running 分项 → 不重复入队
+ * 2) 任一账号的常规总任务里已有更高权重（priority 更小）待办 → 本轮不重置、不挂载
+ * 3) 挂入后与发布等任务同处一个待定列表，由 claim-item 按 priority 排队，后插的高优先级会插到养号前面
  */
 class WarmRecurringService
 {
@@ -57,20 +62,34 @@ class WarmRecurringService
                 continue;
             }
 
-            // 仍有进行中的分项则跳过，避免重复挂载
-            $open = DB::selectOne(
-                "SELECT COUNT(*) AS c FROM account_work_items
-                 WHERE task_ref_id=? AND status IN ('pending','running')",
-                [$id]
-            );
-            if ((int)($open['c'] ?? 0) > 0) {
+            // 已挂过分项但未执行完 → 绝不反复推送
+            if (AccountWorkBatchService::taskHasOpenWorkItems($id)) {
                 $skipped++;
-                $items[] = ['id' => $id, 'ok' => false, 'reason' => '仍有进行中的子任务'];
+                $items[] = ['id' => $id, 'ok' => false, 'reason' => '仍有未执行的养号分项，跳过重复推送'];
+                continue;
+            }
+
+            $accountIds = self::resolveAccountIds($task, $payload);
+            $gate = self::assertAccountsReadyForRecurringWarm($accountIds, $id);
+            if (!$gate['ok']) {
+                $skipped++;
+                $items[] = ['id' => $id, 'ok' => false, 'reason' => $gate['reason']];
                 continue;
             }
 
             try {
-                $result = self::resetAndAttach($task, $payload, $days);
+                $result = self::resetAndAttach($task, $payload, $days, $accountIds);
+                if ((int)($result['items'] ?? 0) < 1) {
+                    // 未挂上分项：恢复原结束状态，且不推进 recurringLastRunAt（避免空跑占间隔）
+                    self::revertFailedReset($task, $payload, (string)($result['revert_reason'] ?? '未挂载分项'));
+                    $skipped++;
+                    $items[] = [
+                        'id' => $id,
+                        'ok' => false,
+                        'reason' => (string)($result['revert_reason'] ?? '重置后未挂载任何分项'),
+                    ];
+                    continue;
+                }
                 $reset++;
                 $items[] = array_merge(['id' => $id, 'ok' => true], $result);
             } catch (\Throwable $e) {
@@ -79,20 +98,19 @@ class WarmRecurringService
             }
         }
 
+        // 顺带：已 queued、因更高优先级暂缓挂载的养号，到点可再试挂入（不改 status / lastRun）
+        self::retryAttachDeferredQueuedWarms($limit);
+
         return compact('scanned', 'reset', 'skipped', 'items');
     }
 
     /**
      * @param array<string,mixed> $task
      * @param array<string,mixed> $payload
-     * @return array{batches:int, items:int, days:int}
+     * @return list<int>
      */
-    private static function resetAndAttach(array $task, array $payload, int $days): array
+    private static function resolveAccountIds(array $task, array $payload): array
     {
-        $taskId = (int)$task['id'];
-        $now = date('Y-m-d H:i:s');
-
-        // 每轮刷新执行计划（概率落点重新随机）
         $accountIds = array_values(array_filter(array_map('intval', $payload['accountIds'] ?? [])));
         if (!$accountIds && !empty($task['group_id'])) {
             $accountIds = array_map(
@@ -103,6 +121,45 @@ class WarmRecurringService
                 )
             );
         }
+        return array_values(array_unique(array_filter($accountIds)));
+    }
+
+    /**
+     * @param list<int> $accountIds
+     * @return array{ok:bool, reason?:string}
+     */
+    private static function assertAccountsReadyForRecurringWarm(array $accountIds, int $taskId): array
+    {
+        if (!$accountIds) {
+            return ['ok' => true];
+        }
+        $warmPri = AccountWorkBatchService::priorityFor('warm');
+        foreach ($accountIds as $aid) {
+            if (AccountWorkBatchService::accountHasPendingTaskType($aid, 'warm', $taskId)) {
+                return ['ok' => false, 'reason' => "账号 #{$aid} 已有未执行的本任务养号分项"];
+            }
+            if (AccountWorkBatchService::accountHasPendingTaskType($aid, 'warm', 0)) {
+                // 同账号任意未执行养号（含其它任务挂的）也不再叠一轮常态化
+                return ['ok' => false, 'reason' => "账号 #{$aid} 已有未执行的养号分项"];
+            }
+            if (AccountWorkBatchService::accountHasHigherPriorityPending($aid, $warmPri)) {
+                return ['ok' => false, 'reason' => "账号 #{$aid} 存在更高优先级待办，养号应排队等待"];
+            }
+        }
+        return ['ok' => true];
+    }
+
+    /**
+     * @param array<string,mixed> $task
+     * @param array<string,mixed> $payload
+     * @param list<int> $accountIds
+     * @return array{batches:int, items:int, days:int, cycle:int, deferred_higher?:int}
+     */
+    private static function resetAndAttach(array $task, array $payload, int $days, array $accountIds): array
+    {
+        $taskId = (int)$task['id'];
+        $now = date('Y-m-d H:i:s');
+
         $plansByAccount = [];
         if ($accountIds) {
             foreach ($accountIds as $aid) {
@@ -116,10 +173,13 @@ class WarmRecurringService
             $payload['executionPlans'] = new \stdClass();
         }
 
+        $nextCycle = (int)($payload['recurringCycle'] ?? 0) + 1;
         $payload['recurring'] = true;
         $payload['recurringDays'] = $days;
-        $payload['recurringLastRunAt'] = $now;
-        $payload['recurringCycle'] = (int)($payload['recurringCycle'] ?? 0) + 1;
+        // 先写入排队态；仅当成功挂上分项后才固化 lastRunAt / cycle（见下方二次 UPDATE）
+        $payloadForQueue = $payload;
+        $payloadForQueue['recurringCycle'] = $nextCycle;
+        $payloadForQueue['recurringLastRunAt'] = $now;
 
         $n = DB::query(
             "UPDATE tasks
@@ -130,25 +190,99 @@ class WarmRecurringService
                  payload=?,
                  updated_at=CURRENT_TIMESTAMP
              WHERE id=? AND status IN ('completed','failed')",
-            [json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $taskId]
+            [json_encode($payloadForQueue, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $taskId]
         )->rowCount();
         if ($n < 1) {
             throw new \RuntimeException('任务状态已变化，无法重置');
         }
 
+        $attached = AccountWorkBatchService::attachFromTask($taskId);
+        $itemCount = (int)($attached['items'] ?? 0);
+        if ($itemCount < 1) {
+            $reason = (int)($attached['deferred_higher'] ?? 0) > 0
+                ? '账号存在更高优先级待办，养号暂缓入列'
+                : '无可挂载账号或分项已存在';
+            return [
+                'batches' => 0,
+                'items' => 0,
+                'deferred_higher' => (int)($attached['deferred_higher'] ?? 0),
+                'days' => $days,
+                'cycle' => (int)($payload['recurringCycle'] ?? 0),
+                'revert_reason' => $reason,
+            ];
+        }
+
+        DB::query(
+            'UPDATE tasks SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [json_encode($payloadForQueue, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $taskId]
+        );
         DB::query(
             'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
-            [$taskId, 'info', "常态化养号：第 {$payload['recurringCycle']} 轮入队（间隔 {$days} 天）"]
+            [$taskId, 'info', "常态化养号：第 {$nextCycle} 轮入队（间隔 {$days} 天，挂载 {$itemCount} 个分项）"]
         );
-
-        // attachFromTask：有进行中总任务则挂入，否则新建
-        $attached = AccountWorkBatchService::attachFromTask($taskId);
 
         return [
             'batches' => (int)($attached['batches'] ?? 0),
-            'items' => (int)($attached['items'] ?? 0),
+            'items' => $itemCount,
+            'deferred_higher' => (int)($attached['deferred_higher'] ?? 0),
             'days' => $days,
-            'cycle' => (int)$payload['recurringCycle'],
+            'cycle' => $nextCycle,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $task 重置前的行
+     * @param array<string,mixed> $payload 重置前的 payload
+     */
+    private static function revertFailedReset(array $task, array $payload, string $reason): void
+    {
+        $taskId = (int)$task['id'];
+        $prevStatus = in_array(($task['status'] ?? ''), ['completed', 'failed'], true)
+            ? (string)$task['status']
+            : 'completed';
+        DB::query(
+            "UPDATE tasks
+             SET status=?,
+                 finished_at=COALESCE(?, CURRENT_TIMESTAMP),
+                 payload=?,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE id=? AND status='queued'",
+            [
+                $prevStatus,
+                $task['finished_at'] ?? null,
+                json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $taskId,
+            ]
+        );
+        DB::query(
+            'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
+            [$taskId, 'info', '常态化入队暂缓：' . mb_substr($reason, 0, 200)]
+        );
+    }
+
+    /** 已 queued 但暂未挂上分项的养号（曾因更高优先级 defer）→ 再试挂载 */
+    private static function retryAttachDeferredQueuedWarms(int $limit): void
+    {
+        $rows = DB::select(
+            "SELECT id FROM tasks
+             WHERE type='warm' AND status='queued'
+               AND NOT EXISTS (
+                 SELECT 1 FROM account_work_items i
+                 WHERE i.task_ref_id=tasks.id AND i.status IN ('pending','running')
+               )
+             ORDER BY id ASC
+             LIMIT {$limit}"
+        ) ?: [];
+        foreach ($rows as $row) {
+            $tid = (int)($row['id'] ?? 0);
+            if ($tid < 1) {
+                continue;
+            }
+            try {
+                AccountWorkBatchService::attachFromTask($tid, true);
+            } catch (\Throwable $e) {
+                // ignore single failure
+            }
+        }
     }
 }

@@ -847,6 +847,78 @@ class AccountWorkBatchService
         return in_array($type, self::BROWSER_TYPES, true);
     }
 
+    /**
+     * 账号常规总任务中，是否已有「权重更高」（priority 更小）且未完成的分项。
+     * 用于常态化养号：有发布/改资料等更高优先级待办时，不抢先入队/推送。
+     */
+    public static function accountHasHigherPriorityPending(int $accountId, int $thanPriority): bool
+    {
+        self::ensureSchema();
+        if ($accountId < 1) {
+            return false;
+        }
+        $row = DB::selectOne(
+            "SELECT i.id FROM account_work_items i
+             INNER JOIN account_work_batches b ON b.id = i.batch_id
+             WHERE i.account_id=?
+               AND i.status IN ('pending','running')
+               AND i.priority < ?
+               AND b.deleted_at IS NULL
+               AND b.status IN ('pending','running','paused')
+               AND COALESCE(b.batch_scope,'general') <> 'ai_lead'
+             LIMIT 1",
+            [$accountId, $thanPriority]
+        );
+        return !empty($row);
+    }
+
+    /**
+     * 账号是否已有指定类型、尚未执行完的分项（可限定 task_ref）。
+     * 防止常态化养号对同一任务反复挂 pending。
+     */
+    public static function accountHasPendingTaskType(int $accountId, string $taskType, int $taskRefId = 0): bool
+    {
+        self::ensureSchema();
+        if ($accountId < 1 || $taskType === '') {
+            return false;
+        }
+        $params = [$accountId, $taskType];
+        $refSql = '';
+        if ($taskRefId > 0) {
+            $refSql = ' AND i.task_ref_id=?';
+            $params[] = $taskRefId;
+        }
+        $row = DB::selectOne(
+            "SELECT i.id FROM account_work_items i
+             INNER JOIN account_work_batches b ON b.id = i.batch_id
+             WHERE i.account_id=? AND i.task_type=?
+               AND i.status IN ('pending','running')
+               {$refSql}
+               AND b.deleted_at IS NULL
+               AND b.status IN ('pending','running','paused')
+             LIMIT 1",
+            $params
+        );
+        return !empty($row);
+    }
+
+    /**
+     * 父任务是否仍有未执行完的分项（任意账号）。
+     */
+    public static function taskHasOpenWorkItems(int $taskRefId): bool
+    {
+        if ($taskRefId < 1) {
+            return false;
+        }
+        self::ensureSchema();
+        $row = DB::selectOne(
+            "SELECT COUNT(*) AS c FROM account_work_items
+             WHERE task_ref_id=? AND status IN ('pending','running')",
+            [$taskRefId]
+        );
+        return (int)($row['c'] ?? 0) > 0;
+    }
+
     /** 任务是否已到可执行时间（scheduled_at 为空或已到点；按库当前时间，与 PHP Asia/Shanghai 对齐） */
     public static function isTaskDue(?array $task): bool
     {
@@ -942,9 +1014,21 @@ class AccountWorkBatchService
         $ownerId = (int)($task['owner_id'] ?? 0);
         $batches = 0;
         $items = 0;
+        $deferredHigher = 0;
+        $typePriority = self::priorityFor($type);
         foreach ($slots as $slot) {
             $accountId = (int)$slot['account_id'];
             if ($accountId < 1) {
+                continue;
+            }
+            // 养号：同账号已有未执行的本任务分项 → 不重复挂
+            if ($type === 'warm' && self::accountHasPendingTaskType($accountId, 'warm', $taskId)) {
+                continue;
+            }
+            // 养号：同账号总任务里已有更高权重分项（改资料/发布等）→ 先不挂，等它们跑完再由 attachDue/cron 挂入排队
+            // 这样不会单独拉起「纯养号」会话去挤占；高优先级任务之后插入时，claim-item 仍按 priority 取下一条
+            if ($type === 'warm' && self::accountHasHigherPriorityPending($accountId, $typePriority)) {
+                $deferredHigher++;
                 continue;
             }
             $slotOwner = $ownerId;
@@ -967,7 +1051,7 @@ class AccountWorkBatchService
                     $slotOwner,
                     $type,
                     $taskId,
-                    self::priorityFor($type),
+                    $typePriority,
                     $seq,
                     json_encode($slot['payload'], JSON_UNESCAPED_UNICODE),
                 ]
@@ -1013,8 +1097,17 @@ class AccountWorkBatchService
                 'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
                 [$taskId, 'info', "已挂载账号会话总任务：{$items} 个分项"]
             );
+        } elseif ($deferredHigher > 0 && $type === 'warm') {
+            DB::query(
+                'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
+                [$taskId, 'info', "养号暂缓挂载：{$deferredHigher} 个账号存在更高优先级待办，将按权重排队稍后入列"]
+            );
         }
-        return ['batches' => $batches, 'items' => $items];
+        return [
+            'batches' => $batches,
+            'items' => $items,
+            'deferred_higher' => $deferredHigher,
+        ];
     }
 
     /**
@@ -1648,6 +1741,8 @@ class AccountWorkBatchService
 
     /**
      * 领取总任务内下一条 pending 分任务（running 期间新挂入的也会被取到）。
+     * 严格按权重排队：priority ASC（越小越先），再 seq、id。
+     * 因此会话中途插入「发布」等更高优先级分项时，会在下一条领取时插到养号前面，而不是另起进程互挤。
      * @return array<string,mixed>|null
      */
     public static function claimNextItem(int $batchId, string $workerId): ?array
@@ -1661,6 +1756,7 @@ class AccountWorkBatchService
             return null;
         }
 
+        // 每次只取当前待定列表里权重最高的一条（含中途新挂入）
         $item = DB::selectOne(
             "SELECT i.* FROM account_work_items i
              LEFT JOIN tasks t ON t.id=i.task_ref_id
