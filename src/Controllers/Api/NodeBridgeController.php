@@ -1422,19 +1422,20 @@ class NodeBridgeController extends Controller
         if ($err = $this->assertMaterialOwns($row)) {
             return $err;
         }
+        // 线下素材：路径在发布机本机，PHP 可能在远程读不到文件，仍原样返回路径供 Node 校验
         $path = (string)($row['file_path'] ?? $row['path'] ?? '');
-        $exists = $path !== '' && is_file($path);
+        $existsOnPhp = $path !== '' && is_file($path);
         return $this->success([
             'id' => (int)$row['id'],
             'name' => $row['name'] ?? '',
-            'file_path' => $exists ? $path : '',
-            'filePath' => $exists ? $path : '',
+            'file_path' => $path,
+            'filePath' => $path,
             'file_name' => $row['file_name'] ?? '',
             'fileName' => $row['file_name'] ?? '',
             'mime_type' => $row['mime_type'] ?? 'video/mp4',
             'mimeType' => $row['mime_type'] ?? 'video/mp4',
             'size_bytes' => (int)($row['size_bytes'] ?? 0),
-            'status' => $row['status'] ?? ($exists ? 'ready' : 'missing'),
+            'status' => $row['status'] ?? ($existsOnPhp ? 'ready' : ($path !== '' ? 'ready' : 'missing')),
             'share_title' => (string)($row['share_title'] ?? ''),
             'shareTitle' => (string)($row['share_title'] ?? ''),
             'share_caption' => (string)($row['share_caption'] ?? ''),
@@ -1443,8 +1444,9 @@ class NodeBridgeController extends Controller
             'platformVideoId' => (string)($row['platform_video_id'] ?? ''),
             'cover_base64' => (string)($row['cover_base64'] ?? ''),
             'coverBase64' => (string)($row['cover_base64'] ?? ''),
-            'downloadUrl' => '/api/materials/' . (int)$id . '/stream',
-            'download_url' => '/api/materials/' . (int)$id . '/stream',
+            'localExists' => $existsOnPhp,
+            'downloadUrl' => '/api/local-materials/' . (int)$id . '/stream',
+            'download_url' => '/api/local-materials/' . (int)$id . '/stream',
         ]);
     }
 

@@ -877,7 +877,7 @@ class ChatController extends Controller
             'status' => 'queued',
             'accountId' => (int)$id,
             'maxPerRun' => $maxPerRun,
-        ], '已创建粉丝列表同步任务，请保持本机 Node/比特在线');
+        ], '已创建粉丝列表同步任务，请保持本机 Node/自研浏览器在线');
     }
 
     public function refreshFansStatus(Request $request, string $id): Response
@@ -965,7 +965,7 @@ class ChatController extends Controller
             'status' => 'queued',
             'accountId' => (int)$id,
             'maxPerRun' => $maxPerRun,
-        ], '已创建关注列表同步任务，请保持本机 Node/比特在线');
+        ], '已创建关注列表同步任务，请保持本机 Node/自研浏览器在线');
     }
 
     public function refreshFollowingStatus(Request $request, string $id): Response

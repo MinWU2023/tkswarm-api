@@ -31,7 +31,7 @@ class AccountBrowserEnvService
         return match (self::normalizeBackend($backend)) {
             'linux' => 'Linux Browser',
             'tkswarm' => '第一页自研浏览器',
-            default => '比特浏览器',
+            default => '自研浏览器',
         };
     }
 

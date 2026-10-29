@@ -530,7 +530,7 @@ class AiLeadController extends Controller
         if (is_array($schedule) && !empty($schedule['skipped'])) {
             $reason = (string)($schedule['reason'] ?? '');
             if ($reason === 'no_eligible_account') {
-                $msg = '已启用，但无可用账号（需绑定比特环境 + 代理，并指定查数据账号）';
+                $msg = '已启用，但无可用账号（需绑定自研浏览器环境 + 代理，并指定查数据账号）';
             } elseif ($reason === 'already_queued') {
                 $msg = '已启用，任务已在队列中（batch#' . (int)($schedule['batch_id'] ?? 0) . '），将尝试推送';
             } elseif ($reason === 'aborted') {
@@ -860,7 +860,7 @@ class AiLeadController extends Controller
             throw new \InvalidArgumentException(
                 $browserBackend === 'tkswarm'
                     ? '查数据账号未绑定第一页自研浏览器环境'
-                    : '查数据账号未绑定比特浏览器环境'
+                    : '查数据账号未绑定自研浏览器环境'
             );
         }
         if ((int)($acc['proxy_id'] ?? 0) < 1) {

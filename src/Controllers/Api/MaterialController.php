@@ -788,7 +788,7 @@ class MaterialController extends Controller
     }
 
     /**
-     * 删除素材对应的磁盘源文件（uploads/materials 库内文件，以及可解析到的 file_path）。
+     * 删除素材库内文件。线下用户目录路径只删库记录，不 unlink 源视频。
      * @return array{path:string,existed:bool,removed:bool}
      */
     private function unlinkMaterialFile(array $mat): array
@@ -798,7 +798,11 @@ class MaterialController extends Controller
         if ($path === '') {
             return $result;
         }
-        // realpath 在文件缺失时返回 false，先用原始路径判断
+        $dir = $this->materialDir();
+        $dirReal = @realpath($dir) ?: $dir;
+        $norm = static function (string $p): string {
+            return strtolower(str_replace('\\', '/', $p));
+        };
         $candidates = [$path];
         $real = @realpath($path);
         if (is_string($real) && $real !== '') {
@@ -811,11 +815,16 @@ class MaterialController extends Controller
             }
             $result['existed'] = true;
             $result['path'] = $target;
+            $targetNorm = $norm($target);
+            $dirNorm = rtrim($norm((string)$dirReal), '/') . '/';
+            // 仅删除素材库目录内文件；用户线下目录保留原片
+            if (!str_starts_with($targetNorm, $dirNorm)) {
+                break;
+            }
             if (@unlink($target)) {
                 $result['removed'] = true;
                 break;
             }
-            // Windows 偶发占用：再试一次
             clearstatcache(true, $target);
             if (is_file($target) && @unlink($target)) {
                 $result['removed'] = true;
@@ -937,8 +946,8 @@ class MaterialController extends Controller
         $row['platformPublishedAt'] = (string)($row['platform_published_at'] ?? '');
         $row['lastCommentPulledAt'] = (string)($row['last_comment_pulled_at'] ?? '');
         $id = (int)($row['id'] ?? 0);
-        // 可播放地址（相对 API 根路径）；本地 file_path 不能直接给浏览器当 src
-        $row['streamUrl'] = $id > 0 ? '/api/materials/' . $id . '/stream' : '';
+        // 线下素材：预览走本机 Node /api/local-materials/*/stream
+        $row['streamUrl'] = $id > 0 ? '/api/local-materials/' . $id . '/stream' : '';
         $row['playUrl'] = $row['streamUrl'];
         return $row;
     }
