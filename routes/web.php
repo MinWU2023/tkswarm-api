@@ -508,6 +508,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/accounts/{id}/notifications-sync', NodeBridgeController::class . '@notificationsSync');
     Router::post('/api/node/maintenance/restore-bans', NodeBridgeController::class . '@maintenanceRestoreBans');
     Router::post('/api/node/accounts/{id}/tiktok-videos/delete', NodeBridgeController::class . '@deleteTikTokVideo');
+    Router::post('/api/node/accounts/{id}/online-materials/sync', NodeBridgeController::class . '@onlineMaterialsSync');
     Router::post('/api/node/accounts/{id}/diagnosis-result', NodeBridgeController::class . '@diagnosisResult');
     Router::post('/api/node/accounts/qr-complete', NodeBridgeController::class . '@qrComplete');
     Router::post('/api/node/monitor/result', NodeBridgeController::class . '@monitorResult');

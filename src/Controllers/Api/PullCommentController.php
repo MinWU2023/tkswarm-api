@@ -169,7 +169,7 @@ class PullCommentController extends Controller
         $rows = DB::select(
             "SELECT m.id, m.name, m.file_name, m.cover_base64, m.publish_account_id, m.publish_account,
                     m.platform_video_id, m.platform_video_url, m.share_title, m.view_count, m.like_count,
-                    m.comment_count, m.platform_published_at, m.last_comment_pulled_at, m.created_at,
+                    m.comment_count, m.platform_published_at, m.last_comment_pulled_at, m.created_at, m.origin,
                     a.username AS publish_account_name, a.nickname AS publish_account_nickname
              FROM materials m
              LEFT JOIN accounts a ON a.id=m.publish_account_id
@@ -179,6 +179,7 @@ class PullCommentController extends Controller
             $params
         ) ?: [];
         $items = array_map(static function (array $r): array {
+            $origin = trim((string)($r['origin'] ?? 'local'));
             return [
                 'id' => (int)$r['id'],
                 'name' => (string)($r['name'] ?? ''),
@@ -196,6 +197,7 @@ class PullCommentController extends Controller
                 'platformPublishedAt' => (string)($r['platform_published_at'] ?? ''),
                 'lastCommentPulledAt' => (string)($r['last_comment_pulled_at'] ?? ''),
                 'createdAt' => (string)($r['created_at'] ?? ''),
+                'origin' => $origin !== '' ? $origin : 'local',
             ];
         }, $rows);
         return $this->success([

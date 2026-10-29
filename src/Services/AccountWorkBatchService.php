@@ -41,6 +41,7 @@ class AccountWorkBatchService
         'delete_video' => 20,   // 删除视频
         'comment_reply' => 30,  // 回复评论
         'pull_comments' => 32,  // 拉取视频数据
+        'pull_video_list' => 31, // 拉取视频列表（Studio→线上素材）
         'dm_reply' => 40,       // 回复私信
         'message' => 40,        // 私信类（与回复私信同序）
         'ai_lead' => 45,        // AI拓客
@@ -57,7 +58,7 @@ class AccountWorkBatchService
 
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
-        'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'warm',
+        'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'warm',
         'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile',
     ];
 
@@ -2965,6 +2966,7 @@ class AccountWorkBatchService
             'publish_account' => "ALTER TABLE materials ADD COLUMN publish_account VARCHAR(191) NOT NULL DEFAULT ''",
             'platform_video_id' => "ALTER TABLE materials ADD COLUMN platform_video_id VARCHAR(64) NOT NULL DEFAULT ''",
             'platform_video_url' => "ALTER TABLE materials ADD COLUMN platform_video_url VARCHAR(500) NOT NULL DEFAULT ''",
+            'origin' => "ALTER TABLE materials ADD COLUMN origin VARCHAR(32) NOT NULL DEFAULT 'local' COMMENT 'local=线下素材 online=Studio线上视频'",
         ];
         try {
             $cols = DB::select('SHOW COLUMNS FROM materials') ?: [];

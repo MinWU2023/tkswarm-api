@@ -1490,6 +1490,170 @@ class NodeBridgeController extends Controller
         ], '素材已标记为已发布');
     }
 
+    /**
+     * Studio 拉取视频列表入库：封面/标题/链接标记为 origin=online（素材库隐藏，拉取视频数据可选）。
+     * 已有同账号+平台视频 ID 的线下素材只更新字段，不改 origin。
+     */
+    public function onlineMaterialsSync(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        PullCommentService::ensureSchema();
+        $aid = (int)$id;
+        $account = DB::selectOne('SELECT id, owner_id, username, nickname FROM accounts WHERE id=?', [$aid]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        $items = $request->input('items', []);
+        if (!is_array($items)) {
+            $items = [];
+        }
+        $ownerId = (int)($account['owner_id'] ?? 0);
+        $accName = trim((string)($account['username'] ?? $account['nickname'] ?? ''));
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        foreach ($items as $row) {
+            if (!is_array($row)) {
+                $skipped += 1;
+                continue;
+            }
+            $videoId = trim((string)($row['videoId'] ?? $row['video_id'] ?? ''));
+            $videoUrl = trim((string)($row['videoUrl'] ?? $row['video_url'] ?? ''));
+            if ($videoId === '' && preg_match('#/video/(\d{8,})#', $videoUrl, $vm)) {
+                $videoId = $vm[1];
+            }
+            if ($videoUrl === '' && $videoId !== '') {
+                $videoUrl = $accName !== ''
+                    ? ('https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId)
+                    : ('https://www.tiktok.com/video/' . $videoId);
+            }
+            if ($videoId === '' && $videoUrl === '') {
+                $skipped += 1;
+                continue;
+            }
+            $title = mb_substr(trim((string)($row['title'] ?? $row['shareTitle'] ?? $row['share_title'] ?? '')), 0, 500);
+            if ($title === '') {
+                $title = $videoId !== '' ? ('视频 ' . $videoId) : '线上视频';
+            }
+            $coverUrl = trim((string)($row['coverUrl'] ?? $row['cover_url'] ?? $row['thumbnailUrl'] ?? ''));
+            // cover_base64 字段可存 http(s) 封面 URL（列表/拉取数据展示用）
+            $coverStore = '';
+            if ($coverUrl !== '' && (str_starts_with($coverUrl, 'http://') || str_starts_with($coverUrl, 'https://') || str_starts_with($coverUrl, 'data:'))) {
+                $coverStore = mb_substr($coverUrl, 0, 2000);
+            }
+            $views = max(0, (int)($row['views'] ?? $row['viewCount'] ?? $row['view_count'] ?? 0));
+            $likes = max(0, (int)($row['likes'] ?? $row['likeCount'] ?? $row['like_count'] ?? 0));
+            $comments = max(0, (int)($row['comments'] ?? $row['commentCount'] ?? $row['comment_count'] ?? 0));
+            $postedAt = trim((string)($row['postedAt'] ?? $row['posted_at'] ?? $row['platformPublishedAt'] ?? ''));
+            $postedSql = null;
+            if ($postedAt !== '' && preg_match('/^\d{4}-\d{2}-\d{2}/', $postedAt)) {
+                $postedSql = substr($postedAt, 0, 19);
+            }
+
+            $exist = null;
+            if ($videoId !== '') {
+                $exist = DB::selectOne(
+                    'SELECT id, origin, cover_base64, share_title, name FROM materials
+                     WHERE publish_account_id=? AND platform_video_id=? LIMIT 1',
+                    [$aid, $videoId]
+                );
+            }
+            if (!$exist && $videoUrl !== '') {
+                $exist = DB::selectOne(
+                    'SELECT id, origin, cover_base64, share_title, name FROM materials
+                     WHERE publish_account_id=? AND platform_video_url=? LIMIT 1',
+                    [$aid, $videoUrl]
+                );
+            }
+
+            if ($exist) {
+                $mid = (int)$exist['id'];
+                $sets = [
+                    "publish_status='published'",
+                    'publish_account_id=?',
+                    'publish_account=?',
+                    'platform_video_id=IF(?=\'\', platform_video_id, ?)',
+                    'platform_video_url=IF(?=\'\', platform_video_url, ?)',
+                    'share_title=IF(?=\'\', share_title, ?)',
+                    'view_count=IF(?=0, view_count, ?)',
+                    'like_count=IF(?=0, like_count, ?)',
+                    'comment_count=IF(?=0, comment_count, ?)',
+                    'updated_at=CURRENT_TIMESTAMP',
+                ];
+                $bind = [
+                    $aid,
+                    mb_substr($accName, 0, 191),
+                    $videoId, $videoId,
+                    mb_substr($videoUrl, 0, 500), mb_substr($videoUrl, 0, 500),
+                    $title, $title,
+                    $views, $views,
+                    $likes, $likes,
+                    $comments, $comments,
+                ];
+                $oldCover = trim((string)($exist['cover_base64'] ?? ''));
+                if ($coverStore !== '' && ($oldCover === '' || str_starts_with($oldCover, 'http'))) {
+                    $sets[] = 'cover_base64=?';
+                    $bind[] = $coverStore;
+                }
+                if ($postedSql !== null) {
+                    $sets[] = 'platform_published_at=COALESCE(platform_published_at, ?)';
+                    $bind[] = $postedSql;
+                }
+                $bind[] = $mid;
+                DB::query('UPDATE materials SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
+                $updated += 1;
+                continue;
+            }
+
+            // 新建线上素材：无本机文件，素材库默认隐藏
+            $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.mp4';
+            DB::query(
+                "INSERT INTO materials(
+                    name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
+                    publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
+                    sha256, cover_base64, share_title, share_caption, owner_id, origin,
+                    view_count, like_count, comment_count, platform_published_at
+                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    $title,
+                    '',
+                    $fileName,
+                    'mp4',
+                    'video/mp4',
+                    0,
+                    'Studio 线上视频',
+                    'online-studio',
+                    'ready',
+                    'published',
+                    $aid,
+                    mb_substr($accName, 0, 191),
+                    mb_substr($videoId, 0, 64),
+                    mb_substr($videoUrl, 0, 500),
+                    '',
+                    $coverStore !== '' ? $coverStore : null,
+                    $title,
+                    '',
+                    $ownerId > 0 ? $ownerId : null,
+                    'online',
+                    $views,
+                    $likes,
+                    $comments,
+                    $postedSql,
+                ]
+            );
+            $created += 1;
+        }
+
+        return $this->success([
+            'accountId' => $aid,
+            'received' => count($items),
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+        ], '线上视频已同步');
+    }
+
     public function deleteTikTokVideo(Request $request, string $id): Response
     {
         DataScope::ensureColumns();

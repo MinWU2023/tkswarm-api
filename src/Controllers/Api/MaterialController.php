@@ -53,6 +53,11 @@ class MaterialController extends Controller
                 array_push($params, ...$ids);
             }
         }
+        // 素材库默认不展示 Studio「线上」视频（origin=online）；拉取视频数据另走 published-materials
+        $includeOnline = filter_var($request->input('includeOnline', $request->input('include_online', false)), FILTER_VALIDATE_BOOLEAN);
+        if (!$includeOnline) {
+            $filters[] = "(m.origin IS NULL OR m.origin='' OR m.origin='local')";
+        }
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         $page = (int)$request->input('page', 0);
         $pageSize = (int)$request->input('pageSize', $request->input('page_size', 12));
@@ -110,7 +115,7 @@ class MaterialController extends Controller
                 m.description, m.tags, m.status, m.publish_status, m.publish_account_id, m.publish_account,
                 m.sha256, m.share_title, m.share_caption, m.owner_id, m.created_at, m.updated_at,
                 m.platform_video_id, m.platform_video_url, m.view_count, m.like_count, m.comment_count,
-                m.platform_published_at, m.last_comment_pulled_at,
+                m.platform_published_at, m.last_comment_pulled_at, m.origin,
                 {$coverCol},
                 u.username AS owner_name, a.username AS publish_account_name";
     }
@@ -966,6 +971,8 @@ class MaterialController extends Controller
         $row['hasCover'] = $row['coverBase64'] !== '' || (int)($row['has_cover'] ?? 0) === 1;
         $row['shareTitle'] = (string)($row['share_title'] ?? '');
         $row['shareCaption'] = (string)($row['share_caption'] ?? '');
+        $origin = trim((string)($row['origin'] ?? 'local'));
+        $row['origin'] = $origin !== '' ? $origin : 'local';
         $row['viewCount'] = (int)($row['view_count'] ?? 0);
         $row['likeCount'] = (int)($row['like_count'] ?? 0);
         $row['commentCount'] = (int)($row['comment_count'] ?? 0);
@@ -994,6 +1001,14 @@ class MaterialController extends Controller
         $raw = trim((string)($row['cover_base64'] ?? ''));
         if ($raw === '') {
             return $this->error('无封面', 404);
+        }
+        // 线上视频封面常存 http(s) URL
+        if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
+            $cors = \App\Middlewares\CorsMiddleware::headers($request->getHeader('Origin'));
+            return Response::make('', 302, array_merge($cors, [
+                'Location' => $raw,
+                'Cache-Control' => 'private, max-age=600',
+            ]));
         }
         $mime = 'image/jpeg';
         $bin = '';
@@ -1563,6 +1578,7 @@ class MaterialController extends Controller
             'share_title' => "ALTER TABLE materials ADD COLUMN share_title VARCHAR(500) NOT NULL DEFAULT ''",
             'share_caption' => 'ALTER TABLE materials ADD COLUMN share_caption TEXT NULL',
             'owner_id' => 'ALTER TABLE materials ADD COLUMN owner_id INT NULL',
+            'origin' => "ALTER TABLE materials ADD COLUMN origin VARCHAR(32) NOT NULL DEFAULT 'local' COMMENT 'local=线下素材 online=Studio线上视频'",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {

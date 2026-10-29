@@ -83,6 +83,7 @@ class PullCommentService
             'comment_count' => 'ALTER TABLE materials ADD COLUMN comment_count INT NOT NULL DEFAULT 0',
             'platform_published_at' => 'ALTER TABLE materials ADD COLUMN platform_published_at DATETIME NULL',
             'last_comment_pulled_at' => 'ALTER TABLE materials ADD COLUMN last_comment_pulled_at DATETIME NULL',
+            'origin' => "ALTER TABLE materials ADD COLUMN origin VARCHAR(32) NOT NULL DEFAULT 'local' COMMENT 'local=线下素材 online=Studio线上视频'",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {
