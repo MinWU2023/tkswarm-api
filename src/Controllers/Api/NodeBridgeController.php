@@ -546,30 +546,108 @@ class NodeBridgeController extends Controller
             }
         }
 
-        // Content 页签逐条内容
+        // Content 页签逐条内容（含视频链接/封面，并尽量匹配系统素材 ID）
         if (is_array($content)) {
             DB::query('DELETE FROM tiktok_studio_content WHERE account_id=?', [$aid]);
             $rowNo = 0;
+            $matchedMaterials = 0;
             foreach ($content as $row) {
                 if (!is_array($row)) {
                     continue;
                 }
                 $rowNo += 1;
+                $title = mb_substr((string)($row['title'] ?? ''), 0, 512);
+                $videoId = trim((string)($row['videoId'] ?? $row['video_id'] ?? ''));
+                $videoUrl = trim((string)($row['videoUrl'] ?? $row['video_url'] ?? ''));
+                $coverUrl = trim((string)($row['coverUrl'] ?? $row['cover_url'] ?? ''));
+                if ($videoId === '' && preg_match('#/video/(\d{8,})#', $videoUrl, $vm)) {
+                    $videoId = $vm[1];
+                }
+                if ($videoUrl === '' && $videoId !== '') {
+                    $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
+                }
+                $materialId = (int)($row['materialId'] ?? $row['material_id'] ?? 0);
+                if ($materialId <= 0 && ($videoId !== '' || $videoUrl !== '')) {
+                    $mat = null;
+                    try {
+                        if ($videoId !== '') {
+                            $mat = DB::selectOne(
+                                'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_id=? LIMIT 1',
+                                [$aid, $videoId]
+                            );
+                            if (!$mat) {
+                                $mat = DB::selectOne(
+                                    'SELECT id FROM materials WHERE platform_video_id=? LIMIT 1',
+                                    [$videoId]
+                                );
+                            }
+                            if (!$mat) {
+                                $mat = DB::selectOne(
+                                    'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_url LIKE ? LIMIT 1',
+                                    [$aid, '%/video/' . $videoId . '%']
+                                );
+                            }
+                        }
+                        if (!$mat && $videoUrl !== '') {
+                            $mat = DB::selectOne(
+                                'SELECT id FROM materials WHERE publish_account_id=? AND platform_video_url=? LIMIT 1',
+                                [$aid, $videoUrl]
+                            );
+                        }
+                    } catch (\Throwable $e) {
+                        $mat = null;
+                    }
+                    $materialId = (int)($mat['id'] ?? 0);
+                }
+                if ($materialId > 0) {
+                    $matchedMaterials += 1;
+                }
                 DB::query(
                     'INSERT INTO tiktok_studio_content(
-                        account_id, row_no, title, views_num, likes_num, comments_num, shares_num, posted_at
-                     ) VALUES (?,?,?,?,?,?,?,?)',
+                        account_id, row_no, title, views_num, likes_num, comments_num, shares_num, posted_at,
+                        video_id, video_url, cover_url, material_id
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                     [
                         $aid,
                         $rowNo,
-                        mb_substr((string)($row['title'] ?? ''), 0, 512),
+                        $title,
                         (int)($row['views'] ?? 0),
                         (int)($row['likes'] ?? 0),
                         (int)($row['comments'] ?? 0),
                         (int)($row['shares'] ?? 0),
                         mb_substr((string)($row['postedAt'] ?? $row['posted_at'] ?? ''), 0, 64),
+                        mb_substr($videoId, 0, 191),
+                        mb_substr($videoUrl, 0, 1000),
+                        mb_substr($coverUrl, 0, 1000),
+                        $materialId,
                     ]
                 );
+                // 同步到 tiktok_videos，便于「最近同步视频」展示
+                if ($videoId !== '') {
+                    try {
+                        DB::query(
+                            "INSERT INTO tiktok_videos(account_id, video_id, video_url, description, thumbnail_url, last_synced_at)
+                             VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+                             ON DUPLICATE KEY UPDATE
+                                video_url=IF(VALUES(video_url)='', video_url, VALUES(video_url)),
+                                description=IF(VALUES(description)='', description, VALUES(description)),
+                                thumbnail_url=IF(VALUES(thumbnail_url)='', thumbnail_url, VALUES(thumbnail_url)),
+                                last_synced_at=CURRENT_TIMESTAMP",
+                            [
+                                $aid,
+                                mb_substr($videoId, 0, 191),
+                                mb_substr($videoUrl, 0, 1000),
+                                $title,
+                                mb_substr($coverUrl, 0, 1000),
+                            ]
+                        );
+                    } catch (\Throwable $e) {
+                        // 忽略视频表写入失败，不影响内容入库
+                    }
+                }
+            }
+            if ($matchedMaterials > 0 && is_array($meta)) {
+                $meta['matchedMaterials'] = $matchedMaterials;
             }
         }
 
@@ -2187,10 +2265,30 @@ class NodeBridgeController extends Controller
               comments_num BIGINT NOT NULL DEFAULT 0,
               shares_num BIGINT NOT NULL DEFAULT 0,
               posted_at VARCHAR(64) NOT NULL DEFAULT '',
+              video_id VARCHAR(191) NOT NULL DEFAULT '',
+              video_url TEXT NULL,
+              cover_url TEXT NULL,
+              material_id INT NOT NULL DEFAULT 0,
               captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               KEY idx_tt_studio_content_acc (account_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
+        // 旧表补列：视频链接 / 封面 / 素材 ID
+        try {
+            $contentCols = array_column(DB::select('SHOW COLUMNS FROM tiktok_studio_content') ?: [], 'Field');
+            $contentAlters = [
+                'video_id' => "ALTER TABLE tiktok_studio_content ADD COLUMN video_id VARCHAR(191) NOT NULL DEFAULT ''",
+                'video_url' => 'ALTER TABLE tiktok_studio_content ADD COLUMN video_url TEXT NULL',
+                'cover_url' => 'ALTER TABLE tiktok_studio_content ADD COLUMN cover_url TEXT NULL',
+                'material_id' => 'ALTER TABLE tiktok_studio_content ADD COLUMN material_id INT NOT NULL DEFAULT 0',
+            ];
+            foreach ($contentAlters as $col => $sql) {
+                if (!in_array($col, $contentCols, true)) {
+                    DB::query($sql);
+                }
+            }
+        } catch (\Throwable $e) {
+        }
         DB::query(
             "CREATE TABLE IF NOT EXISTS tiktok_studio_sync (
               account_id INT PRIMARY KEY,

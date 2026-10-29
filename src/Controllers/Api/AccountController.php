@@ -1923,11 +1923,20 @@ class AccountController extends Controller
         }
         try {
             $content = DB::select(
-                'SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at FROM tiktok_studio_content WHERE account_id=? ORDER BY row_no ASC',
+                'SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at,
+                        video_id, video_url, cover_url, material_id
+                 FROM tiktok_studio_content WHERE account_id=? ORDER BY row_no ASC',
                 [$aid]
             ) ?: [];
         } catch (\Throwable $e) {
-            $content = [];
+            try {
+                $content = DB::select(
+                    'SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at FROM tiktok_studio_content WHERE account_id=? ORDER BY row_no ASC',
+                    [$aid]
+                ) ?: [];
+            } catch (\Throwable $e2) {
+                $content = [];
+            }
         }
         try {
             $sync = DB::selectOne('SELECT page_url, tab_count, api_count, status, message, meta_json, captured_at FROM tiktok_studio_sync WHERE account_id=?', [$aid]);
@@ -3237,9 +3246,28 @@ class AccountController extends Controller
           comments_num BIGINT NOT NULL DEFAULT 0,
           shares_num BIGINT NOT NULL DEFAULT 0,
           posted_at VARCHAR(64) NOT NULL DEFAULT '',
+          video_id VARCHAR(191) NOT NULL DEFAULT '',
+          video_url TEXT NULL,
+          cover_url TEXT NULL,
+          material_id INT NOT NULL DEFAULT 0,
           captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
           KEY idx_tt_studio_content_acc (account_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        try {
+            $contentCols = array_column(DB::select('SHOW COLUMNS FROM tiktok_studio_content') ?: [], 'Field');
+            $contentAlters = [
+                'video_id' => "ALTER TABLE tiktok_studio_content ADD COLUMN video_id VARCHAR(191) NOT NULL DEFAULT ''",
+                'video_url' => 'ALTER TABLE tiktok_studio_content ADD COLUMN video_url TEXT NULL',
+                'cover_url' => 'ALTER TABLE tiktok_studio_content ADD COLUMN cover_url TEXT NULL',
+                'material_id' => 'ALTER TABLE tiktok_studio_content ADD COLUMN material_id INT NOT NULL DEFAULT 0',
+            ];
+            foreach ($contentAlters as $col => $sql) {
+                if (!in_array($col, $contentCols, true)) {
+                    DB::query($sql);
+                }
+            }
+        } catch (\Throwable $e) {
+        }
         // 每次拉取的现场信息（页面地址/页签数/接口数），排错用
         DB::query("CREATE TABLE IF NOT EXISTS tiktok_studio_sync (
           account_id INT PRIMARY KEY,
