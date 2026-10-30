@@ -499,7 +499,8 @@ class DataScope
     }
 
     /**
-     * 素材列表/拉取视频数据选片：本人上传 + 有效身份可见 owner + 发布在可见账号上。
+     * 素材列表/拉取视频数据选片：本人上传 + 有效身份可见 owner + 发布在「账号列表可见」的账号上。
+     * 注意：公海账号 owner_id 为空时，旧逻辑仅判断 ama.owner_id IN (...) 会漏掉已发布/线上视频。
      *
      * @return array{0:string,1:list<mixed>}
      */
@@ -517,12 +518,15 @@ class DataScope
             return [' AND 1=0', []];
         }
         $ph = implode(',', array_fill(0, count($visibleOwners), '?'));
-        return [
-            " AND ({$materialAlias}.owner_id = ? OR {$materialAlias}.owner_id IN ({$ph}) OR EXISTS (
+        // 与账号列表同一套范围（运营公海 / 专员公共池 / 企业客户等），避免 owner_id IS NULL 的账号上素材全不可见
+        [$accScopeSql, $accScopeParams] = self::accountListScopeSql('ama.owner_id');
+        $accExists = "EXISTS (
                 SELECT 1 FROM accounts ama
-                WHERE ama.id={$materialAlias}.publish_account_id AND ama.owner_id IN ({$ph})
-            ))",
-            array_merge([$loginOwner], $visibleOwners, $visibleOwners),
+                WHERE ama.id={$materialAlias}.publish_account_id" . $accScopeSql . '
+            )';
+        return [
+            " AND ({$materialAlias}.owner_id = ? OR {$materialAlias}.owner_id IN ({$ph}) OR {$accExists})",
+            array_merge([$loginOwner], $visibleOwners, $accScopeParams),
         ];
     }
 

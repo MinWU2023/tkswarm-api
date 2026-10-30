@@ -1509,10 +1509,19 @@ class NodeBridgeController extends Controller
             $items = [];
         }
         $ownerId = (int)($account['owner_id'] ?? 0);
+        if ($ownerId < 1) {
+            // 公海账号同步线上视频时，挂到当前 Node 登录用户，避免拉取视频数据列表被 DataScope 滤空
+            try {
+                $ownerId = DataScope::writeMaterialOwnerId();
+            } catch (\Throwable $e) {
+                $ownerId = 0;
+            }
+        }
         $accName = trim((string)($account['username'] ?? $account['nickname'] ?? ''));
         $created = 0;
         $updated = 0;
         $skipped = 0;
+        $errors = [];
         foreach ($items as $row) {
             if (!is_array($row)) {
                 $skipped += 1;
@@ -1612,17 +1621,19 @@ class NodeBridgeController extends Controller
                     continue;
                 }
 
-                // 新建线上素材：无本机文件，素材库默认隐藏
+                // 新建线上素材：无本机文件，素材库默认隐藏（显式写 path/type，避免旧库缺默认值）
                 $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.mp4';
                 DB::query(
                     "INSERT INTO materials(
-                        name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
+                        name, path, type, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
                         publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
                         sha256, cover_base64, share_title, share_caption, owner_id, origin,
                         view_count, like_count, comment_count, platform_published_at
-                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [
                         $name,
+                        '',
+                        'video',
                         '',
                         mb_substr($fileName, 0, 255),
                         'mp4',
@@ -1651,7 +1662,10 @@ class NodeBridgeController extends Controller
                 $created += 1;
             } catch (\Throwable $e) {
                 $skipped += 1;
-                // 单条失败不阻断整批
+                $errors[] = [
+                    'videoId' => $videoId,
+                    'error' => mb_substr($e->getMessage(), 0, 240),
+                ];
                 error_log('[onlineMaterialsSync] account=' . $aid . ' video=' . $videoId . ' ' . $e->getMessage());
             }
         }
@@ -1662,6 +1676,7 @@ class NodeBridgeController extends Controller
             'created' => $created,
             'updated' => $updated,
             'skipped' => $skipped,
+            'errors' => array_slice($errors, 0, 8),
         ], '线上视频已同步');
     }
 

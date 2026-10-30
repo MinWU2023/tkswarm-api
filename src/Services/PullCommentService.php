@@ -105,6 +105,26 @@ class PullCommentService
     {
         self::ensureSchema();
         AccountWorkBatchService::ensureMaterialsPublishColumns();
+        // 历史线上素材 owner_id 为空时，按发布账号归属回填；账号亦为空则挂当前登录用户
+        try {
+            $fallbackOwner = 0;
+            try {
+                $fallbackOwner = DataScope::writeMaterialOwnerId();
+            } catch (\Throwable $e) {
+                $fallbackOwner = 0;
+            }
+            if ($fallbackOwner > 0) {
+                DB::query(
+                    "UPDATE materials m
+                     LEFT JOIN accounts a ON a.id=m.publish_account_id
+                     SET m.owner_id = COALESCE(NULLIF(a.owner_id, 0), ?)
+                     WHERE m.origin='online' AND (m.owner_id IS NULL OR m.owner_id=0)",
+                    [$fallbackOwner]
+                );
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
         $limit = max(1, min(200, $limit));
         $params = [];
         $accSql = '';
@@ -114,6 +134,7 @@ class PullCommentService
         }
         [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
         $params = array_merge($params, $scopeParams);
+        // materials.platform_video_id 与 tiktok_videos.video_id 可能分属 unicode_ci / 0900_ai_ci，直接 = 会 1267
         $rows = DB::select(
             "SELECT v.account_id, v.video_id, v.video_url, v.description, v.thumbnail_url,
                     a.username, a.nickname, a.owner_id
@@ -122,7 +143,9 @@ class PullCommentService
              WHERE v.video_id<>''
                AND NOT EXISTS (
                  SELECT 1 FROM materials m
-                 WHERE m.publish_account_id=v.account_id AND m.platform_video_id=v.video_id
+                 WHERE m.publish_account_id=v.account_id
+                   AND m.platform_video_id COLLATE utf8mb4_unicode_ci
+                     = CONVERT(v.video_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
                )" . $accSql . $scopeSql . "
              ORDER BY v.id DESC
              LIMIT {$limit}",
@@ -155,17 +178,27 @@ class PullCommentService
             if ($thumb !== '' && (str_starts_with($thumb, 'http://') || str_starts_with($thumb, 'https://') || str_starts_with($thumb, 'data:'))) {
                 $coverStore = mb_substr($thumb, 0, 2000);
             }
+            // 公海账号 owner_id 为空时，挂到当前登录用户，否则 materialListSql 会把线上视频滤掉
             $ownerId = (int)($row['owner_id'] ?? 0);
+            if ($ownerId < 1) {
+                try {
+                    $ownerId = DataScope::writeMaterialOwnerId();
+                } catch (\Throwable $e) {
+                    $ownerId = 0;
+                }
+            }
             $fileName = 'online-' . $videoId . '.mp4';
             try {
                 DB::query(
                     "INSERT INTO materials(
-                        name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
+                        name, path, type, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
                         publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
                         sha256, cover_base64, share_title, share_caption, owner_id, origin
-                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [
                         $name,
+                        '',
+                        'video',
                         '',
                         mb_substr($fileName, 0, 255),
                         'mp4',
