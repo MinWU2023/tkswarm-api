@@ -275,56 +275,71 @@ class PermissionCatalog
     }
 
     /**
-     * 账号向导「修改资料」菜单：给已有养号/账号向导/拉取数据或账号编辑权限的角色自动补上 menu.452。
+     * 账号向导「拉取数据 / 修改资料」：菜单节点对全部角色开放（public）。
+     * 同时把 menu.451 / menu.452 权限 id 写入所有非 * 角色，避免旧勾选列表缺项。
      */
     private static function ensureAccountWizardMenuPerms(): void
     {
-        MenuPermissionService::syncOne([
-            'id' => 452,
-            'title' => '修改资料',
-            'view' => 'accountWizard',
-            'subview' => 'modify_profile',
-            'permission_code' => '',
-        ]);
+        foreach ([
+            ['id' => 451, 'title' => '拉取数据', 'view' => 'accountWizard', 'subview' => 'pull_stats'],
+            ['id' => 452, 'title' => '修改资料', 'view' => 'accountWizard', 'subview' => 'modify_profile'],
+        ] as $menu) {
+            MenuPermissionService::syncOne(array_merge($menu, ['permission_code' => 'public']));
+        }
+        try {
+            DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id IN (451,452)");
+        } catch (\Throwable $e) {
+        }
+
         $codeToId = [];
         foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
             $codeToId[(string)$row['code']] = (int)$row['id'];
         }
-        $targetId = (int)($codeToId['menu.452'] ?? 0);
-        if ($targetId < 1) {
-            return;
+        // 确保权限表里仍有对应节点（供角色管理展示）；菜单本身用 public 放行
+        foreach ([451 => '拉取数据', 452 => '修改资料'] as $menuId => $title) {
+            $code = MenuPermissionService::codeForMenuId((int)$menuId);
+            DB::query(
+                "INSERT INTO admin_permissions (module, code, name, sort_order)
+                 VALUES ('menu', ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE module='menu', name=VALUES(name), sort_order=VALUES(sort_order)",
+                [$code, mb_substr('菜单：' . $title . '（全角色）', 0, 100), 5000 + (int)$menuId]
+            );
         }
-        $donorCodes = ['menu.450', 'menu.451', 'menu.115', 'menu.400', 'account.create', 'account.update', 'account.view'];
-        $donorIds = [];
-        foreach ($donorCodes as $c) {
+        foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
+            $codeToId[(string)$row['code']] = (int)$row['id'];
+        }
+        $grantIds = [];
+        foreach (['menu.451', 'menu.452'] as $c) {
             if (!empty($codeToId[$c])) {
-                $donorIds[(int)$codeToId[$c]] = true;
+                $grantIds[] = (int)$codeToId[$c];
             }
         }
-        if (!$donorIds) {
+        if (!$grantIds) {
             return;
         }
-        $roles = DB::select('SELECT id, permissions FROM admin_roles WHERE status=1') ?: [];
+        $roles = DB::select('SELECT id, permissions FROM admin_roles') ?: [];
         foreach ($roles as $role) {
             $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
             if (!is_array($ids) || in_array('*', $ids, true)) {
                 continue;
             }
             $set = [];
-            $hasDonor = false;
             foreach ($ids as $raw) {
                 $id = (int)$raw;
                 if ($id > 0) {
                     $set[$id] = true;
-                    if (isset($donorIds[$id])) {
-                        $hasDonor = true;
-                    }
                 }
             }
-            if (!$hasDonor || isset($set[$targetId])) {
+            $changed = false;
+            foreach ($grantIds as $gid) {
+                if (!isset($set[$gid])) {
+                    $set[$gid] = true;
+                    $changed = true;
+                }
+            }
+            if (!$changed) {
                 continue;
             }
-            $set[$targetId] = true;
             DB::query(
                 'UPDATE admin_roles SET permissions=? WHERE id=?',
                 [json_encode(array_map('intval', array_keys($set)), JSON_UNESCAPED_UNICODE), (int)$role['id']]
