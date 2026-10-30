@@ -1532,10 +1532,11 @@ class NodeBridgeController extends Controller
             if ($videoId === '' && preg_match('#/video/(\d{8,})#', $videoUrl, $vm)) {
                 $videoId = $vm[1];
             }
-            if ($videoUrl === '' && $videoId !== '') {
-                $videoUrl = $accName !== ''
-                    ? ('https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId)
-                    : ('https://www.tiktok.com/video/' . $videoId);
+            if ($videoId !== '' && $accName !== '') {
+                // 一律存 @user/video/id；裸 /video/{id} 在拉评论直开时常跳到 /404?fromUrl=
+                $videoUrl = 'https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId;
+            } elseif ($videoUrl === '' && $videoId !== '') {
+                $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
             }
             if ($videoId === '' && $videoUrl === '') {
                 $skipped += 1;

@@ -162,10 +162,10 @@ class PullCommentService
             }
             $accName = trim((string)($row['username'] ?? $row['nickname'] ?? ''));
             $videoUrl = trim((string)($row['video_url'] ?? ''));
-            if ($videoUrl === '') {
-                $videoUrl = $accName !== ''
-                    ? ('https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId)
-                    : ('https://www.tiktok.com/video/' . $videoId);
+            if ($accName !== '') {
+                $videoUrl = 'https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId;
+            } elseif ($videoUrl === '') {
+                $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
             }
             $titleRaw = trim((string)($row['description'] ?? ''));
             if ($titleRaw === '') {

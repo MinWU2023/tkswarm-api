@@ -40,7 +40,7 @@ class AccountWorkBatchService
         'publish' => 10,        // 发布视频
         'delete_video' => 20,   // 删除视频
         'comment_reply' => 30,  // 回复评论
-        'pull_comments' => 32,  // 拉取视频数据
+        'pull_comments' => 32,  // 拉取视频详情
         'pull_video_list' => 31, // 拉取视频列表（Studio→线上素材）
         'dm_reply' => 40,       // 回复私信
         'message' => 40,        // 私信类（与回复私信同序）
@@ -3134,7 +3134,7 @@ class AccountWorkBatchService
             'warm' => '养号',
             'publish' => '发布视频',
             'comment_reply' => '回复评论',
-            'pull_comments' => '拉取视频数据',
+            'pull_comments' => '拉取视频详情',
             'pull_video_list' => '拉取视频列表',
             'auto_follow' => '自动增粉',
             'dm_reply' => '回复私信',

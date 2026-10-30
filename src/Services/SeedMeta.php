@@ -595,6 +595,25 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET parent_id=510, view='chat', subview='uids', title='UID好友', sort_order=2, visible=1 WHERE title='UID好友' OR (view='publish' AND subview='uids')");
         } catch (\Throwable $e) {
         }
+        // AI矩阵：一级 → 视频向导（二级）→ 发布/删除/回复/拉列表/拉详情（三级），映射现有 publish 页
+        try {
+            DB::query("UPDATE navigation_menus SET parent_id=NULL, title='AI矩阵', icon='video', path='', view='publish', subview='tasks', sort_order=5, visible=1 WHERE id=400");
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='视频向导', icon='film', path='', view='publish', subview='tasks', sort_order=1, visible=1 WHERE id=410");
+            // 三级叶子：对应实际页面 / 向导
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='发布视频', icon='send', path='', view='publish', subview='tasks', sort_order=1, visible=1 WHERE id=411");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='删除视频', icon='trash-2', path='', view='publish', subview='create_delete', sort_order=2, visible=1 WHERE id=430");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='回复评论', icon='message-circle', path='', view='publish', subview='create_comment_reply', sort_order=3, visible=1 WHERE id=441");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='拉取视频列表', icon='list', path='', view='publish', subview='pull_video_list', sort_order=4, visible=1, permission_code='public' WHERE id=444");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='拉取视频详情', icon='download', path='', view='publish', subview='pull_comments', sort_order=5, visible=1 WHERE id=442");
+            // 旧二级/重复入口隐藏（功能仍可从页面按钮进入）
+            DB::query("UPDATE navigation_menus SET visible=0 WHERE id IN (412,414,415,431,440,443,445)");
+            DB::query("UPDATE navigation_menus SET visible=0 WHERE view='publish' AND subview IN ('create_publish','create_ordered','create_independent','create_pull_video_list','create_pull_comments','delete_wizard','comment_reply_wizard') AND id NOT IN (411,430,441,442,444)");
+            // 素材 / 养号 / 任务汇总仍挂在 AI矩阵 下，排在视频向导之后
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='视频素材', icon='folder', view='publish', subview='materials', sort_order=2, visible=1 WHERE id=420");
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='自动养号', icon='activity', view='warm', subview='list', sort_order=3, visible=1 WHERE id=115");
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='任务汇总', icon='list', view='accountWork', subview='list', sort_order=4, visible=1 WHERE id=116");
+        } catch (\Throwable $e) {
+        }
         // 权限管理 / 系统管理：拆成两个一级菜单，并合理挂子级
         DB::query(
             "INSERT IGNORE INTO navigation_menus
