@@ -32,6 +32,7 @@ use App\Controllers\Api\AiPromptTemplateController;
 use App\Controllers\Api\AiCallLogController;
 use App\Controllers\Api\NodeBridgeController;
 use App\Controllers\Api\AccountWorkController;
+use App\Controllers\Api\HumanVerifyController;
 use App\Controllers\Api\PullCommentController;
 use App\Controllers\Api\AutoFollowController;
 use App\Controllers\Api\AiLeadController;
@@ -352,6 +353,11 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/account-work-batches/{id}/items/{itemId}/resume', AccountWorkController::class . '@resumeItem');
     Router::post('/api/account-work-batches/{id}/items/{itemId}/reset', AccountWorkController::class . '@resetItem');
 
+    // 人工验证通知（TikTok 滑块/人机 → 暂停 → UI 确认后恢复）
+    Router::get('/api/human-verify/pending', HumanVerifyController::class . '@list');
+    Router::get('/api/human-verify/count', HumanVerifyController::class . '@count');
+    Router::post('/api/human-verify/{id}/resolve', HumanVerifyController::class . '@resolve');
+
     Router::get('/api/pull-comment-tasks', PullCommentController::class . '@list');
     Router::post('/api/pull-comment-tasks', PullCommentController::class . '@create');
     Router::get('/api/pull-comment-tasks/published-materials', PullCommentController::class . '@publishedMaterials');
@@ -523,6 +529,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/node/proxies/{id}/bundle', NodeBridgeController::class . '@proxyBundle');
     Router::post('/api/node/proxies/{id}/probe-result', NodeBridgeController::class . '@proxyProbeResult');
     Router::post('/api/node/work-logs', NodeBridgeController::class . '@appendWorkLog');
+    Router::post('/api/node/human-verify/report', NodeBridgeController::class . '@humanVerifyReport');
     Router::post('/api/node/accounts/{id}/profile-change-log', NodeBridgeController::class . '@profileChangeLog');
     Router::post('/api/node/tasks/claim', NodeBridgeController::class . '@claimTask');
     Router::post('/api/node/tasks/{id}/account-result', NodeBridgeController::class . '@taskAccountResult');

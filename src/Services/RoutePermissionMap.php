@@ -269,6 +269,11 @@ class RoutePermissionMap
                 'read' => ['account.work.pause', 'account.work.delete', 'account.work.reset', 'account.view', 'account.create', 'publish.tasks'],
                 'write' => ['account.work.pause', 'account.work.delete', 'account.work.reset'],
             ],
+            // 人工验证：所有已登录角色可看/确认（与顶栏通知一致）
+            '/api/human-verify' => [
+                'read' => ['account.view', 'account.work.pause', 'publish.tasks', 'account.create'],
+                'write' => ['account.view', 'account.work.pause', 'publish.tasks', 'account.create'],
+            ],
             '/api/permissions' => ['read' => ['rbac.permissions.view', 'rbac.manage'], 'write' => ['rbac.permissions.create', 'rbac.permissions.update', 'rbac.manage'], 'delete' => ['rbac.permissions.delete', 'rbac.manage']],
             '/api/roles' => ['read' => ['rbac.roles.view', 'rbac.manage'], 'write' => ['rbac.roles.create', 'rbac.roles.update', 'rbac.manage'], 'delete' => ['rbac.roles.delete', 'rbac.manage']],
             '/api/admin-users' => ['read' => ['rbac.users.view', 'rbac.manage'], 'write' => ['rbac.users.create', 'rbac.users.update', 'rbac.manage'], 'delete' => ['rbac.users.delete', 'rbac.manage']],

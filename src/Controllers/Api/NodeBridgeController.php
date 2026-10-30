@@ -13,6 +13,7 @@ use App\Services\AiLeadExecutionService;
 use App\Services\AiLeadFilterService;
 use App\Services\CommentReplyService;
 use App\Services\DataScope;
+use App\Services\HumanVerifyService;
 use App\Services\PullCommentService;
 use App\Services\AutoFollowService;
 use App\Services\SecretStore;
@@ -2259,6 +2260,22 @@ class NodeBridgeController extends Controller
         }
         AccountWorkBatchService::appendLog($batchId, $itemId, $message, $level, $accountId, $taskId, $meta);
         return $this->success(['ok' => true]);
+    }
+
+    /** Node：检测到人机/滑块 → 入队通知并暂停分任务（不释放浏览器环境） */
+    public function humanVerifyReport(Request $request): Response
+    {
+        HumanVerifyService::ensureSchema();
+        $d = $request->json() ?: $request->all();
+        if (!is_array($d)) {
+            $d = [];
+        }
+        try {
+            $out = HumanVerifyService::reportFromNode($d);
+            return $this->success($out, '已挂起等待人工验证');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 409);
+        }
     }
 
     /** Node 写一条「修改资料」逐字段执行记录 */
