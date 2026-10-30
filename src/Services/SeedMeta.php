@@ -616,6 +616,7 @@ class SeedMeta
                 DB::query("ALTER TABLE navigation_menus ADD COLUMN permission_code VARCHAR(64) NULL DEFAULT NULL AFTER visible");
             } catch (\Throwable $e) {
             }
+            // 父级默认进「拉取数据」；叶子各自用独立 subview，避免与「修改资料」抢路由
             DB::query(
                 "INSERT INTO navigation_menus
                   (id, parent_id, title, icon, path, view, subview, sort_order, visible)
