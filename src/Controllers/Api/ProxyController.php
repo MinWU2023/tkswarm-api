@@ -1262,18 +1262,76 @@ class ProxyController extends Controller
         return compact('protocol', 'host', 'port', 'username', 'password');
     }
 
+    /**
+     * PHP 侧仅作兜底直连探测。正式检测请走 Node /browser/proxies/batch-test（经本机翻墙）。
+     * 若配置了 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY，则经该前置代理 CONNECT。
+     */
     private function tcpProbe(array $proxy): array
     {
+        $host = (string)$proxy['host'];
+        $port = (int)$proxy['port'];
         $start = microtime(true);
+        $viaSys = $this->systemProxyEndpoint();
+        if ($viaSys) {
+            $r = $this->tcpProbeViaHttpProxy($viaSys['host'], (int)$viaSys['port'], $host, $port, 8.0);
+            if ($r['available']) {
+                $r['latencyMs'] = (int)round((microtime(true) - $start) * 1000);
+                $r['detail'] = '端口可连接 · 经本机翻墙';
+                return $r;
+            }
+            // 前置失败再试直连，避免系统代理未开时全灭
+        }
         $errno = 0;
         $err = '';
-        $fp = @fsockopen((string)$proxy['host'], (int)$proxy['port'], $errno, $err, 3.0);
+        $fp = @fsockopen($host, $port, $errno, $err, 5.0);
         if (is_resource($fp)) {
             fclose($fp);
             $ms = (int)round((microtime(true) - $start) * 1000);
-            return ['available' => true, 'latencyMs' => $ms, 'egressIp' => '', 'detail' => '端口可连接'];
+            return ['available' => true, 'latencyMs' => $ms, 'egressIp' => '', 'detail' => '端口可连接（直连）'];
         }
         return ['available' => false, 'latencyMs' => null, 'egressIp' => '', 'detail' => $err !== '' ? $err : '连接失败'];
+    }
+
+    /** @return array{host:string,port:int}|null */
+    private function systemProxyEndpoint(): ?array
+    {
+        foreach (['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'https_proxy', 'http_proxy', 'all_proxy'] as $key) {
+            $raw = trim((string)(getenv($key) ?: ($_ENV[$key] ?? '')));
+            if ($raw === '') {
+                continue;
+            }
+            $raw = preg_replace('#^[a-z0-9]+://#i', '', $raw);
+            if (preg_match('#^([^:]+):(\d+)$#', $raw, $m)) {
+                return ['host' => $m[1], 'port' => (int)$m[2]];
+            }
+        }
+        return null;
+    }
+
+    private function tcpProbeViaHttpProxy(string $proxyHost, int $proxyPort, string $targetHost, int $targetPort, float $timeout): array
+    {
+        $errno = 0;
+        $err = '';
+        $fp = @fsockopen($proxyHost, $proxyPort, $errno, $err, $timeout);
+        if (!is_resource($fp)) {
+            return ['available' => false, 'latencyMs' => null, 'egressIp' => '', 'detail' => $err !== '' ? $err : '系统代理不可达'];
+        }
+        stream_set_timeout($fp, (int)ceil($timeout));
+        $req = "CONNECT {$targetHost}:{$targetPort} HTTP/1.1\r\nHost: {$targetHost}:{$targetPort}\r\nProxy-Connection: Keep-Alive\r\n\r\n";
+        fwrite($fp, $req);
+        $head = '';
+        while (!feof($fp) && strpos($head, "\r\n\r\n") === false) {
+            $chunk = fgets($fp, 1024);
+            if ($chunk === false) {
+                break;
+            }
+            $head .= $chunk;
+        }
+        fclose($fp);
+        if (preg_match('#^HTTP/1\.\d 200#i', $head)) {
+            return ['available' => true, 'latencyMs' => null, 'egressIp' => '', 'detail' => '端口可连接'];
+        }
+        return ['available' => false, 'latencyMs' => null, 'egressIp' => '', 'detail' => '系统代理 CONNECT 失败'];
     }
 
     private function body(Request $request): array
