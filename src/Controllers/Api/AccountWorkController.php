@@ -117,6 +117,102 @@ class AccountWorkController extends Controller
         ]);
     }
 
+    /**
+     * 按任务类型列出分任务（账号向导：拉取数据 / 修改资料）。
+     * GET ?taskType=pull_stats|modify_profile&status=&keyword=&page=&pageSize=
+     */
+    public function listItems(Request $request): Response
+    {
+        AccountWorkBatchService::ensureSchema();
+        DataScope::ensureColumns();
+        $taskType = trim((string)$request->get('taskType', $request->get('task_type', '')));
+        $allowed = ['pull_stats', 'modify_profile', 'profile', 'pull_video_list'];
+        if ($taskType === '' || !in_array($taskType, $allowed, true)) {
+            return $this->error('请指定有效的 taskType', 422);
+        }
+        // 历史别名：profile ≈ pull_stats
+        $types = $taskType === 'pull_stats' ? ['pull_stats', 'profile'] : [$taskType];
+        $status = trim((string)$request->get('status', ''));
+        $keyword = trim((string)$request->get('keyword', $request->get('q', '')));
+        $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
+        $offset = ($page - 1) * $pageSize;
+
+        $where = ['1=1'];
+        $params = [];
+        $typePlaceholders = implode(',', array_fill(0, count($types), '?'));
+        $where[] = "i.task_type IN ({$typePlaceholders})";
+        $params = array_merge($params, $types);
+        [$ownSql, $ownParams] = DataScope::workBatchListSql('b');
+        $params = array_merge($params, $ownParams);
+        if ($accountId > 0) {
+            $where[] = 'i.account_id=?';
+            $params[] = $accountId;
+        }
+        if ($status !== '') {
+            $where[] = 'i.status=?';
+            $params[] = $status;
+        }
+        if ($keyword !== '') {
+            $where[] = '(a.username LIKE ? OR CAST(i.account_id AS CHAR)=? OR CAST(i.id AS CHAR)=? OR CAST(i.batch_id AS CHAR)=?)';
+            $like = '%' . $keyword . '%';
+            $params[] = $like;
+            $params[] = $keyword;
+            $params[] = $keyword;
+            $params[] = $keyword;
+        }
+        $where[] = 'b.deleted_at IS NULL';
+        $where[] = "b.status<>'deleted'";
+        $sqlWhere = implode(' AND ', $where) . $ownSql;
+
+        $total = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c
+             FROM account_work_items i
+             INNER JOIN account_work_batches b ON b.id=i.batch_id
+             LEFT JOIN accounts a ON a.id=i.account_id
+             WHERE {$sqlWhere}",
+            $params
+        )['c'] ?? 0);
+
+        $rows = DB::select(
+            "SELECT i.*, a.username, a.nickname AS account_nickname,
+                    b.status AS batch_status, b.account_id AS batch_account_id
+             FROM account_work_items i
+             INNER JOIN account_work_batches b ON b.id=i.batch_id
+             LEFT JOIN accounts a ON a.id=i.account_id
+             WHERE {$sqlWhere}
+             ORDER BY i.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+
+        foreach ($rows as &$row) {
+            $row['payload'] = json_decode((string)($row['payload_json'] ?? '{}'), true) ?: [];
+            $row['result'] = json_decode((string)($row['result_json'] ?? '{}'), true) ?: [];
+            unset($row['payload_json'], $row['result_json']);
+            $row['taskType'] = (string)($row['task_type'] ?? '');
+            $row['accountId'] = (int)($row['account_id'] ?? 0);
+            $row['batchId'] = (int)($row['batch_id'] ?? 0);
+            $row['accountUsername'] = (string)($row['username'] ?? '');
+            $row['accountNickname'] = (string)($row['account_nickname'] ?? '');
+            $row['createdAt'] = (string)($row['created_at'] ?? '');
+            $row['updatedAt'] = (string)($row['updated_at'] ?? '');
+            $row['errorMessage'] = (string)($row['error_message'] ?? '');
+        }
+        unset($row);
+
+        return $this->success([
+            'list' => $rows,
+            'items' => $rows,
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => (int)ceil($total / max(1, $pageSize)),
+            'taskType' => $taskType,
+        ]);
+    }
+
     public function batchItems(Request $request, string $id): Response
     {
         AccountWorkBatchService::ensureSchema();

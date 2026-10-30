@@ -379,7 +379,7 @@ class PermissionCatalog
              WHERE id=76 OR code='account.msg_template'"
         );
         DB::query(
-            "UPDATE admin_permissions SET code='account.work.pause', name='暂停任务汇总'
+            "UPDATE admin_permissions SET code='account.work.pause', name='暂停矩阵任务'
              WHERE id=86 OR code='account.work'"
         );
 
@@ -388,8 +388,8 @@ class PermissionCatalog
             [90, 'proxy', 'proxy.import', '批量导入代理', 11],
             [91, 'publish', 'warm.tasks', '养号任务写入', 21],
             [92, 'publish', 'publish.materials', '素材管理写入', 22],
-            [94, 'account', 'account.work.delete', '删除任务汇总', 86],
-            [95, 'account', 'account.work.reset', '重置任务汇总', 87],
+            [94, 'account', 'account.work.delete', '删除矩阵任务', 86],
+            [95, 'account', 'account.work.reset', '重置矩阵任务', 87],
             [97, 'account', 'account.msg_template.dm', '管理私信模板', 77],
         ];
         foreach (array_merge($legacy, self::fineNodes()) as [$id, $mod, $code, $name, $sort]) {
@@ -521,7 +521,7 @@ class PermissionCatalog
             ['account.delete', '账号·删除'],
             ['account.import', '账号·导入'],
             ['account.export', '账号·导出'],
-            ['account.work', '任务汇总'],
+            ['account.work', '矩阵任务'],
             ['account.msg_template', '消息模板'],
             ['proxy.view', '代理·列表'],
             ['proxy.create', '代理·添加'],

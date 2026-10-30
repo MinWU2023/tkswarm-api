@@ -169,7 +169,7 @@ class RoutePermissionMap
             ['method' => 'PUT', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.update', 'rbac.company_data', 'rbac.manage']],
             ['method' => 'DELETE', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.delete', 'rbac.company_data', 'rbac.manage']],
 
-            // —— 任务汇总 ——
+            // —— 矩阵任务 ——
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/clear#', 'codes' => ['account.work.delete']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/pause#', 'codes' => ['account.work.pause']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/resume#', 'codes' => ['account.work.pause']],
@@ -258,6 +258,10 @@ class RoutePermissionMap
             ],
             '/api/account-work-batches' => [
                 'read' => ['account.work.pause', 'account.work.delete', 'account.work.reset', 'account.view'],
+                'write' => ['account.work.pause', 'account.work.delete', 'account.work.reset'],
+            ],
+            '/api/account-work-items' => [
+                'read' => ['account.work.pause', 'account.work.delete', 'account.work.reset', 'account.view', 'account.create', 'publish.tasks'],
                 'write' => ['account.work.pause', 'account.work.delete', 'account.work.reset'],
             ],
             '/api/permissions' => ['read' => ['rbac.permissions.view', 'rbac.manage'], 'write' => ['rbac.permissions.create', 'rbac.permissions.update', 'rbac.manage'], 'delete' => ['rbac.permissions.delete', 'rbac.manage']],

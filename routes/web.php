@@ -333,6 +333,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::put('/api/tasks/{id}/items/{itemId}', TaskController::class . '@updateItem');
 
     Router::get('/api/account-work-batches', AccountWorkController::class . '@listBatches');
+    Router::get('/api/account-work-items', AccountWorkController::class . '@listItems');
     Router::get('/api/account-work-batches/{id}/items', AccountWorkController::class . '@batchItems');
     Router::get('/api/account-work-batches/{id}/logs', AccountWorkController::class . '@batchLogs');
     Router::get('/api/account-work-batches/{id}/items/{itemId}/logs', AccountWorkController::class . '@itemLogs');

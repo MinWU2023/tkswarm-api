@@ -96,6 +96,7 @@ class SeedMeta
             ['warm', ['warm.view', 'warm.tasks', 'warm.create', 'account.create', 'publish.tasks', 'matrix.publish', 'account.view']],
             ['msgTemplates', ['account.msg_template.comment', 'account.msg_template.dm', 'account.msg_template', 'account.create', 'publish.tasks', 'account.view', 'chat.manage']],
             ['accountWork', ['account.work.pause', 'account.work.delete', 'account.work.reset', 'account.work', 'account.view', 'account.create', 'publish.tasks']],
+            ['accountWizard', ['account.view', 'account.create', 'account.work', 'account.work.pause', 'publish.tasks', 'warm.view', 'warm.tasks']],
             ['aiLeads', ['ai.leads', 'ai.leads.view', 'account.create', 'publish.tasks', 'account.view']],
             ['aiLeadClues', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['aiLeadClueData', ['ai.leads', 'ai.leads.view', 'account.view']],
@@ -185,7 +186,7 @@ class SeedMeta
             ['account.import', '账号·导入'],
             ['account.delete', '账号·删除'],
             ['account.export', '账号·导出'],
-            ['account.work', '任务汇总'],
+            ['account.work', '矩阵任务'],
             ['account.msg_template', '消息模板'],
             ['proxy.view', '代理·列表'],
             ['proxy.create', '代理·添加'],
@@ -330,7 +331,8 @@ class SeedMeta
             ['groups', '分组管理', '维护账号分组与公司子组的增删改查'],
             ['warm', '自动养号', '按任务创建养号配置，批量执行刷互动养号'],
             ['msgTemplates', '消息模板', '评论 / 回复评论 / 私信 / 回复私信：固定文案与 AI 提示词'],
-            ['accountWork', '任务汇总', '按账号查看会话总任务与子任务，支持展开与暂停'],
+            ['accountWork', '矩阵任务', '按账号查看会话总任务与子任务，支持展开与暂停'],
+            ['accountWizard', '账号向导', '养号、拉取账号数据与修改资料任务'],
             ['aiLeads', '拓客任务', '配置拓客规则、关联账号与私信明细'],
             ['aiLeadClues', '拓客线索', '查看拓客跑出的意向用户与评论，支持换号与导出'],
             ['aiLeadClueData', '拓客结果', '查看共享给当前账号的评论线索，含行业筛选'],
@@ -420,7 +422,7 @@ class SeedMeta
               (id, parent_id, title, icon, path, view, subview, sort_order, visible)
              VALUES (114, 100, '分组管理', 'folder', '', 'groups', 'account', 2, 1)"
         );
-        // AI 矩阵下：自动养号、任务汇总
+        // AI 矩阵下：自动养号、矩阵任务
         DB::query(
             "INSERT IGNORE INTO navigation_menus
               (id, parent_id, title, icon, path, view, subview, sort_order, visible)
@@ -429,7 +431,7 @@ class SeedMeta
         DB::query(
             "INSERT IGNORE INTO navigation_menus
               (id, parent_id, title, icon, path, view, subview, sort_order, visible)
-             VALUES (116, 400, '任务汇总', 'list', '', 'accountWork', 'list', 6, 1)"
+             VALUES (116, 400, '矩阵任务', 'list', '', 'accountWork', 'list', 6, 1)"
         );
         // 一级菜单：AI智能体
         try {
@@ -564,8 +566,8 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET visible=1, parent_id=400, sort_order=5 WHERE view='warm' AND title='自动养号'");
             DB::query("UPDATE navigation_menus SET parent_id=310, title='消息模板', icon='message', path='', view='msgTemplates', subview='list', sort_order=3, visible=1 WHERE id=117");
             DB::query("UPDATE navigation_menus SET visible=1, parent_id=310, sort_order=3 WHERE view='msgTemplates'");
-            DB::query("UPDATE navigation_menus SET parent_id=400, title='任务汇总', icon='list', path='', view='accountWork', subview='list', sort_order=6, visible=1 WHERE id=116");
-            DB::query("UPDATE navigation_menus SET visible=1, parent_id=400, sort_order=6 WHERE view='accountWork' AND title='任务汇总'");
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='矩阵任务', icon='list', path='', view='accountWork', subview='list', sort_order=6, visible=1 WHERE id=116");
+            DB::query("UPDATE navigation_menus SET visible=1, parent_id=400, sort_order=6 WHERE view='accountWork' AND title='矩阵任务'");
             DB::query("UPDATE navigation_menus SET visible=0 WHERE id=113");
             DB::query("DELETE FROM navigation_menus WHERE id=113 OR (view='accounts' AND subview='qr') OR title='扫码登录'");
         } catch (\Throwable $e) {
@@ -608,10 +610,36 @@ class SeedMeta
             // 旧二级/重复入口隐藏（功能仍可从页面按钮进入）
             DB::query("UPDATE navigation_menus SET visible=0 WHERE id IN (412,414,415,431,440,443,445)");
             DB::query("UPDATE navigation_menus SET visible=0 WHERE view='publish' AND subview IN ('create_publish','create_ordered','create_independent','create_pull_video_list','create_pull_comments','delete_wizard','comment_reply_wizard') AND id NOT IN (411,430,441,442,444)");
-            // 素材 / 养号 / 任务汇总仍挂在 AI矩阵 下，排在视频向导之后
+            // 素材 / 账号向导 / 矩阵任务挂在 AI矩阵 下
             DB::query("UPDATE navigation_menus SET parent_id=400, title='视频素材', icon='folder', view='publish', subview='materials', sort_order=2, visible=1 WHERE id=420");
-            DB::query("UPDATE navigation_menus SET parent_id=400, title='自动养号', icon='activity', view='warm', subview='list', sort_order=3, visible=1 WHERE id=115");
-            DB::query("UPDATE navigation_menus SET parent_id=400, title='任务汇总', icon='list', view='accountWork', subview='list', sort_order=4, visible=1 WHERE id=116");
+            try {
+                DB::query("ALTER TABLE navigation_menus ADD COLUMN permission_code VARCHAR(64) NULL DEFAULT NULL AFTER visible");
+            } catch (\Throwable $e) {
+            }
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (450, 400, '账号向导', 'users', '', 'accountWizard', 'pull_stats', 3, 1)
+                 ON DUPLICATE KEY UPDATE parent_id=400, title='账号向导', icon='users', view='accountWizard', subview='pull_stats', sort_order=3, visible=1"
+            );
+            DB::query("UPDATE navigation_menus SET parent_id=450, title='自动养号', icon='activity', view='warm', subview='list', sort_order=1, visible=1 WHERE id=115");
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES
+                  (451, 450, '拉取数据', 'download', '', 'accountWizard', 'pull_stats', 2, 1),
+                  (452, 450, '修改资料', 'user', '', 'accountWizard', 'modify_profile', 3, 1)
+                 ON DUPLICATE KEY UPDATE parent_id=450, title=VALUES(title), icon=VALUES(icon), view=VALUES(view), subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
+            );
+            try {
+                DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id=451");
+            } catch (\Throwable $e) {
+            }
+            DB::query("UPDATE navigation_menus SET parent_id=450, title='拉取数据', icon='download', view='accountWizard', subview='pull_stats', sort_order=2, visible=1 WHERE id=451");
+            DB::query("UPDATE navigation_menus SET parent_id=450, title='修改资料', icon='user', view='accountWizard', subview='modify_profile', sort_order=3, visible=1 WHERE id=452");
+            DB::query("UPDATE navigation_menus SET parent_id=400, title='矩阵任务', icon='list', view='accountWork', subview='list', sort_order=4, visible=1 WHERE id=116");
+            // 旧「自动养号」直挂 AI矩阵 的重复项隐藏（功能已迁到账号向导下）
+            DB::query("UPDATE navigation_menus SET visible=0 WHERE parent_id=400 AND view='warm' AND title='自动养号' AND id<>115");
         } catch (\Throwable $e) {
         }
         // 权限管理 / 系统管理：拆成两个一级菜单，并合理挂子级
@@ -764,14 +792,14 @@ class SeedMeta
                 [83, 'publish', 'publish.tasks', '发布任务写入', 83],
                 [84, 'publish', 'publish.mass', '群发与客服相关写入', 84],
                 [85, 'account', 'account.export', '导出账号数据', 85],
-                [86, 'account', 'account.work.pause', '暂停任务汇总', 86],
+                [86, 'account', 'account.work.pause', '暂停矩阵任务', 86],
                 [87, 'logs', 'logs.view', '查看实时操作日志', 87],
                 [89, 'account', 'account.import', '导入账号', 2],
                 [90, 'proxy', 'proxy.import', '批量导入代理', 11],
                 [91, 'publish', 'warm.tasks', '养号任务写入', 21],
                 [92, 'publish', 'publish.materials', '素材管理写入', 22],
-                [94, 'account', 'account.work.delete', '删除任务汇总', 86],
-                [95, 'account', 'account.work.reset', '重置任务汇总', 87],
+                [94, 'account', 'account.work.delete', '删除矩阵任务', 86],
+                [95, 'account', 'account.work.reset', '重置矩阵任务', 87],
                 [97, 'account', 'account.msg_template.dm', '管理私信模板', 77],
                 [98, 'system', 'system.smtp', '管理SMTP配置(仅超管)', 98],
                 [99, 'system', 'system.dm_weight', '管理日私信权重规则(仅超管)', 99],
