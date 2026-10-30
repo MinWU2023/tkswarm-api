@@ -96,6 +96,106 @@ class PullCommentService
     }
 
     /**
+     * 把 tiktok_videos 里尚无对应 materials 的条目补成 origin=online 素材，
+     * 供「拉取视频数据」勾选拉评论（拉取视频列表入库失败时也能用）。
+     *
+     * @return array{created:int,skipped:int}
+     */
+    public static function backfillOnlineMaterialsFromSyncedVideos(int $accountId = 0, int $limit = 80): array
+    {
+        self::ensureSchema();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        $limit = max(1, min(200, $limit));
+        $params = [];
+        $accSql = '';
+        if ($accountId > 0) {
+            $accSql = ' AND v.account_id=?';
+            $params[] = $accountId;
+        }
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $params = array_merge($params, $scopeParams);
+        $rows = DB::select(
+            "SELECT v.account_id, v.video_id, v.video_url, v.description, v.thumbnail_url,
+                    a.username, a.nickname, a.owner_id
+             FROM tiktok_videos v
+             INNER JOIN accounts a ON a.id=v.account_id
+             WHERE v.video_id<>''
+               AND NOT EXISTS (
+                 SELECT 1 FROM materials m
+                 WHERE m.publish_account_id=v.account_id AND m.platform_video_id=v.video_id
+               )" . $accSql . $scopeSql . "
+             ORDER BY v.id DESC
+             LIMIT {$limit}",
+            $params
+        ) ?: [];
+        $created = 0;
+        $skipped = 0;
+        foreach ($rows as $row) {
+            $aid = (int)($row['account_id'] ?? 0);
+            $videoId = trim((string)($row['video_id'] ?? ''));
+            if ($aid < 1 || $videoId === '') {
+                $skipped += 1;
+                continue;
+            }
+            $accName = trim((string)($row['username'] ?? $row['nickname'] ?? ''));
+            $videoUrl = trim((string)($row['video_url'] ?? ''));
+            if ($videoUrl === '') {
+                $videoUrl = $accName !== ''
+                    ? ('https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId)
+                    : ('https://www.tiktok.com/video/' . $videoId);
+            }
+            $titleRaw = trim((string)($row['description'] ?? ''));
+            if ($titleRaw === '') {
+                $titleRaw = '视频 ' . $videoId;
+            }
+            $name = mb_substr($titleRaw, 0, 191);
+            $shareTitle = mb_substr($titleRaw, 0, 500);
+            $thumb = trim((string)($row['thumbnail_url'] ?? ''));
+            $coverStore = null;
+            if ($thumb !== '' && (str_starts_with($thumb, 'http://') || str_starts_with($thumb, 'https://') || str_starts_with($thumb, 'data:'))) {
+                $coverStore = mb_substr($thumb, 0, 2000);
+            }
+            $ownerId = (int)($row['owner_id'] ?? 0);
+            $fileName = 'online-' . $videoId . '.mp4';
+            try {
+                DB::query(
+                    "INSERT INTO materials(
+                        name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
+                        publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
+                        sha256, cover_base64, share_title, share_caption, owner_id, origin
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        $name,
+                        '',
+                        mb_substr($fileName, 0, 255),
+                        'mp4',
+                        'video/mp4',
+                        0,
+                        'Studio 线上视频',
+                        'online-studio',
+                        'ready',
+                        'published',
+                        $aid,
+                        mb_substr($accName, 0, 191),
+                        mb_substr($videoId, 0, 64),
+                        mb_substr($videoUrl, 0, 500),
+                        '',
+                        $coverStore,
+                        $shareTitle,
+                        '',
+                        $ownerId > 0 ? $ownerId : null,
+                        'online',
+                    ]
+                );
+                $created += 1;
+            } catch (\Throwable $e) {
+                $skipped += 1;
+            }
+        }
+        return ['created' => $created, 'skipped' => $skipped];
+    }
+
+    /**
      * @return array{items:list<array<string,mixed>>,total:int,page:int,pages:int,pageSize:int}
      */
     public static function listTasks(int $ownerId, int $page = 1, int $pageSize = 20, string $keyword = '', string $status = ''): array

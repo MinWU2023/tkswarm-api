@@ -111,7 +111,7 @@ class PullCommentController extends Controller
         return $this->success(['id' => (int)$id], '已删除');
     }
 
-    /** 已发布素材列表（创建任务用） */
+    /** 已发布素材列表（创建任务用；含 Studio「线上」视频） */
     public function publishedMaterials(Request $request): Response
     {
         DataScope::ensureColumns();
@@ -137,17 +137,31 @@ class PullCommentController extends Controller
         } catch (\Throwable $e) {
             // 回填失败不阻断列表
         }
+        // 拉取视频列表已写入 tiktok_videos 但 materials 入库失败时：补成 origin=online 素材，便于本页勾选拉评论
+        try {
+            PullCommentService::backfillOnlineMaterialsFromSyncedVideos(
+                (int)$request->input('accountId', $request->input('account_id', 0)),
+                80
+            );
+        } catch (\Throwable $e) {
+            // ignore
+        }
         $filters = ["m.publish_status='published'"];
         $params = [];
         [$matSql, $matParams] = DataScope::materialListSql('m');
         $params = array_merge($params, $matParams);
         $filters[] = "(m.platform_video_url<>'' OR m.platform_video_id<>'')";
         $filters[] = 'm.publish_account_id>0';
+        $origin = trim((string)$request->input('origin', ''));
+        if ($origin === 'online' || $origin === 'local') {
+            $filters[] = 'm.origin=?';
+            $params[] = $origin;
+        }
         $keyword = trim((string)$request->input('keyword', ''));
         if ($keyword !== '') {
-            $filters[] = '(m.name LIKE ? OR m.file_name LIKE ? OR m.platform_video_id LIKE ? OR a.username LIKE ?)';
+            $filters[] = '(m.name LIKE ? OR m.file_name LIKE ? OR m.platform_video_id LIKE ? OR m.share_title LIKE ? OR a.username LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($params, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like);
         }
         $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
         if ($accountId > 0) {
@@ -156,7 +170,7 @@ class PullCommentController extends Controller
         }
         $where = 'WHERE ' . implode(' AND ', $filters) . $matSql;
         $page = max(1, (int)$request->input('page', 1));
-        $pageSize = max(1, min(100, (int)$request->input('pageSize', $request->input('page_size', 40))));
+        $pageSize = max(1, min(200, (int)$request->input('pageSize', $request->input('page_size', 100))));
         $total = (int)(DB::selectOne(
             "SELECT COUNT(*) AS c FROM materials m
              LEFT JOIN accounts a ON a.id=m.publish_account_id
@@ -174,17 +188,31 @@ class PullCommentController extends Controller
              FROM materials m
              LEFT JOIN accounts a ON a.id=m.publish_account_id
              {$where}
-             ORDER BY m.id DESC
+             ORDER BY (CASE WHEN m.origin='online' THEN 0 ELSE 1 END), m.id DESC
              LIMIT {$offset}, {$pageSize}",
             $params
         ) ?: [];
         $items = array_map(static function (array $r): array {
             $origin = trim((string)($r['origin'] ?? 'local'));
+            $cover = (string)($r['cover_base64'] ?? '');
+            $id = (int)$r['id'];
+            // 列表不塞超长 base64；http(s)/短 data 可直接作缩略图
+            $coverOut = '';
+            if ($cover !== '') {
+                if (str_starts_with($cover, 'http://') || str_starts_with($cover, 'https://')) {
+                    $coverOut = $cover;
+                } elseif (str_starts_with($cover, 'data:') && strlen($cover) < 120000) {
+                    $coverOut = $cover;
+                } elseif (strlen($cover) < 800) {
+                    $coverOut = $cover;
+                }
+            }
             return [
-                'id' => (int)$r['id'],
+                'id' => $id,
                 'name' => (string)($r['name'] ?? ''),
                 'fileName' => (string)($r['file_name'] ?? ''),
-                'coverBase64' => (string)($r['cover_base64'] ?? ''),
+                'coverBase64' => $coverOut,
+                'coverUrl' => $id > 0 ? ('/api/materials/' . $id . '/cover') : '',
                 'publishAccountId' => (int)($r['publish_account_id'] ?? 0),
                 'publishAccount' => (string)($r['publish_account'] ?? $r['publish_account_name'] ?? ''),
                 'publishAccountNickname' => (string)($r['publish_account_nickname'] ?? ''),
