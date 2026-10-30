@@ -267,9 +267,68 @@ class PermissionCatalog
             self::upsertNodes();
             self::migrateRoles();
             self::ensureOpsAdminUserPerms();
+            self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
             error_log('[PermissionCatalog] ensureSplitNodes: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 账号向导「修改资料」菜单：给已有养号/账号向导/拉取数据或账号编辑权限的角色自动补上 menu.452。
+     */
+    private static function ensureAccountWizardMenuPerms(): void
+    {
+        MenuPermissionService::syncOne([
+            'id' => 452,
+            'title' => '修改资料',
+            'view' => 'accountWizard',
+            'subview' => 'modify_profile',
+            'permission_code' => '',
+        ]);
+        $codeToId = [];
+        foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
+            $codeToId[(string)$row['code']] = (int)$row['id'];
+        }
+        $targetId = (int)($codeToId['menu.452'] ?? 0);
+        if ($targetId < 1) {
+            return;
+        }
+        $donorCodes = ['menu.450', 'menu.451', 'menu.115', 'menu.400', 'account.create', 'account.update', 'account.view'];
+        $donorIds = [];
+        foreach ($donorCodes as $c) {
+            if (!empty($codeToId[$c])) {
+                $donorIds[(int)$codeToId[$c]] = true;
+            }
+        }
+        if (!$donorIds) {
+            return;
+        }
+        $roles = DB::select('SELECT id, permissions FROM admin_roles WHERE status=1') ?: [];
+        foreach ($roles as $role) {
+            $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
+            if (!is_array($ids) || in_array('*', $ids, true)) {
+                continue;
+            }
+            $set = [];
+            $hasDonor = false;
+            foreach ($ids as $raw) {
+                $id = (int)$raw;
+                if ($id > 0) {
+                    $set[$id] = true;
+                    if (isset($donorIds[$id])) {
+                        $hasDonor = true;
+                    }
+                }
+            }
+            if (!$hasDonor || isset($set[$targetId])) {
+                continue;
+            }
+            $set[$targetId] = true;
+            DB::query(
+                'UPDATE admin_roles SET permissions=? WHERE id=?',
+                [json_encode(array_map('intval', array_keys($set)), JSON_UNESCAPED_UNICODE), (int)$role['id']]
+            );
         }
     }
 
