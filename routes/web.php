@@ -340,6 +340,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/account-work-batches/enqueue', AccountWorkController::class . '@enqueue');
     // 全角色可创建「拉取视频列表」（不走 account.work 写权限；路径不在 RoutePermissionMap 写规则内）
     Router::post('/api/pull-video-list/enqueue', AccountWorkController::class . '@enqueuePullVideoList');
+    // 全角色可创建「拉取数据 / 修改资料」（账号向导；路径不在 RoutePermissionMap 写规则内）
+    Router::post('/api/account-wizard/enqueue', AccountWorkController::class . '@enqueueAccountWizard');
     Router::post('/api/account-work-batches/clear', AccountWorkController::class . '@clearBatches');
     Router::post('/api/account-work-batches/{id}/pause', AccountWorkController::class . '@pauseBatch');
     Router::post('/api/account-work-batches/{id}/resume', AccountWorkController::class . '@resumeBatch');

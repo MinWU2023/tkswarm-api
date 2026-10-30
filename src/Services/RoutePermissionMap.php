@@ -102,6 +102,8 @@ class RoutePermissionMap
             // —— 账号 ——
             // 列表只读：已登录即可（DataScope 仍按归属过滤），供「拉取视频列表」等全角色功能勾选账号
             ['method' => 'GET', 'pattern' => '#^/api/accounts$#', 'codes' => []],
+            // 单账号只读：账号向导「修改资料」读冷却/当前资料；DataScope 仍按归属过滤
+            ['method' => 'GET', 'pattern' => '#^/api/accounts/\d+$#', 'codes' => []],
             ['method' => 'GET', 'pattern' => '#^/api/accounts/export#', 'codes' => ['account.export']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts/batch-import#', 'codes' => ['account.import']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts/batch-delete#', 'codes' => ['account.delete']],
@@ -111,6 +113,9 @@ class RoutePermissionMap
             ['method' => 'PATCH', 'pattern' => '#^/api/accounts#', 'codes' => ['account.update', 'account.create']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts$#', 'codes' => ['account.create']],
             ['method' => 'POST', 'pattern' => '#^/api/accounts/#', 'codes' => ['account.update', 'account.create']],
+
+            // 账号向导分任务列表：全角色可读（DataScope 按归属过滤）
+            ['method' => 'GET', 'pattern' => '#^/api/account-work-items#', 'codes' => []],
 
             // —— 代理 ——
             ['method' => 'GET', 'pattern' => '#^/api/proxies/export#', 'codes' => ['proxy.view', 'proxy.create']],

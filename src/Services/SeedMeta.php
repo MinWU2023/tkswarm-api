@@ -632,9 +632,9 @@ class SeedMeta
                   (452, 450, '修改资料', 'user', '', 'accountWizard', 'modify_profile', 3, 1)
                  ON DUPLICATE KEY UPDATE parent_id=450, title=VALUES(title), icon=VALUES(icon), view=VALUES(view), subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
             );
-            // 拉取数据 / 修改资料：全角色开放（permission_code=public，不占用角色勾选）
+            // 账号向导父级 + 拉取数据 / 修改资料：全角色开放
             try {
-                DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id IN (451,452)");
+                DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id IN (450,451,452)");
             } catch (\Throwable $e) {
             }
             DB::query("UPDATE navigation_menus SET parent_id=450, title='拉取数据', icon='download', view='accountWizard', subview='pull_stats', sort_order=2, visible=1 WHERE id=451");

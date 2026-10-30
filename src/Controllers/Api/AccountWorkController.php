@@ -543,4 +543,139 @@ class AccountWorkController extends Controller
             return $this->error($e->getMessage(), 400);
         }
     }
+
+    /**
+     * 账号向导：全角色可入队「拉取数据 / 修改资料」。
+     * 不走 account.work 写权限；修改资料时可顺带写入系统资料（applyProfileSettings）。
+     */
+    public function enqueueAccountWizard(Request $request): Response
+    {
+        AccountWorkBatchService::ensureSchema();
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $taskType = trim((string)$request->input('taskType', $request->input('task_type', '')));
+        $allowed = ['pull_stats', 'modify_profile'];
+        if (!in_array($taskType, $allowed, true)) {
+            return $this->error('仅支持拉取数据或修改资料', 422);
+        }
+        $payload = $request->input('payload', []);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $payload['source'] = $payload['source'] ?? 'account_wizard';
+        $account = DB::selectOne(
+            'SELECT id, owner_id, username, username_prev, nickname, profile_bio, profile_avatar, nickname_changed_at FROM accounts WHERE id=?',
+            [$accountId]
+        );
+        if ($err = $this->assertAccountOwns($account)) {
+            return $err;
+        }
+
+        if ($taskType === 'modify_profile' && !empty($payload['applyProfileSettings'])) {
+            $settings = $payload['profileSettings'] ?? $payload;
+            if (!is_array($settings)) {
+                $settings = [];
+            }
+            if ($err = $this->applyWizardProfileSettings($accountId, is_array($account) ? $account : [], $settings)) {
+                return $err;
+            }
+            unset($payload['applyProfileSettings'], $payload['profileSettings']);
+        }
+
+        try {
+            $out = AccountWorkBatchService::enqueueItem(
+                $accountId,
+                $taskType,
+                $payload,
+                0,
+                $this->writeOwnerId()
+            );
+            $msg = $taskType === 'modify_profile' ? '已挂入修改资料任务' : '已挂入拉取数据任务';
+            return $this->success($out, $msg);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * 账号向导「修改资料」：在入队前写入系统资料（不校验 account.update，仅校验归属）。
+     * @param array<string,mixed> $old
+     * @param array<string,mixed> $settings
+     */
+    private function applyWizardProfileSettings(int $accountId, array $old, array $settings): ?Response
+    {
+        if ($accountId <= 0 || !$old) {
+            return $this->error('账号不存在', 404);
+        }
+        // 企业客户仍不可改资料
+        if (!DataScope::canEditAccounts()) {
+            return $this->error('当前角色无权编辑账号', 403);
+        }
+        AccountWorkBatchService::ensureUsernamePrevColumn();
+        $sets = [];
+        $bind = [];
+        $cooldownLocked = $this->nicknameCooldownLocked($old['nickname_changed_at'] ?? null);
+
+        if (array_key_exists('username', $settings)) {
+            $username = ltrim(trim((string)$settings['username']), '@');
+            if ($username === '') {
+                return $this->error('账号名称不能为空', 422);
+            }
+            $dup = DB::selectOne(
+                'SELECT id FROM accounts WHERE username=? AND id<>? LIMIT 1',
+                [$username, $accountId]
+            );
+            if ($dup) {
+                return $this->error('该账号用户名已存在', 409);
+            }
+            $prevUsername = ltrim(trim((string)($old['username'] ?? '')), '@');
+            $sets[] = 'username=?';
+            $bind[] = $username;
+            if ($prevUsername !== '' && strcasecmp($prevUsername, $username) !== 0) {
+                $keptPrev = ltrim(trim((string)($old['username_prev'] ?? '')), '@');
+                if ($keptPrev !== '' && strcasecmp($keptPrev, $username) === 0) {
+                    $sets[] = 'username_prev=NULL';
+                } else {
+                    $sets[] = 'username_prev=?';
+                    $bind[] = $prevUsername;
+                }
+            }
+        }
+        if (array_key_exists('nickname', $settings) || array_key_exists('displayName', $settings)) {
+            $nickname = trim((string)($settings['nickname'] ?? $settings['displayName'] ?? ''));
+            $prevNick = trim((string)($old['nickname'] ?? ''));
+            if (!($nickname !== '' && $nickname !== $prevNick && $cooldownLocked)) {
+                $sets[] = 'nickname=?';
+                $bind[] = $nickname;
+            }
+        }
+        if (array_key_exists('signature', $settings) || array_key_exists('bio', $settings) || array_key_exists('profileBio', $settings)) {
+            $sets[] = 'profile_bio=?';
+            $bind[] = trim((string)($settings['signature'] ?? $settings['bio'] ?? $settings['profileBio'] ?? ''));
+        }
+        if (array_key_exists('avatarUrl', $settings) || array_key_exists('avatarPath', $settings) || array_key_exists('profileAvatar', $settings)) {
+            $sets[] = 'profile_avatar=?';
+            $bind[] = trim((string)($settings['avatarUrl'] ?? $settings['avatarPath'] ?? $settings['profileAvatar'] ?? ''));
+        }
+        if (!$sets) {
+            return null;
+        }
+        $sets[] = 'updated_at=CURRENT_TIMESTAMP';
+        $bind[] = $accountId;
+        DB::query('UPDATE accounts SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
+        return null;
+    }
+
+    private function nicknameCooldownLocked(mixed $changedAt): bool
+    {
+        $raw = trim((string)($changedAt ?? ''));
+        if ($raw === '' || $raw === '0000-00-00 00:00:00') {
+            return false;
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return false;
+        }
+        return (time() - $ts) < 7 * 24 * 3600;
+    }
 }
