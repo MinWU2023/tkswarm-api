@@ -1257,6 +1257,19 @@
             ]
           },
           {
+            group: '拓客线索',
+            items: [
+              {
+                title: '清除线索企业用户分配',
+                desc: '清空 ai_lead_comment_shared_users / ai_lead_shared_users（抄送与任务共享）。只删分配关系，不删线索/评论/任务。',
+                url: '/clear-ai-lead-clue-shares.php',
+                danger: true,
+                confirm: true,
+                confirmText: '确认清除全部拓客线索的企业用户分配？不可撤销！'
+              }
+            ]
+          },
+          {
             group: '浏览器环境',
             items: [
               {
