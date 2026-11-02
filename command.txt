@@ -1,6 +1,9 @@
 php artisan warm:recurring
 0 * * * * cd /path/to/tkswarm-api && php artisan warm:recurring >> /var/log/tkswarm-warm-recurring.log 2>&1
 
+php artisan env-pack:heal
+*/10 * * * * cd /path/to/tkswarm-api && php artisan env-pack:heal >> /var/log/tkswarm-env-pack-heal.log 2>&1
+
 php artisan ai-lead:daily-quota
 5 0 * * * cd /path/to/tkswarm-api && php artisan ai-lead:daily-quota >> /var/log/tkswarm-ai-lead-quota.log 2>&1
 

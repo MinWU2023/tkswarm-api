@@ -54,12 +54,13 @@ class AccountWorkBatchService
         'pull_stats' => 75,     // 拉取 Studio 数据（粉丝/获赞/28天指标）
         'sync' => 80,
         'profile' => 90,        // 兼容旧「同步资料」类型，执行侧改为拉取
+        'env_pack_upload' => 92, // 缺包静默上传/重建（低优先级，不挡业务）
     ];
 
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
         'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'warm',
-        'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile',
+        'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile', 'env_pack_upload',
     ];
 
     public static function ensureSchema(): void
@@ -1892,6 +1893,18 @@ class AccountWorkBatchService
             }
         }
 
+        if ($type === 'env_pack_upload') {
+            try {
+                EnvPackHealService::onWorkItemFinished(
+                    is_array($item) ? $item : [],
+                    $status,
+                    is_array($result) ? $result : null
+                );
+            } catch (\Throwable $e) {
+                error_log('[env_pack_heal] finish hook failed: ' . $e->getMessage());
+            }
+        }
+
         return [
             'item' => self::formatItem(DB::selectOne('SELECT * FROM account_work_items WHERE id=?', [$itemId]) ?: $item),
             'has_more' => self::hasPendingItems($batchId),
@@ -3138,6 +3151,7 @@ class AccountWorkBatchService
             'pull_video_list' => '拉取视频列表',
             'auto_follow' => '自动增粉',
             'dm_reply' => '回复私信',
+            'env_pack_upload' => '环境包补齐',
         ];
         $base = $labels[$type] ?? $type;
         if ($type === 'ai_lead') {

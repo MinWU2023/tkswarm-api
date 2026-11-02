@@ -19,6 +19,7 @@ $scheduler->register(new App\Commands\AiLeadDmDispatchCommand());
 $scheduler->register(new App\Commands\AiLeadBackfillCommand());
 $scheduler->register(new App\Commands\AiLeadSyncStatsCommand());
 $scheduler->register(new App\Commands\PullDataAnalysisCommand());
+$scheduler->register(new App\Commands\EnvPackHealCommand());
 
 $exitCode = $scheduler->run($argv);
 exit($exitCode);

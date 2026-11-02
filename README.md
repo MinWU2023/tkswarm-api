@@ -96,6 +96,11 @@ php migrate.php
   php artisan warm:recurring
   ```
   建议 cron 每小时：`0 * * * * cd /path/to/tkswarm-api && php artisan warm:recurring >> /var/log/tkswarm-warm-recurring.log 2>&1`
+- 环境包缺文件自愈（库中有绑定、服务器无 `.tgz`，且有关联用户、创建超过 10 分钟 → 推送关联用户静默上传/重建）：
+  ```bash
+  php artisan env-pack:heal
+  ```
+  建议 cron 每 10 分钟：`*/10 * * * * cd /path/to/tkswarm-api && php artisan env-pack:heal >> /var/log/tkswarm-env-pack-heal.log 2>&1`
 - AI 拓客私信调度（按账号视频激活权重与间隔独立推送，需 Node 执行 `ai_lead_dm`）：
   ```bash
   php artisan ai-lead:daily-quota      # 每日刷新日额度

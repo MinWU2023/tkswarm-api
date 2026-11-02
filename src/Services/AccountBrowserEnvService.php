@@ -92,6 +92,9 @@ class AccountBrowserEnvService
                 'pack_revision' => "ALTER TABLE account_browser_envs ADD COLUMN pack_revision INT NOT NULL DEFAULT 0 AFTER pack_bytes",
                 'pack_updated_at' => "ALTER TABLE account_browser_envs ADD COLUMN pack_updated_at DATETIME NULL AFTER pack_revision",
                 'pack_host_id' => "ALTER TABLE account_browser_envs ADD COLUMN pack_host_id VARCHAR(128) NOT NULL DEFAULT '' AFTER pack_updated_at",
+                // 缺包静默补齐：queued=已推送待上传 / done=已补齐或已替换，不再入队
+                'pack_heal_status' => "ALTER TABLE account_browser_envs ADD COLUMN pack_heal_status VARCHAR(16) NOT NULL DEFAULT '' AFTER pack_host_id",
+                'pack_heal_at' => "ALTER TABLE account_browser_envs ADD COLUMN pack_heal_at DATETIME NULL AFTER pack_heal_status",
             ];
             foreach ($packCols as $col => $sql) {
                 if (!in_array($col, $envCols, true)) {
