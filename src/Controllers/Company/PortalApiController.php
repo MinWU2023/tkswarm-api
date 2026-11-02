@@ -801,4 +801,267 @@ class PortalApiController extends Controller
             ], $dailyViews),
         ]);
     }
+
+    /**
+     * 企业门户账号详情（基本信息 + 画像指标 + 近期视频 + 趋势）
+     */
+    public function accountDetail(Request $request, string $id): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        PullCommentService::ensureSchema();
+
+        $aid = (int)$id;
+        if ($aid < 1) {
+            return $this->error('账号无效', 422);
+        }
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $account = DB::selectOne(
+            "SELECT a.id, a.username, a.nickname, a.login_status, a.account_status, a.country,
+                    a.group_id, g.name AS group_name, a.notes, a.profile_avatar, a.profile_bio,
+                    a.created_at, a.updated_at, a.enabled
+             FROM accounts a
+             LEFT JOIN `groups` g ON g.id = a.group_id
+             WHERE a.id=?{$scopeSql}
+             LIMIT 1",
+            array_merge([$aid], $scopeParams)
+        );
+        if (!$account) {
+            return $this->error('账号不存在或无权访问', 403);
+        }
+
+        $profile = null;
+        try {
+            $profile = DB::selectOne('SELECT * FROM tiktok_profiles WHERE account_id=? LIMIT 1', [$aid]);
+        } catch (\Throwable $e) {
+            $profile = null;
+        }
+
+        $avatar = trim((string)($account['profile_avatar'] ?? ''));
+        if ($avatar === '' && $profile) {
+            $avatar = trim((string)($profile['avatar_url'] ?? ''));
+        }
+
+        $recentVideos = [];
+        try {
+            $vrows = DB::select(
+                "SELECT m.id, m.name, m.share_title, m.platform_video_id, m.platform_video_url,
+                        m.view_count, m.like_count, m.comment_count, m.cover_base64, m.origin,
+                        m.publish_status, m.platform_published_at, m.updated_at
+                 FROM materials m
+                 WHERE m.publish_account_id=?
+                   AND (m.origin='online' OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>''))
+                 ORDER BY COALESCE(m.platform_published_at, m.updated_at, m.created_at) DESC, m.id DESC
+                 LIMIT 12",
+                [$aid]
+            ) ?: [];
+            foreach ($vrows as $r) {
+                $cover = trim((string)($r['cover_base64'] ?? ''));
+                $coverUrl = '';
+                if ($cover !== '' && (str_starts_with($cover, 'http') || str_starts_with($cover, 'data:'))) {
+                    $coverUrl = $cover;
+                } elseif ((int)$r['id'] > 0) {
+                    $coverUrl = '/api/materials/' . (int)$r['id'] . '/cover';
+                }
+                $title = trim((string)($r['share_title'] ?? '')) ?: trim((string)($r['name'] ?? '')) ?: ('视频 ' . (string)($r['platform_video_id'] ?? ''));
+                $recentVideos[] = [
+                    'materialId' => (int)$r['id'],
+                    'videoId' => trim((string)($r['platform_video_id'] ?? '')),
+                    'videoUrl' => (string)($r['platform_video_url'] ?? ''),
+                    'title' => $title,
+                    'coverUrl' => $coverUrl,
+                    'views' => (int)($r['view_count'] ?? 0),
+                    'likes' => (int)($r['like_count'] ?? 0),
+                    'comments' => (int)($r['comment_count'] ?? 0),
+                    'origin' => (string)($r['origin'] ?? ''),
+                    'publishStatus' => (string)($r['publish_status'] ?? ''),
+                    'postedAt' => (string)($r['platform_published_at'] ?? ''),
+                    'updatedAt' => (string)($r['updated_at'] ?? ''),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $recentVideos = [];
+        }
+
+        $videoTotal = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM materials m
+             WHERE m.publish_account_id=?
+               AND (m.origin='online' OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>''))",
+            [$aid]
+        )['c'] ?? 0);
+
+        $dailyMap = [];
+        try {
+            $dailyRows = DB::select(
+                'SELECT metric_date, video_views, profile_views, likes_count, comments_count, shares_count, est_rewards
+                 FROM tiktok_analytics_28d WHERE account_id=? ORDER BY metric_date ASC',
+                [$aid]
+            ) ?: [];
+            foreach ($dailyRows as $row) {
+                $d = substr((string)($row['metric_date'] ?? ''), 0, 10);
+                if ($d !== '') {
+                    $dailyMap[$d] = $row;
+                }
+            }
+        } catch (\Throwable $e) {
+            $dailyMap = [];
+        }
+        $daily28 = [];
+        $tz = new \DateTimeZone(date_default_timezone_get() ?: 'UTC');
+        $end = new \DateTimeImmutable('today', $tz);
+        for ($i = 27; $i >= 0; $i--) {
+            $day = $end->modify("-{$i} days")->format('Y-m-d');
+            $row = $dailyMap[$day] ?? null;
+            $daily28[] = [
+                'metricDate' => $day,
+                'videoViews' => (int)($row['video_views'] ?? 0),
+                'profileViews' => (int)($row['profile_views'] ?? 0),
+                'likes' => (int)($row['likes_count'] ?? 0),
+                'comments' => (int)($row['comments_count'] ?? 0),
+                'shares' => (int)($row['shares_count'] ?? 0),
+                'estRewards' => (float)($row['est_rewards'] ?? 0),
+            ];
+        }
+
+        $snapshots = [];
+        try {
+            $snapshots = DB::select(
+                'SELECT captured_at, followers_count, following_count, likes_count, videos_count
+                 FROM tiktok_stat_snapshots WHERE account_id=? ORDER BY captured_at DESC LIMIT 30',
+                [$aid]
+            ) ?: [];
+        } catch (\Throwable $e) {
+            $snapshots = [];
+        }
+
+        return $this->success([
+            'account' => [
+                'id' => (int)$account['id'],
+                'username' => (string)($account['username'] ?? ''),
+                'nickname' => (string)($account['nickname'] ?? ''),
+                'loginStatus' => (string)($account['login_status'] ?? ''),
+                'accountStatus' => (string)($account['account_status'] ?? 'normal'),
+                'country' => (string)($account['country'] ?? ''),
+                'groupName' => (string)($account['group_name'] ?? ''),
+                'notes' => (string)($account['notes'] ?? ''),
+                'bio' => (string)($account['profile_bio'] ?? ($profile['bio'] ?? '')),
+                'avatarUrl' => $avatar,
+                'enabled' => (int)($account['enabled'] ?? 1) === 1,
+                'createdAt' => (string)($account['created_at'] ?? ''),
+                'updatedAt' => (string)($account['updated_at'] ?? ''),
+            ],
+            'stats' => [
+                'followers' => (int)($profile['followers_count'] ?? 0),
+                'following' => (int)($profile['following_count'] ?? 0),
+                'likes' => (int)($profile['likes_count'] ?? 0),
+                'videos' => $videoTotal,
+                'periodVideoViews' => (int)($profile['period_video_views'] ?? 0),
+                'periodProfileViews' => (int)($profile['period_profile_views'] ?? 0),
+                'periodLikes' => (int)($profile['period_likes'] ?? 0),
+                'periodComments' => (int)($profile['period_comments'] ?? 0),
+                'periodShares' => (int)($profile['period_shares'] ?? ($profile['shares_count'] ?? 0)),
+                'periodEstRewards' => (float)($profile['period_est_rewards'] ?? 0),
+            ],
+            'recentVideos' => $recentVideos,
+            'daily28' => $daily28,
+            'hasDailyData' => count($dailyMap) > 0,
+            'snapshots' => array_map(static function ($r) {
+                return [
+                    'capturedAt' => (string)($r['captured_at'] ?? ''),
+                    'followers' => (int)($r['followers_count'] ?? 0),
+                    'following' => (int)($r['following_count'] ?? 0),
+                    'likes' => (int)($r['likes_count'] ?? 0),
+                    'videos' => (int)($r['videos_count'] ?? 0),
+                ];
+            }, array_reverse($snapshots)),
+            'hasSnapshots' => count($snapshots) > 0,
+        ]);
+    }
+
+    /**
+     * 企业门户视频详情（素材信息 + 账号 + 截图）
+     */
+    public function videoDetail(Request $request, string $id): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        PullCommentService::ensureSchema();
+        TikTokVideoScreenshotService::ensureSchema();
+
+        $mid = (int)$id;
+        if ($mid < 1) {
+            return $this->error('视频无效', 422);
+        }
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $row = DB::selectOne(
+            "SELECT m.id, m.name, m.share_title, m.share_caption, m.platform_video_id, m.platform_video_url,
+                    m.view_count, m.like_count, m.comment_count, m.cover_base64, m.origin,
+                    m.publish_status, m.platform_published_at, m.updated_at, m.created_at, m.file_name,
+                    a.id AS account_id, a.username, a.nickname, a.profile_avatar, a.login_status
+             FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE m.id=?{$scopeSql}
+             LIMIT 1",
+            array_merge([$mid], $scopeParams)
+        );
+        if (!$row) {
+            return $this->error('视频不存在或无权访问', 403);
+        }
+
+        $cover = trim((string)($row['cover_base64'] ?? ''));
+        $coverUrl = '';
+        if ($cover !== '' && (str_starts_with($cover, 'http') || str_starts_with($cover, 'data:'))) {
+            $coverUrl = $cover;
+        } else {
+            $coverUrl = '/api/materials/' . $mid . '/cover';
+        }
+        $vid = trim((string)($row['platform_video_id'] ?? ''));
+        $accountId = (int)($row['account_id'] ?? 0);
+        $title = trim((string)($row['share_title'] ?? '')) ?: trim((string)($row['name'] ?? '')) ?: ('视频 ' . $vid);
+
+        $shots = [];
+        if ($accountId > 0 && $vid !== '') {
+            try {
+                $shots = TikTokVideoScreenshotService::listLatest($accountId, $vid, 5, true);
+            } catch (\Throwable $e) {
+                $shots = [];
+            }
+        }
+
+        $avatar = trim((string)($row['profile_avatar'] ?? ''));
+
+        return $this->success([
+            'video' => [
+                'materialId' => $mid,
+                'videoId' => $vid,
+                'videoUrl' => (string)($row['platform_video_url'] ?? ''),
+                'title' => $title,
+                'caption' => (string)($row['share_caption'] ?? ''),
+                'fileName' => (string)($row['file_name'] ?? ''),
+                'coverUrl' => $coverUrl,
+                'views' => (int)($row['view_count'] ?? 0),
+                'likes' => (int)($row['like_count'] ?? 0),
+                'comments' => (int)($row['comment_count'] ?? 0),
+                'origin' => (string)($row['origin'] ?? ''),
+                'publishStatus' => (string)($row['publish_status'] ?? ''),
+                'postedAt' => (string)($row['platform_published_at'] ?? ''),
+                'createdAt' => (string)($row['created_at'] ?? ''),
+                'updatedAt' => (string)($row['updated_at'] ?? ''),
+            ],
+            'account' => [
+                'id' => $accountId,
+                'username' => (string)($row['username'] ?? ''),
+                'nickname' => (string)($row['nickname'] ?? ''),
+                'avatarUrl' => $avatar,
+                'loginStatus' => (string)($row['login_status'] ?? ''),
+            ],
+            'screenshots' => $shots,
+        ]);
+    }
 }

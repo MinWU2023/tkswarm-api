@@ -106,7 +106,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/company/login', CompanyPortalController::class . '@spa');
     Router::get('/company/dashboard', CompanyPortalController::class . '@spa');
     Router::get('/company/accounts', CompanyPortalController::class . '@spa');
+    Router::get('/company/accounts/{id}', CompanyPortalController::class . '@spa');
     Router::get('/company/videos', CompanyPortalController::class . '@spa');
+    Router::get('/company/videos/{id}', CompanyPortalController::class . '@spa');
     Router::get('/company/clues', CompanyPortalController::class . '@spa');
     Router::get('/company/analytics', CompanyPortalController::class . '@spa');
 
@@ -121,7 +123,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/dashboard/charts', CompanyPortalApiController::class . '@dashboardCharts');
     Router::get('/api/company/notifications', CompanyPortalApiController::class . '@notifications');
     Router::get('/api/company/accounts', CompanyPortalApiController::class . '@accounts');
+    Router::get('/api/company/accounts/{id}', CompanyPortalApiController::class . '@accountDetail');
     Router::get('/api/company/videos', CompanyPortalApiController::class . '@videos');
+    Router::get('/api/company/videos/{id}', CompanyPortalApiController::class . '@videoDetail');
     Router::get('/api/company/clues', CompanyPortalApiController::class . '@clues');
     Router::get('/api/company/analytics', CompanyPortalApiController::class . '@analytics');
 });

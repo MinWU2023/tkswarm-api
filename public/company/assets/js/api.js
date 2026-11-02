@@ -72,7 +72,9 @@
     },
     notifications: function () { return request('/api/company/notifications', { method: 'GET' }); },
     accounts: function (params) { return request('/api/company/accounts' + qs(params), { method: 'GET' }); },
+    accountDetail: function (id) { return request('/api/company/accounts/' + id, { method: 'GET' }); },
     videos: function (params) { return request('/api/company/videos' + qs(params), { method: 'GET' }); },
+    videoDetail: function (id) { return request('/api/company/videos/' + id, { method: 'GET' }); },
     clues: function (params) { return request('/api/company/clues' + qs(params), { method: 'GET' }); },
     analytics: function () { return request('/api/company/analytics', { method: 'GET' }); }
   };

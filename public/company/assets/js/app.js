@@ -306,7 +306,9 @@
       children: [
         { path: 'dashboard', component: CompanyViews.DashboardView, meta: { title: '控制面板' } },
         { path: 'accounts', component: CompanyViews.AccountsView, meta: { title: '账号列表' } },
+        { path: 'accounts/:id', component: CompanyViews.AccountDetailView, meta: { title: '账号详情' } },
         { path: 'videos', component: CompanyViews.VideosView, meta: { title: '视频数据' } },
+        { path: 'videos/:id', component: CompanyViews.VideoDetailView, meta: { title: '视频详情' } },
         { path: 'clues', component: CompanyViews.CluesView, meta: { title: '拓客线索' } },
         { path: 'analytics', redirect: '/dashboard' }
       ]

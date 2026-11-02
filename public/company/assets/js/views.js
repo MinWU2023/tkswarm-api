@@ -643,6 +643,13 @@
                         h('div', ['国家：', h('span', item.country || '—')]),
                         h('div', ['更新：', h('span', String(item.updatedAt || '—').slice(0, 16))])
                       ])
+                    ]),
+                    h('div', { class: 'card-detail-bar' }, [
+                      h('button', {
+                        type: 'button',
+                        class: 'card-detail-btn',
+                        onClick: function () { self.$router.push('/accounts/' + item.id); }
+                      }, '查看详情')
                     ])
                   ]);
                 }))
@@ -736,6 +743,13 @@
                           ? ' · ' + String(item.postedAt || item.updatedAt).slice(0, 16)
                           : '')
                       )
+                    ]),
+                    h('div', { class: 'card-detail-bar' }, [
+                      h('button', {
+                        type: 'button',
+                        class: 'card-detail-btn',
+                        onClick: function () { self.$router.push('/videos/' + item.materialId); }
+                      }, '查看详情')
                     ])
                   ]);
                 }))
@@ -750,6 +764,346 @@
               background: true
             })
           ])
+        ])
+      ]);
+    }
+  };
+
+  function detailKv(label, value) {
+    return h('div', { class: 'detail-kv' }, [
+      h('small', label),
+      h('div', value == null || value === '' ? '—' : value)
+    ]);
+  }
+
+  var AccountDetailView = {
+    name: 'AccountDetailView',
+    data: function () {
+      return {
+        loading: false,
+        account: null,
+        stats: {},
+        recentVideos: [],
+        daily28: [],
+        snapshots: [],
+        hasDailyData: false,
+        hasSnapshots: false,
+        chartHidden: { daily28: {}, snapshots: {} }
+      };
+    },
+    mounted: function () { this.load(); },
+    watch: {
+      '$route.params.id': function () { this.load(); }
+    },
+    methods: {
+      load: async function () {
+        var id = this.$route.params.id;
+        if (!id) return;
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.accountDetail(id);
+          this.account = d.account || null;
+          this.stats = d.stats || {};
+          this.recentVideos = d.recentVideos || [];
+          this.daily28 = d.daily28 || [];
+          this.snapshots = d.snapshots || [];
+          this.hasDailyData = !!d.hasDailyData;
+          this.hasSnapshots = !!d.hasSnapshots;
+        } catch (e) {
+          ElMessage.error(e.message || '加载失败');
+          this.account = null;
+        } finally {
+          this.loading = false;
+        }
+      },
+      toggleChartSeries: function (panel, key) {
+        var cur = Object.assign({}, this.chartHidden[panel] || {});
+        cur[key] = !cur[key];
+        var next = { daily28: this.chartHidden.daily28 || {}, snapshots: this.chartHidden.snapshots || {} };
+        next[panel] = cur;
+        this.chartHidden = next;
+      },
+      dailyPack: function () {
+        var rows = this.daily28 || [];
+        return {
+          labels: rows.map(function (d) { return String(d.metricDate || '').slice(5); }),
+          series: [
+            { key: 'videoViews', name: '播放', color: '#3b9eff', values: rows.map(function (d) { return Number(d.videoViews || 0); }) },
+            { key: 'profileViews', name: '主页浏览', color: '#10b981', values: rows.map(function (d) { return Number(d.profileViews || 0); }) },
+            { key: 'likes', name: '点赞', color: '#f59e0b', values: rows.map(function (d) { return Number(d.likes || 0); }) },
+            { key: 'comments', name: '评论', color: '#ec4899', values: rows.map(function (d) { return Number(d.comments || 0); }) },
+            { key: 'shares', name: '转发', color: '#8b5cf6', values: rows.map(function (d) { return Number(d.shares || 0); }) },
+            { key: 'estRewards', name: '预估收益', color: '#64748b', values: rows.map(function (d) { return Number(d.estRewards || 0); }) }
+          ]
+        };
+      },
+      snapPack: function () {
+        var rows = this.snapshots || [];
+        return {
+          labels: rows.map(function (s) {
+            var t = String(s.capturedAt || '');
+            return t.length >= 16 ? t.slice(5, 16) : t.slice(5);
+          }),
+          series: [
+            { key: 'followers', name: '粉丝', color: '#3b9eff', values: rows.map(function (s) { return Number(s.followers || 0); }) },
+            { key: 'following', name: '关注', color: '#10b981', values: rows.map(function (s) { return Number(s.following || 0); }) },
+            { key: 'likes', name: '获赞', color: '#f59e0b', values: rows.map(function (s) { return Number(s.likes || 0); }) }
+          ]
+        };
+      }
+    },
+    render: function () {
+      var self = this;
+      var a = this.account || {};
+      var s = this.stats || {};
+      if (this.loading) {
+        return h('div', { class: 'page-view' }, [h('div', { class: 'empty-pub' }, '加载中…')]);
+      }
+      if (!this.account) {
+        return h('div', { class: 'page-view' }, [
+          h('div', { class: 'empty-pub' }, [
+            h('div', '账号不存在或无权访问'),
+            h(ElementPlus.ElButton, {
+              style: 'margin-top:12px',
+              onClick: function () { self.$router.push('/accounts'); }
+            }, function () { return '返回列表'; })
+          ])
+        ]);
+      }
+      var initial = String(a.username || a.nickname || '#').trim().charAt(0).toUpperCase() || 'A';
+      var online = a.loginStatus === 'online';
+      var banned = a.accountStatus === 'banned';
+      var periodCards = [
+        { label: '播放 · 28天', value: s.periodVideoViews || 0, cls: 'tone-sky' },
+        { label: '主页浏览 · 28天', value: s.periodProfileViews || 0, cls: 'tone-emerald' },
+        { label: '点赞 · 28天', value: s.periodLikes || 0, cls: 'tone-violet' },
+        { label: '评论 · 28天', value: s.periodComments || 0, cls: 'tone-pink' },
+        { label: '转发 · 28天', value: s.periodShares || 0, cls: 'tone-orange' }
+      ];
+      return h('div', { class: 'page-view detail-page' }, [
+        h('div', { class: 'detail-topbar' }, [
+          h(ElementPlus.ElButton, {
+            text: true,
+            onClick: function () { self.$router.push('/accounts'); }
+          }, function () { return '← 返回账号列表'; }),
+          h('div', { class: 'detail-topbar-title' }, '账号详情')
+        ]),
+        h('div', { class: 'panel detail-hero-panel' }, [
+          h('div', { class: 'detail-hero' }, [
+            a.avatarUrl
+              ? h('img', { class: 'detail-hero-avatar', src: a.avatarUrl, alt: '' })
+              : h('div', { class: 'detail-hero-avatar-ph' }, initial),
+            h('div', { class: 'detail-hero-main' }, [
+              h('div', { class: 'detail-hero-name' }, a.username || ('#' + a.id)),
+              h('div', { class: 'detail-hero-sub' },
+                (a.nickname ? a.nickname + ' · ' : '') + 'ID #' + a.id +
+                (a.country ? ' · ' + a.country : '')
+              ),
+              h('div', { class: 'account-card-tags' }, [
+                h(ElementPlus.ElTag, { type: online ? 'success' : 'info', size: 'small', effect: 'light' },
+                  function () { return loginLabel(a.loginStatus); }),
+                h(ElementPlus.ElTag, { type: banned ? 'danger' : 'success', size: 'small', effect: 'light' },
+                  function () { return banned ? '封号' : '正常'; }),
+                h(ElementPlus.ElTag, { type: a.enabled ? 'primary' : 'info', size: 'small', effect: 'light' },
+                  function () { return a.enabled ? '已启用' : '已停用'; })
+              ])
+            ]),
+            h('div', { class: 'detail-hero-stats' }, [
+              h('div', { class: 'detail-hero-stat' }, [h('b', fmtNum(s.followers)), h('small', '粉丝')]),
+              h('div', { class: 'detail-hero-stat' }, [h('b', fmtNum(s.following)), h('small', '关注')]),
+              h('div', { class: 'detail-hero-stat' }, [h('b', fmtNum(s.likes)), h('small', '获赞')]),
+              h('div', { class: 'detail-hero-stat' }, [h('b', fmtNum(s.videos)), h('small', '视频')])
+            ])
+          ])
+        ]),
+        h('div', { class: 'stat-grid stat-grid-5', style: 'margin-top:16px' }, periodCards.map(function (c) {
+          return h('div', { class: 'stat-card ' + c.cls }, [
+            h('div', { class: 'label' }, c.label),
+            h('div', { class: 'value' }, fmtNum(c.value)),
+            h('div', { class: 'hint' }, 'Studio 周期指标')
+          ]);
+        })),
+        h('div', { class: 'detail-grid-2', style: 'margin-top:16px' }, [
+          h('div', { class: 'panel' }, [
+            panelHead('基本信息'),
+            h('div', { class: 'detail-kv-grid' }, [
+              detailKv('分组', a.groupName || '未分组'),
+              detailKv('国家', a.country || '—'),
+              detailKv('创建时间', a.createdAt || '—'),
+              detailKv('更新时间', a.updatedAt || '—'),
+              detailKv('备注', a.notes || '—'),
+              detailKv('简介', a.bio || '—')
+            ])
+          ]),
+          h('div', { class: 'panel' }, [
+            panelHead('近 28 天数据', !self.hasDailyData ? h('span', { class: 'chart-hint' }, '未拉取，已补 0') : null),
+            lineChartBlock(self.dailyPack(), self.chartHidden.daily28, function (key) {
+              self.toggleChartSeries('daily28', key);
+            })
+          ])
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:16px' }, [
+          panelHead('历史快照', !self.hasSnapshots ? h('span', { class: 'chart-hint' }, '暂无快照') : null),
+          self.hasSnapshots
+            ? lineChartBlock(self.snapPack(), self.chartHidden.snapshots, function (key) {
+                self.toggleChartSeries('snapshots', key);
+              })
+            : h('div', { class: 'cx-chart-empty' }, '拉取数据后会生成历史快照')
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:16px' }, [
+          panelHead('近期视频', h('span', { class: 'text-xs text-slate-400' }, '共 ' + (s.videos || 0) + ' 条')),
+          self.recentVideos.length
+            ? h('div', { class: 'material-grid' }, self.recentVideos.map(function (item) {
+                return h('div', { class: 'material-card', key: item.materialId }, [
+                  h('div', { class: 'material-thumb' }, [
+                    item.coverUrl
+                      ? h('img', { class: 'material-thumb-img', src: item.coverUrl, alt: '', loading: 'lazy' })
+                      : h('div', { class: 'material-thumb-empty' }, '无封面')
+                  ]),
+                  h('div', { class: 'material-body' }, [
+                    h('div', { class: 'material-title' }, item.title || '未命名视频'),
+                    h('div', { class: 'material-meta-row' }, [
+                      h('span', '▶ ' + fmtNum(item.views)),
+                      h('span', '♡ ' + fmtNum(item.likes)),
+                      h('span', '💬 ' + fmtNum(item.comments))
+                    ])
+                  ]),
+                  h('div', { class: 'card-detail-bar' }, [
+                    h('button', {
+                      type: 'button',
+                      class: 'card-detail-btn',
+                      onClick: function () { self.$router.push('/videos/' + item.materialId); }
+                    }, '查看详情')
+                  ])
+                ]);
+              }))
+            : h('div', { class: 'empty-pub' }, '暂无视频')
+        ])
+      ]);
+    }
+  };
+
+  var VideoDetailView = {
+    name: 'VideoDetailView',
+    data: function () {
+      return { loading: false, video: null, account: null, screenshots: [] };
+    },
+    mounted: function () { this.load(); },
+    watch: {
+      '$route.params.id': function () { this.load(); }
+    },
+    methods: {
+      load: async function () {
+        var id = this.$route.params.id;
+        if (!id) return;
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.videoDetail(id);
+          this.video = d.video || null;
+          this.account = d.account || null;
+          this.screenshots = d.screenshots || [];
+        } catch (e) {
+          ElMessage.error(e.message || '加载失败');
+          this.video = null;
+        } finally {
+          this.loading = false;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      var v = this.video || {};
+      var a = this.account || {};
+      if (this.loading) {
+        return h('div', { class: 'page-view' }, [h('div', { class: 'empty-pub' }, '加载中…')]);
+      }
+      if (!this.video) {
+        return h('div', { class: 'page-view' }, [
+          h('div', { class: 'empty-pub' }, [
+            h('div', '视频不存在或无权访问'),
+            h(ElementPlus.ElButton, {
+              style: 'margin-top:12px',
+              onClick: function () { self.$router.push('/videos'); }
+            }, function () { return '返回列表'; })
+          ])
+        ]);
+      }
+      var statusText = v.origin === 'online' ? '线上收录' : (v.publishStatus === 'published' ? '已发布' : (v.publishStatus || '—'));
+      return h('div', { class: 'page-view detail-page' }, [
+        h('div', { class: 'detail-topbar' }, [
+          h(ElementPlus.ElButton, {
+            text: true,
+            onClick: function () { self.$router.push('/videos'); }
+          }, function () { return '← 返回视频列表'; }),
+          h('div', { class: 'detail-topbar-title' }, '视频详情')
+        ]),
+        h('div', { class: 'detail-grid-2' }, [
+          h('div', { class: 'panel video-detail-cover-panel' }, [
+            v.coverUrl
+              ? h('img', { class: 'video-detail-cover', src: v.coverUrl, alt: '' })
+              : h('div', { class: 'video-detail-cover-ph' }, '无封面'),
+            h('div', { class: 'video-detail-actions' }, [
+              v.videoUrl
+                ? h('a', {
+                    class: 'card-detail-btn',
+                    href: v.videoUrl,
+                    target: '_blank',
+                    rel: 'noopener'
+                  }, '打开原链接')
+                : null,
+              a.id
+                ? h('button', {
+                    type: 'button',
+                    class: 'card-detail-btn is-ghost',
+                    onClick: function () { self.$router.push('/accounts/' + a.id); }
+                  }, '查看账号')
+                : null
+            ])
+          ]),
+          h('div', { class: 'panel' }, [
+            h('div', { class: 'video-detail-title' }, v.title || '未命名视频'),
+            h('div', { class: 'account-card-tags', style: 'margin:10px 0 14px' }, [
+              h(ElementPlus.ElTag, { type: 'success', size: 'small', effect: 'light' }, function () { return statusText; }),
+              v.videoId ? h(ElementPlus.ElTag, { type: 'info', size: 'small', effect: 'light' }, function () { return 'ID ' + v.videoId; }) : null
+            ]),
+            h('div', { class: 'stat-grid', style: 'grid-template-columns:repeat(3,1fr);margin-bottom:14px' }, [
+              h('div', { class: 'stat-card tone-sky' }, [
+                h('div', { class: 'label' }, '播放'),
+                h('div', { class: 'value' }, fmtNum(v.views))
+              ]),
+              h('div', { class: 'stat-card tone-pink' }, [
+                h('div', { class: 'label' }, '点赞'),
+                h('div', { class: 'value' }, fmtNum(v.likes))
+              ]),
+              h('div', { class: 'stat-card tone-violet' }, [
+                h('div', { class: 'label' }, '评论'),
+                h('div', { class: 'value' }, fmtNum(v.comments))
+              ])
+            ]),
+            h('div', { class: 'detail-kv-grid' }, [
+              detailKv('所属账号', '@' + (a.username || '—') + (a.nickname ? ' · ' + a.nickname : '')),
+              detailKv('素材 ID', '#' + v.materialId),
+              detailKv('文件名', v.fileName || '—'),
+              detailKv('发布时间', v.postedAt || '—'),
+              detailKv('创建时间', v.createdAt || '—'),
+              detailKv('更新时间', v.updatedAt || '—'),
+              detailKv('文案 / Caption', v.caption || '—')
+            ])
+          ])
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:16px' }, [
+          panelHead('视频截图', h('span', { class: 'text-xs text-slate-400' },
+            self.screenshots.length ? ('保留 ' + self.screenshots.length + ' 张') : '暂无截图')),
+          self.screenshots.length
+            ? h('div', { class: 'shot-grid' }, self.screenshots.map(function (shot) {
+                return h('div', { class: 'shot-card', key: shot.id }, [
+                  shot.screenshotBase64
+                    ? h('img', { src: shot.screenshotBase64, alt: '', loading: 'lazy' })
+                    : h('div', { class: 'shot-empty' }, '无图'),
+                  h('div', { class: 'shot-meta' }, shot.createdAt || shot.source || '')
+                ]);
+              }))
+            : h('div', { class: 'empty-pub' }, '拉取视频详情后会保留截图')
         ])
       ]);
     }
@@ -895,7 +1249,9 @@
     LoginView: LoginView,
     DashboardView: DashboardView,
     AccountsView: AccountsView,
+    AccountDetailView: AccountDetailView,
     VideosView: VideosView,
+    VideoDetailView: VideoDetailView,
     CluesView: CluesView,
     AnalyticsView: AnalyticsView
   };
