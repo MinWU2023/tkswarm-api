@@ -1717,6 +1717,56 @@ class NodeBridgeController extends Controller
         return $this->success(['accountId' => (int)$id, 'videoId' => $videoId], '视频记录已删除');
     }
 
+    /**
+     * Node：Studio 视频详情页截图（base64）入库；同一账号+视频仅保留最新 5 条。
+     */
+    public function saveTikTokVideoScreenshot(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        $videoId = trim((string)$request->input('videoId', $request->input('video_id', '')));
+        $b64 = (string)$request->input(
+            'screenshotBase64',
+            $request->input('screenshot_base64', $request->input('base64', ''))
+        );
+        if ($videoId === '' || trim($b64) === '') {
+            return $this->error('缺少 videoId 或 screenshotBase64', 422);
+        }
+        try {
+            $out = \App\Services\TikTokVideoScreenshotService::save((int)$id, $videoId, $b64, [
+                'videoUrl' => (string)$request->input('videoUrl', $request->input('video_url', '')),
+                'pageUrl' => (string)$request->input('pageUrl', $request->input('page_url', '')),
+                'source' => (string)$request->input('source', 'studio_detail'),
+                'mimeType' => (string)$request->input('mimeType', $request->input('mime_type', 'image/jpeg')),
+            ]);
+            return $this->success($out, '视频截图已保存');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->error('保存截图失败：' . mb_substr($e->getMessage(), 0, 200), 500);
+        }
+    }
+
+    /** Node / 前端：某视频最近截图元数据（不含完整 base64） */
+    public function listTikTokVideoScreenshots(Request $request, string $id, string $videoId): Response
+    {
+        DataScope::ensureColumns();
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        $limit = (int)$request->input('limit', 5);
+        $items = \App\Services\TikTokVideoScreenshotService::listLatest((int)$id, $videoId, $limit);
+        return $this->success([
+            'accountId' => (int)$id,
+            'videoId' => $videoId,
+            'items' => $items,
+        ]);
+    }
+
     /** Node 上报诊断截图；每账号仅保留最近 3 条 */
     public function diagnosisResult(Request $request, string $id): Response
     {
