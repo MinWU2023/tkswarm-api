@@ -1816,6 +1816,154 @@ class AccountController extends Controller
     }
 
     /**
+     * 账号视频页：合并「拉取视频列表」入库的线上素材 + tiktok_videos，附截图条数。
+     */
+    public function onlineVideos(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        \App\Services\PullCommentService::ensureSchema();
+        \App\Services\TikTokVideoScreenshotService::ensureSchema();
+        $aid = (int)$id;
+        $account = DB::selectOne(
+            'SELECT id, owner_id, company_id, username, nickname FROM accounts WHERE id=?',
+            [$aid]
+        );
+        if ($err = $this->assertAccountRowAccess($account)) {
+            return $err;
+        }
+
+        $keyword = trim((string)$request->input('keyword', ''));
+        $page = max(1, (int)$request->input('page', 1));
+        $pageSize = max(1, min(100, (int)$request->input('pageSize', $request->input('page_size', 24))));
+
+        // 优先线上素材（origin=online）；也兼容已发布素材挂在该账号上
+        $filters = ['m.publish_account_id=?'];
+        $bind = [$aid];
+        $filters[] = "(m.origin='online' OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>''))";
+        if ($keyword !== '') {
+            $filters[] = '(m.name LIKE ? OR m.share_title LIKE ? OR m.platform_video_id LIKE ? OR m.platform_video_url LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($bind, $like, $like, $like, $like);
+        }
+        $where = implode(' AND ', $filters);
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM materials m WHERE {$where}", $bind)['c'] ?? 0);
+
+        $offset = ($page - 1) * $pageSize;
+        $matRows = DB::select(
+            "SELECT m.id, m.name, m.share_title, m.share_caption, m.cover_base64, m.platform_video_id, m.platform_video_url,
+                    m.view_count, m.like_count, m.comment_count, m.origin, m.publish_status,
+                    m.platform_published_at, m.updated_at, m.created_at
+             FROM materials m
+             WHERE {$where}
+             ORDER BY COALESCE(m.platform_published_at, m.updated_at, m.created_at) DESC, m.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $bind
+        ) ?: [];
+
+        // 若素材为空，回退 tiktok_videos（旧同步）
+        $fromTiktok = false;
+        if (!$matRows && $keyword === '' && $page === 1) {
+            $tv = DB::select(
+                'SELECT id, video_id, video_url, description, thumbnail_url, views_count, likes_count, last_synced_at
+                 FROM tiktok_videos WHERE account_id=? ORDER BY last_synced_at DESC, id DESC LIMIT ?',
+                [$aid, $pageSize]
+            ) ?: [];
+            $total = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM tiktok_videos WHERE account_id=?', [$aid])['c'] ?? 0);
+            $fromTiktok = true;
+            $matRows = array_map(static function ($r) {
+                return [
+                    'id' => 0,
+                    'name' => (string)($r['description'] ?? ''),
+                    'share_title' => (string)($r['description'] ?? ''),
+                    'share_caption' => '',
+                    'cover_base64' => (string)($r['thumbnail_url'] ?? ''),
+                    'platform_video_id' => (string)($r['video_id'] ?? ''),
+                    'platform_video_url' => (string)($r['video_url'] ?? ''),
+                    'view_count' => (int)($r['views_count'] ?? 0),
+                    'like_count' => (int)($r['likes_count'] ?? 0),
+                    'comment_count' => 0,
+                    'origin' => 'tiktok_videos',
+                    'publish_status' => 'published',
+                    'platform_published_at' => null,
+                    'updated_at' => (string)($r['last_synced_at'] ?? ''),
+                    'created_at' => (string)($r['last_synced_at'] ?? ''),
+                    '_tv_id' => (int)($r['id'] ?? 0),
+                ];
+            }, $tv);
+        }
+
+        $videoIds = array_values(array_filter(array_map(
+            static fn($r) => trim((string)($r['platform_video_id'] ?? '')),
+            $matRows
+        )));
+        $shotCounts = \App\Services\TikTokVideoScreenshotService::countByVideos($aid, $videoIds);
+
+        $items = [];
+        foreach ($matRows as $r) {
+            $vid = trim((string)($r['platform_video_id'] ?? ''));
+            $cover = trim((string)($r['cover_base64'] ?? ''));
+            $coverUrl = '';
+            if ($cover !== '' && (str_starts_with($cover, 'http://') || str_starts_with($cover, 'https://') || str_starts_with($cover, 'data:'))) {
+                $coverUrl = $cover;
+            } elseif ((int)($r['id'] ?? 0) > 0) {
+                $coverUrl = '/api/materials/' . (int)$r['id'] . '/cover';
+            }
+            $title = trim((string)($r['share_title'] ?? '')) ?: trim((string)($r['name'] ?? '')) ?: ($vid !== '' ? ('视频 ' . $vid) : '未命名视频');
+            $items[] = [
+                'materialId' => (int)($r['id'] ?? 0),
+                'videoId' => $vid,
+                'videoUrl' => (string)($r['platform_video_url'] ?? ''),
+                'title' => $title,
+                'shareCaption' => (string)($r['share_caption'] ?? ''),
+                'coverUrl' => $coverUrl,
+                'views' => (int)($r['view_count'] ?? 0),
+                'likes' => (int)($r['like_count'] ?? 0),
+                'comments' => (int)($r['comment_count'] ?? 0),
+                'origin' => (string)($r['origin'] ?? ''),
+                'publishStatus' => (string)($r['publish_status'] ?? ''),
+                'postedAt' => (string)($r['platform_published_at'] ?? ''),
+                'updatedAt' => (string)($r['updated_at'] ?? ''),
+                'screenshotCount' => (int)($shotCounts[$vid] ?? 0),
+            ];
+        }
+
+        $pages = max(1, (int)ceil($total / $pageSize));
+        return $this->success([
+            'accountId' => $aid,
+            'username' => (string)($account['username'] ?? ''),
+            'nickname' => (string)($account['nickname'] ?? ''),
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => $pages,
+            'source' => $fromTiktok ? 'tiktok_videos' : 'materials',
+        ]);
+    }
+
+    /** 账号视频截图记录（含 base64，供弹框预览） */
+    public function tiktokVideoScreenshots(Request $request, string $id, string $videoId): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $aid = (int)$id;
+        $account = DB::selectOne('SELECT id, owner_id, company_id FROM accounts WHERE id=?', [$aid]);
+        if ($err = $this->assertAccountRowAccess($account)) {
+            return $err;
+        }
+        $withBase64 = filter_var($request->input('withBase64', $request->input('with_base64', true)), FILTER_VALIDATE_BOOLEAN);
+        $limit = (int)$request->input('limit', 5);
+        $items = \App\Services\TikTokVideoScreenshotService::listLatest($aid, $videoId, $limit, $withBase64);
+        return $this->success([
+            'accountId' => $aid,
+            'videoId' => $videoId,
+            'items' => $items,
+        ]);
+    }
+
+    /**
      * 查看数据弹框：AI 分析当前账号已拉取指标并发送邮件通知。
      */
     public function sendDataAnalysisMail(Request $request, string $id): Response

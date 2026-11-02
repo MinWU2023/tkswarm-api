@@ -242,21 +242,23 @@ class SeedMeta
             ['visible', '显示窗口（调试）'], ['hidden', '隐藏窗口（正式运行）'], ['auto', '按分项开关'],
         ]);
         $pairs('browser_type', [
-            ['bit', '比特浏览器'],
             ['tkswarm', '第一页自研浏览器'],
             ['linux', '第一页自研浏览器 Linux'],
+            ['bit', '比特浏览器'],
             ['adspower', 'AdsPower'], ['vmlogin', 'VMLogin'], ['playwright', 'Playwright'],
-        ], fn($item) => in_array($item[0], ['bit', 'tkswarm', 'linux'], true) ? '{"ready":true}' : '{"ready":false}');
-        // 仅保留比特浏览器：API/WS 无法真实发送 TikTok 私信，仅写本地会话，已下线
+        ], fn($item) => in_array($item[0], ['tkswarm', 'linux'], true) ? '{"ready":true}' : '{"ready":false}');
+        // 群发通道：主推自研浏览器（比特 UI 已隐藏）
         $pairs('mass_channel', [
+            ['tkswarm', '第一页自研浏览器'],
             ['bit', '比特浏览器'],
         ], function ($item) {
             $hints = [
+                'tkswarm' => ['hint' => '通过第一页自研浏览器打开环境，尝试真实发送 TikTok 私信', 'confirm' => '第一页自研浏览器（真实发私信）'],
                 'bit' => ['hint' => '通过比特浏览器打开环境，尝试真实发送 TikTok 私信', 'confirm' => '比特浏览器（真实发私信）'],
             ];
             return json_encode($hints[$item[0]] ?? new \stdClass(), JSON_UNESCAPED_UNICODE);
         });
-        // 清理历史无效通道
+        // 清理历史无效通道；比特通道保留字典但前端 bitBrowserUiEnabled=false 时不展示
         try {
             DB::query("DELETE FROM app_dicts WHERE domain='mass_channel' AND code IN ('api','ws')");
         } catch (\Throwable $e) {
@@ -332,7 +334,7 @@ class SeedMeta
             ['warm', '自动养号', '按任务创建养号配置，批量执行刷互动养号'],
             ['msgTemplates', '消息模板', '评论 / 回复评论 / 私信 / 回复私信：固定文案与 AI 提示词'],
             ['accountWork', '矩阵任务', '按账号查看会话总任务与子任务，支持展开与暂停'],
-            ['accountWizard', '账号向导', '养号、拉取账号数据与修改资料任务'],
+            ['accountWizard', '账号向导', '养号、拉取账号数据、修改资料与账号视频'],
             ['aiLeads', '拓客任务', '配置拓客规则、关联账号与私信明细'],
             ['aiLeadClues', '拓客线索', '查看拓客跑出的意向用户与评论，支持换号与导出'],
             ['aiLeadClueData', '拓客结果', '查看共享给当前账号的评论线索，含行业筛选'],
@@ -629,16 +631,23 @@ class SeedMeta
                   (id, parent_id, title, icon, path, view, subview, sort_order, visible)
                  VALUES
                   (451, 450, '拉取数据', 'download', '', 'accountWizard', 'pull_stats', 2, 1),
-                  (452, 450, '修改资料', 'user', '', 'accountWizard', 'modify_profile', 3, 1)
+                  (452, 450, '修改资料', 'user', '', 'accountWizard', 'modify_profile', 3, 1),
+                  (453, 450, '账号视频', 'film', '', 'accountWizard', 'account_videos', 4, 1)
                  ON DUPLICATE KEY UPDATE parent_id=450, title=VALUES(title), icon=VALUES(icon), view=VALUES(view), subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
             );
-            // 账号向导父级 + 拉取数据 / 修改资料：全角色开放
+            // 账号向导父级 + 拉取数据 / 修改资料 / 账号视频：全角色开放
             try {
-                DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id IN (450,451,452)");
+                DB::query("UPDATE navigation_menus SET permission_code='public' WHERE id IN (450,451,452,453)");
             } catch (\Throwable $e) {
             }
             DB::query("UPDATE navigation_menus SET parent_id=450, title='拉取数据', icon='download', view='accountWizard', subview='pull_stats', sort_order=2, visible=1 WHERE id=451");
             DB::query("UPDATE navigation_menus SET parent_id=450, title='修改资料', icon='user', view='accountWizard', subview='modify_profile', sort_order=3, visible=1 WHERE id=452");
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible, permission_code)
+                 VALUES (453, 450, '账号视频', 'film', '', 'accountWizard', 'account_videos', 4, 1, 'public')
+                 ON DUPLICATE KEY UPDATE parent_id=450, title='账号视频', icon='film', view='accountWizard', subview='account_videos', sort_order=4, visible=1, permission_code='public'"
+            );
             DB::query("UPDATE navigation_menus SET parent_id=400, title='矩阵任务', icon='list', view='accountWork', subview='list', sort_order=4, visible=1 WHERE id=116");
             // 旧「自动养号」直挂 AI矩阵 的重复项隐藏（功能已迁到账号向导下）
             DB::query("UPDATE navigation_menus SET visible=0 WHERE parent_id=400 AND view='warm' AND title='自动养号' AND id<>115");

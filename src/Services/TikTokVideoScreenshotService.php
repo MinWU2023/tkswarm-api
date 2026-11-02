@@ -116,31 +116,69 @@ class TikTokVideoScreenshotService
     /**
      * @return list<array<string,mixed>>
      */
-    public static function listLatest(int $accountId, string $videoId, int $limit = self::KEEP_LATEST): array
+    public static function listLatest(int $accountId, string $videoId, int $limit = self::KEEP_LATEST, bool $withBase64 = false): array
     {
         self::ensureSchema();
         $limit = max(1, min(20, $limit));
+        $cols = $withBase64
+            ? 'id, account_id, video_id, video_url, mime_type, source, page_url, created_at, screenshot_base64'
+            : 'id, account_id, video_id, video_url, mime_type, source, page_url, created_at, LEFT(screenshot_base64, 48) AS preview';
         $rows = DB::select(
-            "SELECT id, account_id, video_id, video_url, mime_type, source, page_url, created_at,
-                    LEFT(screenshot_base64, 48) AS preview
+            "SELECT {$cols}
              FROM tiktok_video_screenshots
              WHERE account_id=? AND video_id=?
              ORDER BY id DESC
              LIMIT {$limit}",
             [$accountId, mb_substr(trim($videoId), 0, 64)]
         ) ?: [];
-        return array_map(static function ($r) {
-            return [
+        return array_map(static function ($r) use ($withBase64) {
+            $mime = (string)($r['mime_type'] ?? 'image/jpeg') ?: 'image/jpeg';
+            $item = [
                 'id' => (int)($r['id'] ?? 0),
                 'accountId' => (int)($r['account_id'] ?? 0),
                 'videoId' => (string)($r['video_id'] ?? ''),
                 'videoUrl' => (string)($r['video_url'] ?? ''),
-                'mimeType' => (string)($r['mime_type'] ?? ''),
+                'mimeType' => $mime,
                 'source' => (string)($r['source'] ?? ''),
                 'pageUrl' => (string)($r['page_url'] ?? ''),
                 'createdAt' => (string)($r['created_at'] ?? ''),
-                'hasBase64' => strlen((string)($r['preview'] ?? '')) > 0,
+                'hasBase64' => $withBase64
+                    ? strlen((string)($r['screenshot_base64'] ?? '')) > 0
+                    : strlen((string)($r['preview'] ?? '')) > 0,
             ];
+            if ($withBase64) {
+                $raw = (string)($r['screenshot_base64'] ?? '');
+                $item['screenshotBase64'] = $raw === ''
+                    ? ''
+                    : (str_starts_with($raw, 'data:') ? $raw : ('data:' . $mime . ';base64,' . $raw));
+            }
+            return $item;
         }, $rows);
+    }
+
+    /** @return array<string,int> video_id => count */
+    public static function countByVideos(int $accountId, array $videoIds): array
+    {
+        self::ensureSchema();
+        $ids = array_values(array_unique(array_filter(array_map(
+            static fn($v) => mb_substr(trim((string)$v), 0, 64),
+            $videoIds
+        ))));
+        if ($accountId < 1 || !$ids) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $rows = DB::select(
+            "SELECT video_id, COUNT(*) AS cnt
+             FROM tiktok_video_screenshots
+             WHERE account_id=? AND video_id IN ({$ph})
+             GROUP BY video_id",
+            array_merge([$accountId], $ids)
+        ) ?: [];
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(string)($r['video_id'] ?? '')] = (int)($r['cnt'] ?? 0);
+        }
+        return $out;
     }
 }

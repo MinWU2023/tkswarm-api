@@ -1759,7 +1759,8 @@ class NodeBridgeController extends Controller
             return $err;
         }
         $limit = (int)$request->input('limit', 5);
-        $items = \App\Services\TikTokVideoScreenshotService::listLatest((int)$id, $videoId, $limit);
+        $withBase64 = filter_var($request->input('withBase64', $request->input('with_base64', false)), FILTER_VALIDATE_BOOLEAN);
+        $items = \App\Services\TikTokVideoScreenshotService::listLatest((int)$id, $videoId, $limit, $withBase64);
         return $this->success([
             'accountId' => (int)$id,
             'videoId' => $videoId,

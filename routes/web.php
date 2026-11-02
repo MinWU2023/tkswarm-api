@@ -264,6 +264,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/accounts/{id}/profile-change-logs', AccountController::class . '@profileChangeLogs');
     Router::get('/api/accounts/{id}/tiktok-profile', AccountController::class . '@tiktokProfile');
     Router::get('/api/accounts/{id}/tiktok-videos', AccountController::class . '@tiktokVideos');
+    Router::get('/api/accounts/{id}/online-videos', AccountController::class . '@onlineVideos');
+    Router::get('/api/accounts/{id}/tiktok-videos/{videoId}/screenshots', AccountController::class . '@tiktokVideoScreenshots');
     Router::get('/api/accounts/{id}/tiktok-stats', AccountController::class . '@tiktokStats');
     Router::post('/api/accounts/{id}/send-data-analysis-mail', AccountController::class . '@sendDataAnalysisMail');
     Router::patch('/api/accounts/{id}/data-mail-push', AccountController::class . '@patchDataMailPush');
