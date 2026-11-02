@@ -261,6 +261,96 @@ class PortalApiController extends Controller
     }
 
     /**
+     * 企业门户消息通知（基于账号状态与发布进度的运营提醒）
+     */
+    public function notifications(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $items = [];
+
+        $offline = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM accounts a
+             WHERE COALESCE(a.login_status,'')<>'online'{$scopeSql}",
+            $scopeParams
+        )['c'] ?? 0);
+        if ($offline > 0) {
+            $items[] = [
+                'id' => 'acct-offline',
+                'title' => '账号离线提醒',
+                'body' => "当前有 {$offline} 个账号未在线，可能影响发布与数据拉取。",
+                'level' => 'warn',
+                'createdAt' => date('Y-m-d H:i:s'),
+            ];
+        }
+
+        $publishing = 0;
+        try {
+            $publishing = (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM materials m
+                 INNER JOIN accounts a ON a.id = m.publish_account_id
+                 WHERE m.publish_status='publishing'{$scopeSql}",
+                $scopeParams
+            )['c'] ?? 0);
+        } catch (\Throwable $e) {
+            $publishing = 0;
+        }
+        if ($publishing > 0) {
+            $items[] = [
+                'id' => 'pub-progress',
+                'title' => '发布进行中',
+                'body' => "有 {$publishing} 条视频仍在发布中，可在控制面板查看进度。",
+                'level' => 'info',
+                'createdAt' => date('Y-m-d H:i:s'),
+            ];
+        }
+
+        $clueNew = 0;
+        $ownerId = DataScope::filterOwnerId();
+        try {
+            $clueWhere = $ownerId !== null ? ' AND l.owner_id=?' : '';
+            $clueBind = $ownerId !== null ? [$ownerId] : [];
+            $clueNew = (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM ai_lead_clue_items x
+                 INNER JOIN ai_leads l ON l.id = x.lead_id
+                 WHERE x.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY){$clueWhere}",
+                $clueBind
+            )['c'] ?? 0);
+        } catch (\Throwable $e) {
+            $clueNew = 0;
+        }
+        if ($clueNew > 0) {
+            $items[] = [
+                'id' => 'clue-week',
+                'title' => '拓客线索更新',
+                'body' => "近 7 天新增 {$clueNew} 条拓客线索，可前往「拓客线索」查看。",
+                'level' => 'success',
+                'createdAt' => date('Y-m-d H:i:s'),
+            ];
+        }
+
+        if (!$items) {
+            $items[] = [
+                'id' => 'all-clear',
+                'title' => '暂无新消息',
+                'body' => '当前没有需要处理的提醒，账号与发布状态正常。',
+                'level' => 'info',
+                'createdAt' => date('Y-m-d H:i:s'),
+            ];
+        }
+
+        return $this->success([
+            'items' => $items,
+            'unread' => count(array_filter($items, static fn($x) => ($x['id'] ?? '') !== 'all-clear')),
+        ]);
+    }
+
+    /**
      * 控制面板：近 28 天数据 + 历史快照（按账号；无数据时 28 天补 0）
      */
     public function dashboardCharts(Request $request): Response

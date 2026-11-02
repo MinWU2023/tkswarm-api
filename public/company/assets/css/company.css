@@ -238,6 +238,22 @@ html { color-scheme: light; }
   align-items: center;
   gap: 10px;
 }
+.user-chip-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--cx-line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 12px 4px 4px;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color .2s var(--cx-ease), box-shadow .2s var(--cx-ease);
+}
+.user-chip-trigger:hover {
+  border-color: rgba(59, 158, 255, .45);
+  box-shadow: 0 4px 14px rgba(59, 158, 255, .12);
+}
 .user-chip-avatar {
   width: 32px;
   height: 32px;
@@ -254,6 +270,56 @@ html { color-scheme: light; }
   font-size: 13px;
   font-weight: 600;
   color: var(--cx-text);
+}
+.user-chip-caret {
+  color: var(--cx-faint);
+  font-size: 12px;
+}
+.user-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f43f5e;
+  box-shadow: 0 0 0 2px #fff;
+}
+.user-dd-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 132px;
+}
+.user-dd-item.is-danger { color: #e11d48; }
+.user-dd-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f43f5e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+}
+.notice-list { display: grid; gap: 10px; }
+.notice-card {
+  border: 1px solid var(--cx-line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.notice-card.level-warn { border-color: rgba(249, 115, 22, .28); background: #fffaf5; }
+.notice-card.level-success { border-color: rgba(16, 185, 129, .28); background: #f4fdf8; }
+.notice-card.level-info { border-color: rgba(59, 158, 255, .22); background: #f7fbff; }
+.notice-title { font-size: 14px; font-weight: 700; color: var(--cx-ink); }
+.notice-body { margin-top: 6px; font-size: 13px; color: var(--cx-text); line-height: 1.55; }
+.notice-time { margin-top: 8px; font-size: 11px; color: var(--cx-faint); }
+.notice-empty {
+  padding: 48px 12px;
+  text-align: center;
+  color: var(--cx-faint);
+  font-size: 13px;
 }
 .content {
   padding: 24px 28px 40px;

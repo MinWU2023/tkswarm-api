@@ -53,11 +53,15 @@
     setToken: setToken,
     get: function (path) { return request(path, { method: 'GET' }); },
     post: function (path, body) { return request(path, { method: 'POST', body: body }); },
+    put: function (path, body) { return request(path, { method: 'PUT', body: body }); },
 
     captcha: function () { return request('/api/company/auth/captcha', { method: 'GET' }); },
     login: function (body) { return request('/api/company/auth/login', { method: 'POST', body: body }); },
     logout: function () { return request('/api/company/auth/logout', { method: 'POST', body: {} }); },
     authStatus: function () { return request('/api/company/auth/status', { method: 'GET' }); },
+    updatePassword: function (body) {
+      return request('/api/company/auth/password', { method: 'PUT', body: body });
+    },
 
     dashboard: function () { return request('/api/company/dashboard', { method: 'GET' }); },
     dashboardPublishes: function (params) {
@@ -66,6 +70,7 @@
     dashboardCharts: function (params) {
       return request('/api/company/dashboard/charts' + qs(params), { method: 'GET' });
     },
+    notifications: function () { return request('/api/company/notifications', { method: 'GET' }); },
     accounts: function (params) { return request('/api/company/accounts' + qs(params), { method: 'GET' }); },
     videos: function (params) { return request('/api/company/videos' + qs(params), { method: 'GET' }); },
     clues: function (params) { return request('/api/company/clues' + qs(params), { method: 'GET' }); },

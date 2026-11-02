@@ -130,6 +130,27 @@ class AuthController extends Controller
         return $this->success(null, '已退出');
     }
 
+    public function updatePassword(Request $request): Response
+    {
+        [$user, $err] = self::requireEnterprise($request);
+        if ($err) {
+            return $err;
+        }
+        $oldPassword = (string)$request->post('oldPassword', $request->input('oldPassword', ''));
+        $newPassword = (string)$request->post('newPassword', $request->input('newPassword', ''));
+        if (strlen($newPassword) < 6) {
+            return $this->error('新密码长度不能少于 6 位', 422);
+        }
+        if ($oldPassword === '' || !password_verify($oldPassword, (string)($user['password_hash'] ?? ''))) {
+            return $this->error('原密码不正确', 422);
+        }
+        DB::table('admin_users')->where('id', (int)$user['id'])->update([
+            'password_hash' => password_hash($newPassword, PASSWORD_DEFAULT),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+        return $this->success(null, '密码修改成功');
+    }
+
     private function bearer(Request $request): string
     {
         $token = $request->bearerToken()
