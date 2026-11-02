@@ -1596,6 +1596,8 @@ class MaterialController extends Controller
         try {
             DB::query("ALTER TABLE materials MODIFY path VARCHAR(500) NOT NULL DEFAULT ''");
             DB::query("ALTER TABLE materials MODIFY type VARCHAR(32) NOT NULL DEFAULT 'video'");
+            // 话题标签列表常超过 255（多个 #tag），避免保存被截断导致发布无标签
+            DB::query('ALTER TABLE materials MODIFY tags TEXT NOT NULL');
         } catch (\Throwable $e) {
         }
         try {
