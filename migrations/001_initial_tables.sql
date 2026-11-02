@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS `accounts` (
 
 CREATE TABLE IF NOT EXISTS `tasks` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `name` VARCHAR(100) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
   `type` VARCHAR(50) NOT NULL,
   `account_id` INT NULL,
   `status` ENUM('draft','queued','running','completed','failed','cancelled') NOT NULL DEFAULT 'queued',

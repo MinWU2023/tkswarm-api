@@ -291,7 +291,9 @@ class TaskController extends Controller
             if ($taskName === '') {
                 $taskName = "独立发布 account({$uname})-video({$mname})";
             }
-            $taskName = mb_substr(preg_replace('/[\\\\\/:*?"<>|\r\n]+/u', '', $taskName) ?: '独立发布', 0, 160);
+            $taskName = self::clampTaskName(
+                preg_replace('/[\\\\\/:*?"<>|\r\n]+/u', '', $taskName) ?: '独立发布'
+            );
             $payload = [
                 'pushChannel' => 'bit',
                 'accountIds' => [$accountId],
@@ -999,13 +1001,25 @@ class TaskController extends Controller
             $scheduled = null;
         }
         return [
-            'name' => trim((string)$request->input('name', '')),
+            'name' => self::clampTaskName((string)$request->input('name', '')),
             'type' => $type,
             'groupId' => ($groupId === null || $groupId === '') ? null : (int)$groupId,
             'totalCount' => max(0, (int)$request->input('totalCount', 0)),
             'scheduledAt' => $scheduled,
             'payload' => $payload,
         ];
+    }
+
+    /** tasks.name 上限（与 ensureSchema / 迁移一致） */
+    private const TASK_NAME_MAX = 255;
+
+    private static function clampTaskName(string $name): string
+    {
+        $name = trim(preg_replace('/[\r\n]+/u', ' ', $name) ?? $name);
+        if ($name === '') {
+            return '';
+        }
+        return mb_substr($name, 0, self::TASK_NAME_MAX);
     }
 
     private function validateBody(array $body): ?string
@@ -1263,6 +1277,8 @@ class TaskController extends Controller
             DB::query("ALTER TABLE tasks MODIFY payload MEDIUMTEXT NULL");
             DB::query("ALTER TABLE tasks MODIFY status VARCHAR(32) NOT NULL DEFAULT 'draft'");
             DB::query("ALTER TABLE tasks MODIFY type VARCHAR(50) NOT NULL");
+            // install.sql / 旧库多为 VARCHAR(100)，长标题素材拼任务名会 1406
+            DB::query('ALTER TABLE tasks MODIFY name VARCHAR(255) NOT NULL');
         } catch (\Throwable $e) {
         }
             try {
