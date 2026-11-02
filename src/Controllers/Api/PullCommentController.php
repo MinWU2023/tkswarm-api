@@ -117,34 +117,36 @@ class PullCommentController extends Controller
         DataScope::ensureColumns();
         PullCommentService::ensureSchema();
         \App\Services\AccountWorkBatchService::ensureMaterialsPublishColumns();
-        // 已标记发布但缺平台链接：尽量用账号已同步的 tiktok_videos 回填，否则列表会一直空
-        try {
-            [$scopeSql, $scopeParams] = DataScope::materialListSql('m');
-            $need = DB::select(
-                "SELECT m.id, m.publish_account_id FROM materials m
-                 WHERE m.publish_status='published'
-                   AND m.publish_account_id>0
-                   AND m.platform_video_id='' AND m.platform_video_url=''" . $scopeSql . '
-                 ORDER BY m.id DESC LIMIT 50',
-                $scopeParams
-            ) ?: [];
-            foreach ($need as $row) {
-                \App\Services\AccountWorkBatchService::backfillPlatformVideoFromSyncedVideos(
-                    (int)($row['id'] ?? 0),
-                    (int)($row['publish_account_id'] ?? 0)
-                );
+        // 列表热路径禁止同步回填（会扫库+写库，打开选择器极慢）；仅 sync=1 时补一次
+        $doSync = filter_var($request->input('sync', false), FILTER_VALIDATE_BOOLEAN);
+        if ($doSync) {
+            try {
+                [$scopeSql, $scopeParams] = DataScope::materialListSql('m');
+                $need = DB::select(
+                    "SELECT m.id, m.publish_account_id FROM materials m
+                     WHERE m.publish_status='published'
+                       AND m.publish_account_id>0
+                       AND m.platform_video_id='' AND m.platform_video_url=''" . $scopeSql . '
+                     ORDER BY m.id DESC LIMIT 50',
+                    $scopeParams
+                ) ?: [];
+                foreach ($need as $row) {
+                    \App\Services\AccountWorkBatchService::backfillPlatformVideoFromSyncedVideos(
+                        (int)($row['id'] ?? 0),
+                        (int)($row['publish_account_id'] ?? 0)
+                    );
+                }
+            } catch (\Throwable $e) {
+                // 回填失败不阻断列表
             }
-        } catch (\Throwable $e) {
-            // 回填失败不阻断列表
-        }
-        // 拉取视频列表已写入 tiktok_videos 但 materials 入库失败时：补成 origin=online 素材，便于本页勾选拉评论
-        try {
-            PullCommentService::backfillOnlineMaterialsFromSyncedVideos(
-                (int)$request->input('accountId', $request->input('account_id', 0)),
-                80
-            );
-        } catch (\Throwable $e) {
-            // ignore
+            try {
+                PullCommentService::backfillOnlineMaterialsFromSyncedVideos(
+                    (int)$request->input('accountId', $request->input('account_id', 0)),
+                    80
+                );
+            } catch (\Throwable $e) {
+                // ignore
+            }
         }
         $filters = ["m.publish_status='published'"];
         $params = [];
@@ -170,7 +172,8 @@ class PullCommentController extends Controller
         }
         $where = 'WHERE ' . implode(' AND ', $filters) . $matSql;
         $page = max(1, (int)$request->input('page', 1));
-        $pageSize = max(1, min(200, (int)$request->input('pageSize', $request->input('page_size', 100))));
+        // 默认 24，上限 50：列表禁止带 cover_base64，缩略图走 /cover
+        $pageSize = max(1, min(50, (int)$request->input('pageSize', $request->input('page_size', 24))));
         $total = (int)(DB::selectOne(
             "SELECT COUNT(*) AS c FROM materials m
              LEFT JOIN accounts a ON a.id=m.publish_account_id
@@ -181,9 +184,10 @@ class PullCommentController extends Controller
         $page = min($page, $pages);
         $offset = ($page - 1) * $pageSize;
         $rows = DB::select(
-            "SELECT m.id, m.name, m.file_name, m.cover_base64, m.publish_account_id, m.publish_account,
+            "SELECT m.id, m.name, m.file_name, m.publish_account_id, m.publish_account,
                     m.platform_video_id, m.platform_video_url, m.share_title, m.view_count, m.like_count,
                     m.comment_count, m.platform_published_at, m.last_comment_pulled_at, m.created_at, m.origin,
+                    CASE WHEN m.cover_base64 IS NOT NULL AND m.cover_base64 <> '' THEN 1 ELSE 0 END AS has_cover,
                     a.username AS publish_account_name, a.nickname AS publish_account_nickname
              FROM materials m
              LEFT JOIN accounts a ON a.id=m.publish_account_id
@@ -194,25 +198,15 @@ class PullCommentController extends Controller
         ) ?: [];
         $items = array_map(static function (array $r): array {
             $origin = trim((string)($r['origin'] ?? 'local'));
-            $cover = (string)($r['cover_base64'] ?? '');
             $id = (int)$r['id'];
-            // 列表不塞超长 base64；http(s)/短 data 可直接作缩略图
-            $coverOut = '';
-            if ($cover !== '') {
-                if (str_starts_with($cover, 'http://') || str_starts_with($cover, 'https://')) {
-                    $coverOut = $cover;
-                } elseif (str_starts_with($cover, 'data:') && strlen($cover) < 120000) {
-                    $coverOut = $cover;
-                } elseif (strlen($cover) < 800) {
-                    $coverOut = $cover;
-                }
-            }
+            $hasCover = (int)($r['has_cover'] ?? 0) === 1;
             return [
                 'id' => $id,
                 'name' => (string)($r['name'] ?? ''),
                 'fileName' => (string)($r['file_name'] ?? ''),
-                'coverBase64' => $coverOut,
-                'coverUrl' => $id > 0 ? ('/api/materials/' . $id . '/cover') : '',
+                'hasCover' => $hasCover,
+                'coverBase64' => '',
+                'coverUrl' => ($id > 0 && $hasCover) ? ('/api/materials/' . $id . '/cover') : '',
                 'publishAccountId' => (int)($r['publish_account_id'] ?? 0),
                 'publishAccount' => (string)($r['publish_account'] ?? $r['publish_account_name'] ?? ''),
                 'publishAccountNickname' => (string)($r['publish_account_nickname'] ?? ''),

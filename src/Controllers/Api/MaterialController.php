@@ -91,7 +91,7 @@ class MaterialController extends Controller
             ]);
         }
 
-        // 无分页：仍排除封面，并硬顶 500，避免 loadRefs 拖垮
+        // 无分页：仍排除封面，并硬顶 100，避免 loadRefs 拖垮
         $rows = DB::select(
             "{$select}
              FROM materials m
@@ -99,7 +99,7 @@ class MaterialController extends Controller
              LEFT JOIN accounts a ON a.id = m.publish_account_id
              {$where}
              ORDER BY m.id DESC
-             LIMIT 500",
+             LIMIT 100",
             $params
         );
         return $this->success(array_map(fn ($r) => $this->mapRow($r, $includeCover), $rows ?: []));
@@ -110,7 +110,7 @@ class MaterialController extends Controller
     {
         $coverCol = $includeCover
             ? 'm.cover_base64'
-            : "CASE WHEN m.cover_base64 IS NOT NULL AND TRIM(m.cover_base64) <> '' THEN 1 ELSE 0 END AS has_cover";
+            : "CASE WHEN m.cover_base64 IS NOT NULL AND m.cover_base64 <> '' THEN 1 ELSE 0 END AS has_cover";
         return "SELECT m.id, m.name, m.file_path, m.file_name, m.file_ext, m.mime_type, m.size_bytes,
                 m.description, m.tags, m.status, m.publish_status, m.publish_account_id, m.publish_account,
                 m.sha256, m.share_title, m.share_caption, m.owner_id, m.created_at, m.updated_at,
