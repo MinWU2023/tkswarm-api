@@ -47,6 +47,9 @@ use App\Controllers\Admin\ContactManageController;
 use App\Controllers\Admin\VersionManageController;
 use App\Controllers\Admin\HelpManageController;
 use App\Controllers\Admin\EnvInstallerManageController;
+use App\Controllers\Company\PortalController as CompanyPortalController;
+use App\Controllers\Company\AuthController as CompanyAuthController;
+use App\Controllers\Company\PortalApiController as CompanyPortalApiController;
 use App\Controllers\Web\LandingController;
 
 // 公开：登录相关 + 客户端版本目录/下载（供 EXE 使用）
@@ -96,6 +99,27 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/admin/site-settings', ConsoleController::class . '@spa');
     Router::get('/admin/task-reset', ConsoleController::class . '@spa');
     Router::get('/admin/task-clear', ConsoleController::class . '@spa');
+
+    // 企业客户门户 SPA（独立于 /admin；仅企业客户角色可登录）
+    Router::get('/company', CompanyPortalController::class . '@spa');
+    Router::get('/company/', CompanyPortalController::class . '@spa');
+    Router::get('/company/login', CompanyPortalController::class . '@spa');
+    Router::get('/company/dashboard', CompanyPortalController::class . '@spa');
+    Router::get('/company/accounts', CompanyPortalController::class . '@spa');
+    Router::get('/company/videos', CompanyPortalController::class . '@spa');
+    Router::get('/company/clues', CompanyPortalController::class . '@spa');
+    Router::get('/company/analytics', CompanyPortalController::class . '@spa');
+
+    Router::get('/api/company/auth/captcha', CompanyAuthController::class . '@captcha');
+    Router::get('/api/company/auth/status', CompanyAuthController::class . '@status');
+    Router::post('/api/company/auth/login', CompanyAuthController::class . '@login');
+    Router::post('/api/company/auth/logout', CompanyAuthController::class . '@logout');
+
+    Router::get('/api/company/dashboard', CompanyPortalApiController::class . '@dashboard');
+    Router::get('/api/company/accounts', CompanyPortalApiController::class . '@accounts');
+    Router::get('/api/company/videos', CompanyPortalApiController::class . '@videos');
+    Router::get('/api/company/clues', CompanyPortalApiController::class . '@clues');
+    Router::get('/api/company/analytics', CompanyPortalApiController::class . '@analytics');
 });
 
 // 需登录（authEnabled=false 时 AuthMiddleware 放行 guest 超管）
