@@ -88,16 +88,18 @@ class AiLeadClueController extends Controller
         $pages = max(1, (int)ceil($total / $pageSize));
         $summary = $this->fetchClueSummary($where, $params, $unionSql);
 
-        $sharedCounts = $this->fetchCommentSharedCounts($rows);
+        $commentSharedCounts = $this->fetchCommentSharedCounts($rows);
+        $creatorSharedCounts = $this->fetchCreatorSharedCounts($rows);
 
         return $this->success([
-            'items' => array_map(function (array $row) use ($sharedCounts) {
+            'items' => array_map(function (array $row) use ($commentSharedCounts, $creatorSharedCounts) {
                 $mapped = $this->mapClue($row);
-                $isComment = (string)($row['source_type'] ?? '') === 'comment';
-                $mapped['canShare'] = $isComment;
-                $mapped['sharedUserCount'] = $isComment
-                    ? (int)($sharedCounts[(int)($row['source_id'] ?? 0)] ?? 0)
-                    : 0;
+                $sourceType = (string)($row['source_type'] ?? '');
+                $sourceId = (int)($row['source_id'] ?? 0);
+                $mapped['canShare'] = $sourceType === 'comment' || $sourceType === 'creator';
+                $mapped['sharedUserCount'] = $sourceType === 'comment'
+                    ? (int)($commentSharedCounts[$sourceId] ?? 0)
+                    : (int)($creatorSharedCounts[$sourceId] ?? 0);
                 return $mapped;
             }, $rows),
             'total' => $total,
@@ -142,36 +144,72 @@ class AiLeadClueController extends Controller
         $minScore = (int)$request->get('minScore', $request->get('min_score', 0));
         $industryId = (int)$request->get('industryId', $request->get('industry_id', 0));
 
-        $filters = ['su.user_id=?'];
-        $params = [$userId];
+        $cmFilters = ['su.user_id=?', 'cm.ai_pass=1'];
+        $cmParams = [$userId];
+        $crFilters = ['su.user_id=?'];
+        $crParams = [$userId];
         if ($leadId > 0) {
-            $filters[] = 'cm.lead_id=?';
-            $params[] = $leadId;
+            $cmFilters[] = 'cm.lead_id=?';
+            $cmParams[] = $leadId;
+            $crFilters[] = 'c.lead_id=?';
+            $crParams[] = $leadId;
         }
         if ($minScore > 0) {
-            $filters[] = 'cm.intent_score>=?';
-            $params[] = min(10, $minScore);
+            $score = min(10, $minScore);
+            $cmFilters[] = 'cm.intent_score>=?';
+            $cmParams[] = $score;
+            $crFilters[] = 'c.intent_score>=?';
+            $crParams[] = $score;
         }
         if ($keyword !== '') {
-            $filters[] = '(cm.nickname LIKE ? OR cm.username LIKE ? OR l.keywords LIKE ? OR cm.comment_text LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($params, $like, $like, $like, $like);
+            $cmFilters[] = '(cm.nickname LIKE ? OR cm.username LIKE ? OR l.keywords LIKE ? OR cm.comment_text LIKE ?)';
+            array_push($cmParams, $like, $like, $like, $like);
+            $crFilters[] = '(c.nickname LIKE ? OR c.username LIKE ? OR l.keywords LIKE ?)';
+            array_push($crParams, $like, $like, $like);
         }
-        $this->applyIndustryFilter($industryId, $filters, $params, 'cm');
-        $where = 'WHERE ' . implode(' AND ', $filters);
+        $this->applyIndustryFilter($industryId, $cmFilters, $cmParams, 'cm');
+        // 用户线索行业取任务行业
+        if ($industryId > 0) {
+            $ids = IndustryDataService::descendantIds($industryId);
+            $ids[] = $industryId;
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+            if ($ids) {
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+                $crFilters[] = "COALESCE(l.industry_id, 0) IN ({$ph})";
+                array_push($crParams, ...$ids);
+            }
+        }
 
-        $baseSql = "FROM ai_lead_comments cm
+        $cmWhere = 'WHERE ' . implode(' AND ', $cmFilters);
+        $crWhere = 'WHERE ' . implode(' AND ', $crFilters);
+        $unionSql = "(
+            SELECT 'comment' AS source_type, cm.id AS source_id, cm.lead_id, cm.username, cm.nickname,
+                   cm.profile_url, cm.uuid, cm.intent_score, cm.comment_text, cm.comment_text_zh,
+                   cm.ai_reason, cm.industry_id, cm.video_id, cm.created_at,
+                   l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+            FROM ai_lead_comments cm
             INNER JOIN ai_lead_comment_shared_users su ON su.comment_id=cm.id
             INNER JOIN ai_leads l ON l.id=cm.lead_id
-            {$where} AND cm.ai_pass=1";
+            {$cmWhere}
+          ) UNION ALL (
+            SELECT 'creator' AS source_type, c.id AS source_id, c.lead_id, c.username, c.nickname,
+                   c.profile_url, c.uuid, c.intent_score, '' AS comment_text, '' AS comment_text_zh,
+                   '' AS ai_reason, COALESCE(l.industry_id, 0) AS industry_id, 0 AS video_id, c.created_at,
+                   l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+            FROM ai_lead_creators c
+            INNER JOIN ai_lead_creator_shared_users su ON su.creator_id=c.id
+            INNER JOIN ai_leads l ON l.id=c.lead_id
+            {$crWhere}
+          )";
+        $unionParams = array_merge($cmParams, $crParams);
 
-        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$baseSql}", $params)['c'] ?? 0);
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM ({$unionSql}) x", $unionParams)['c'] ?? 0);
         $rows = DB::select(
-            "SELECT cm.*, l.keywords AS lead_keywords, l.type AS lead_type
-             {$baseSql}
-             ORDER BY cm.intent_score DESC, cm.created_at DESC, cm.id DESC
+            "SELECT * FROM ({$unionSql}) x
+             ORDER BY x.intent_score DESC, x.created_at DESC, x.source_id DESC
              LIMIT {$pageSize} OFFSET {$offset}",
-            $params
+            $unionParams
         ) ?: [];
         $pages = max(1, (int)ceil($total / $pageSize));
 
@@ -194,28 +232,42 @@ class AiLeadClueController extends Controller
             return $this->error('请先登录', 401);
         }
         $parsed = $this->parseClueKey($key);
-        if (!$parsed || $parsed['sourceType'] !== 'comment') {
+        if (!$parsed || !in_array($parsed['sourceType'], ['comment', 'creator'], true)) {
             return $this->error('无效线索标识', 422);
         }
-        $row = DB::selectOne(
-            "SELECT cm.*, l.keywords AS lead_keywords, l.type AS lead_type
-             FROM ai_lead_comments cm
-             INNER JOIN ai_lead_comment_shared_users su ON su.comment_id=cm.id AND su.user_id=?
-             INNER JOIN ai_leads l ON l.id=cm.lead_id
-             WHERE cm.id=? AND cm.ai_pass=1",
-            [$userId, $parsed['sourceId']]
-        );
+        if ($parsed['sourceType'] === 'comment') {
+            $row = DB::selectOne(
+                "SELECT 'comment' AS source_type, cm.id AS source_id, cm.*, l.keywords AS lead_keywords,
+                        l.type AS lead_type, l.name AS lead_name
+                 FROM ai_lead_comments cm
+                 INNER JOIN ai_lead_comment_shared_users su ON su.comment_id=cm.id AND su.user_id=?
+                 INNER JOIN ai_leads l ON l.id=cm.lead_id
+                 WHERE cm.id=? AND cm.ai_pass=1",
+                [$userId, $parsed['sourceId']]
+            );
+        } else {
+            $row = DB::selectOne(
+                "SELECT 'creator' AS source_type, c.id AS source_id, c.*, '' AS comment_text, '' AS comment_text_zh,
+                        '' AS ai_reason, COALESCE(l.industry_id, 0) AS industry_id, 0 AS video_id,
+                        l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+                 FROM ai_lead_creators c
+                 INNER JOIN ai_lead_creator_shared_users su ON su.creator_id=c.id AND su.user_id=?
+                 INNER JOIN ai_leads l ON l.id=c.lead_id
+                 WHERE c.id=?",
+                [$userId, $parsed['sourceId']]
+            );
+        }
         if (!$row) {
             return $this->error('线索不存在或无权查看', 404);
         }
         $mapped = $this->mapClueDataRow($row);
-        $cm = DB::selectOne(
+        $cm = $parsed['sourceType'] === 'comment' ? DB::selectOne(
             "SELECT cm.*, v.video_url, v.video_name, v.video_cover, v.likes AS video_likes, v.views AS video_views
              FROM ai_lead_comments cm
              LEFT JOIN ai_lead_videos v ON v.id=cm.video_id
              WHERE cm.id=?",
             [$parsed['sourceId']]
-        );
+        ) : null;
         if ($cm) {
             $mapped['comment'] = [
                 'commentText' => (string)($cm['comment_text'] ?? ''),
@@ -352,14 +404,14 @@ class AiLeadClueController extends Controller
 
         if ($parsed['sourceType'] === 'comment') {
             $sharedUsers = $this->fetchCommentSharedUsers($parsed['sourceId']);
-            $mapped['sharedUsers'] = $sharedUsers;
-            $mapped['sharedUserCount'] = count($sharedUsers);
-            $mapped['canShare'] = true;
+        } elseif ($parsed['sourceType'] === 'creator') {
+            $sharedUsers = $this->fetchCreatorSharedUsers($parsed['sourceId']);
         } else {
-            $mapped['sharedUsers'] = [];
-            $mapped['sharedUserCount'] = 0;
-            $mapped['canShare'] = false;
+            $sharedUsers = [];
         }
+        $mapped['sharedUsers'] = $sharedUsers;
+        $mapped['sharedUserCount'] = count($sharedUsers);
+        $mapped['canShare'] = $parsed['sourceType'] === 'comment' || $parsed['sourceType'] === 'creator';
 
         return $this->success($mapped);
     }
@@ -447,7 +499,7 @@ class AiLeadClueController extends Controller
         }
 
         $commentIds = [];
-        $skippedCreators = 0;
+        $creatorIds = [];
         $invalid = 0;
         foreach ($clueKeys as $key) {
             $parsed = $this->parseClueKey((string)$key);
@@ -455,11 +507,7 @@ class AiLeadClueController extends Controller
                 $invalid++;
                 continue;
             }
-            if ($parsed['sourceType'] !== 'comment') {
-                $skippedCreators++;
-                continue;
-            }
-            $row = $this->fetchClueRow('comment', $parsed['sourceId']);
+            $row = $this->fetchClueRow($parsed['sourceType'], $parsed['sourceId']);
             if (!$row) {
                 $invalid++;
                 continue;
@@ -468,31 +516,45 @@ class AiLeadClueController extends Controller
             if ($err = $this->assertOwns($lead)) {
                 return $err;
             }
-            $commentIds[] = $parsed['sourceId'];
+            if ($parsed['sourceType'] === 'comment') {
+                $commentIds[] = $parsed['sourceId'];
+            } elseif ($parsed['sourceType'] === 'creator') {
+                $creatorIds[] = $parsed['sourceId'];
+            } else {
+                $invalid++;
+            }
         }
         $commentIds = array_values(array_unique($commentIds));
-        if (!$commentIds) {
-            $msg = '没有可抄送的评论线索';
-            if ($skippedCreators > 0) {
-                $msg .= '（用户线索不支持抄送，请勾选评论线索）';
-            }
-            return $this->error($msg, 422);
+        $creatorIds = array_values(array_unique($creatorIds));
+        if (!$commentIds && !$creatorIds) {
+            return $this->error('没有可抄送的线索', 422);
         }
 
-        $result = AiLeadExecutionService::shareCommentsToUsers($commentIds, $validUserIds);
-        $result['skippedCreators'] = $skippedCreators;
-        $result['invalid'] = $invalid;
-        $result['roleName'] = $roleName;
+        $commentResult = $commentIds
+            ? AiLeadExecutionService::shareCommentsToUsers($commentIds, $validUserIds)
+            : ['comments' => 0, 'users' => count($validUserIds), 'links' => 0, 'created' => 0];
+        $creatorResult = $creatorIds
+            ? AiLeadExecutionService::shareCreatorsToUsers($creatorIds, $validUserIds)
+            : ['creators' => 0, 'users' => count($validUserIds), 'links' => 0, 'created' => 0];
+
+        $result = [
+            'comments' => (int)$commentResult['comments'],
+            'creators' => (int)$creatorResult['creators'],
+            'users' => count($validUserIds),
+            'links' => (int)$commentResult['links'] + (int)$creatorResult['links'],
+            'created' => (int)$commentResult['created'] + (int)$creatorResult['created'],
+            'invalid' => $invalid,
+            'roleName' => $roleName,
+        ];
 
         $msg = sprintf(
-            '已抄送 %d 条评论线索给 %d 位客户（新建 %d 条共享关联）',
-            $result['comments'],
+            '已抄送 %d 条线索给 %d 位客户（评论 %d / 用户 %d，新建 %d 条共享关联）',
+            $result['comments'] + $result['creators'],
             $result['users'],
+            $result['comments'],
+            $result['creators'],
             $result['created']
         );
-        if ($skippedCreators > 0) {
-            $msg .= sprintf('，跳过 %d 条用户线索', $skippedCreators);
-        }
         return $this->success($result, $msg);
     }
 
@@ -959,6 +1021,11 @@ class AiLeadClueController extends Controller
     /** @param array<string,mixed> $row */
     private function mapClueDataRow(array $row): array
     {
+        $sourceType = (string)($row['source_type'] ?? 'comment');
+        if ($sourceType !== 'creator') {
+            $sourceType = 'comment';
+        }
+        $sourceId = (int)($row['source_id'] ?? $row['id'] ?? 0);
         $profileUrl = trim((string)($row['profile_url'] ?? ''));
         $username = trim((string)($row['username'] ?? ''));
         if ($profileUrl === '' && $username !== '') {
@@ -973,11 +1040,12 @@ class AiLeadClueController extends Controller
             $videoName = (string)($v['video_name'] ?? '');
         }
         return [
-            'clueKey' => 'c-' . (int)($row['id'] ?? 0),
-            'sourceType' => 'comment',
-            'sourceTypeLabel' => '评论线索',
-            'sourceId' => (int)($row['id'] ?? 0),
+            'clueKey' => ($sourceType === 'creator' ? 'r-' : 'c-') . $sourceId,
+            'sourceType' => $sourceType,
+            'sourceTypeLabel' => $sourceType === 'creator' ? '用户线索' : '评论线索',
+            'sourceId' => $sourceId,
             'leadId' => (int)($row['lead_id'] ?? 0),
+            'leadName' => (string)($row['lead_name'] ?? ''),
             'username' => $username,
             'nickname' => (string)($row['nickname'] ?? ''),
             'profileUrl' => $profileUrl,
@@ -1044,6 +1112,54 @@ class AiLeadClueController extends Controller
         return $out;
     }
 
+    /** @param list<array<string,mixed>> $rows @return array<int,int> */
+    private function fetchCreatorSharedCounts(array $rows): array
+    {
+        $ids = [];
+        foreach ($rows as $row) {
+            if ((string)($row['source_type'] ?? '') !== 'creator') {
+                continue;
+            }
+            $id = (int)($row['source_id'] ?? 0);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        if (!$ids) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $countRows = DB::select(
+            "SELECT creator_id, COUNT(*) AS c
+             FROM ai_lead_creator_shared_users
+             WHERE creator_id IN ({$ph})
+             GROUP BY creator_id",
+            $ids
+        ) ?: [];
+        $out = [];
+        foreach ($countRows as $r) {
+            $out[(int)($r['creator_id'] ?? 0)] = (int)($r['c'] ?? 0);
+        }
+        return $out;
+    }
+
+    /** @return list<array{id:int,username:string,nickname:string,label:string,roleName:string}> */
+    private function mapSharedUserRows(array $rows): array
+    {
+        return array_map(static function (array $u) {
+            $nickname = (string)($u['nickname'] ?? '');
+            $username = (string)($u['username'] ?? '');
+            return [
+                'id' => (int)($u['id'] ?? 0),
+                'username' => $username,
+                'nickname' => $nickname,
+                'label' => $nickname !== '' ? $nickname : $username,
+                'roleName' => (string)($u['role_name'] ?? ''),
+            ];
+        }, $rows);
+    }
+
     /** @return list<array{id:int,username:string,nickname:string,label:string,roleName:string}> */
     private function fetchCommentSharedUsers(int $commentId): array
     {
@@ -1059,17 +1175,25 @@ class AiLeadClueController extends Controller
              ORDER BY su.id ASC",
             [$commentId]
         ) ?: [];
-        return array_map(static function (array $u) {
-            $nickname = (string)($u['nickname'] ?? '');
-            $username = (string)($u['username'] ?? '');
-            return [
-                'id' => (int)($u['id'] ?? 0),
-                'username' => $username,
-                'nickname' => $nickname,
-                'label' => $nickname !== '' ? $nickname : $username,
-                'roleName' => (string)($u['role_name'] ?? ''),
-            ];
-        }, $rows);
+        return $this->mapSharedUserRows($rows);
+    }
+
+    /** @return list<array{id:int,username:string,nickname:string,label:string,roleName:string}> */
+    private function fetchCreatorSharedUsers(int $creatorId): array
+    {
+        if ($creatorId <= 0) {
+            return [];
+        }
+        $rows = DB::select(
+            "SELECT u.id, u.username, u.nickname, r.name AS role_name
+             FROM ai_lead_creator_shared_users su
+             INNER JOIN admin_users u ON u.id=su.user_id
+             LEFT JOIN admin_roles r ON r.id=u.role_id
+             WHERE su.creator_id=?
+             ORDER BY su.id ASC",
+            [$creatorId]
+        ) ?: [];
+        return $this->mapSharedUserRows($rows);
     }
 
     /** @return list<array{id:int,label:string,level:int}> */

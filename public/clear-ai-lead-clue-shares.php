@@ -4,6 +4,7 @@ declare(strict_types=1);
 /**
  * 清除拓客线索分配给企业客户的抄送/共享关联（不可逆）
  * - ai_lead_comment_shared_users：评论线索 → 企业客户（批量抄送）
+ * - ai_lead_creator_shared_users：用户线索 → 企业客户（批量抄送）
  * - ai_lead_shared_users：拓客任务 → 共享用户
  *
  * 只删分配关系，不删除线索 / 评论 / 拓客任务本身。
@@ -28,6 +29,11 @@ $targets = [
         'table' => 'ai_lead_comment_shared_users',
         'label' => '评论线索抄送（企业客户）',
         'desc' => '拓客线索「批量抄送」写入的 comment↔user 关联',
+    ],
+    [
+        'table' => 'ai_lead_creator_shared_users',
+        'label' => '用户线索抄送（企业客户）',
+        'desc' => '拓客线索「批量抄送」写入的 creator↔user 关联',
     ],
     [
         'table' => 'ai_lead_shared_users',

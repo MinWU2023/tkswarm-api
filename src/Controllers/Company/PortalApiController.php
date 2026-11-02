@@ -71,14 +71,20 @@ class PortalApiController extends Controller
         $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
         if ($userId > 0) {
             try {
-                $clueTotal = (int)(DB::selectOne(
+                $commentCnt = (int)(DB::selectOne(
                     "SELECT COUNT(*) AS c
                      FROM ai_lead_comments cm
                      INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id AND su.user_id=?
-                     INNER JOIN ai_leads l ON l.id = cm.lead_id
                      WHERE cm.ai_pass=1",
                     [$userId]
                 )['c'] ?? 0);
+                $creatorCnt = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c
+                     FROM ai_lead_creators c
+                     INNER JOIN ai_lead_creator_shared_users su ON su.creator_id = c.id AND su.user_id=?",
+                    [$userId]
+                )['c'] ?? 0);
+                $clueTotal = $commentCnt + $creatorCnt;
             } catch (\Throwable $e) {
                 $clueTotal = 0;
             }
@@ -311,15 +317,22 @@ class PortalApiController extends Controller
         $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
         if ($userId > 0) {
             try {
-                $clueNew = (int)(DB::selectOne(
+                $commentNew = (int)(DB::selectOne(
                     "SELECT COUNT(*) AS c
                      FROM ai_lead_comments cm
                      INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id AND su.user_id=?
-                     INNER JOIN ai_leads l ON l.id = cm.lead_id
                      WHERE cm.ai_pass=1
                        AND cm.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
                     [$userId]
                 )['c'] ?? 0);
+                $creatorNew = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c
+                     FROM ai_lead_creators c
+                     INNER JOIN ai_lead_creator_shared_users su ON su.creator_id = c.id AND su.user_id=?
+                     WHERE c.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+                    [$userId]
+                )['c'] ?? 0);
+                $clueNew = $commentNew + $creatorNew;
             } catch (\Throwable $e) {
                 $clueNew = 0;
             }
@@ -667,7 +680,7 @@ class PortalApiController extends Controller
         $keyword = trim((string)$request->get('keyword', ''));
         $offset = ($page - 1) * $pageSize;
 
-        // 企业客户只看「批量抄送」到自己的评论线索（与 /api/ai-lead-clue-data 一致）
+        // 企业客户只看「批量抄送」到自己的评论/用户线索（与 /api/ai-lead-clue-data 一致）
         $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
         if ($userId <= 0) {
             return $this->success([
@@ -679,29 +692,43 @@ class PortalApiController extends Controller
             ]);
         }
 
-        $filters = ['su.user_id=?', 'cm.ai_pass=1'];
-        $bind = [$userId];
+        $cmFilters = ['su.user_id=?', 'cm.ai_pass=1'];
+        $cmBind = [$userId];
+        $crFilters = ['su.user_id=?'];
+        $crBind = [$userId];
         if ($keyword !== '') {
-            $filters[] = '(cm.nickname LIKE ? OR cm.username LIKE ? OR cm.comment_text LIKE ? OR l.keywords LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($bind, $like, $like, $like, $like);
+            $cmFilters[] = '(cm.nickname LIKE ? OR cm.username LIKE ? OR cm.comment_text LIKE ? OR l.keywords LIKE ?)';
+            array_push($cmBind, $like, $like, $like, $like);
+            $crFilters[] = '(c.nickname LIKE ? OR c.username LIKE ? OR l.keywords LIKE ?)';
+            array_push($crBind, $like, $like, $like);
         }
-        $where = 'WHERE ' . implode(' AND ', $filters);
-        $baseSql = "FROM ai_lead_comments cm
+        $cmWhere = 'WHERE ' . implode(' AND ', $cmFilters);
+        $crWhere = 'WHERE ' . implode(' AND ', $crFilters);
+        $unionSql = "(
+            SELECT 'comment' AS source_type, cm.id, cm.lead_id, cm.username, cm.nickname, cm.comment_text,
+                   cm.intent_score, cm.profile_url, cm.created_at, l.name AS lead_name, l.keywords
+            FROM ai_lead_comments cm
             INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id
             INNER JOIN ai_leads l ON l.id = cm.lead_id
-            {$where}";
+            {$cmWhere}
+          ) UNION ALL (
+            SELECT 'creator' AS source_type, c.id, c.lead_id, c.username, c.nickname, '' AS comment_text,
+                   c.intent_score, c.profile_url, c.created_at, l.name AS lead_name, l.keywords
+            FROM ai_lead_creators c
+            INNER JOIN ai_lead_creator_shared_users su ON su.creator_id = c.id
+            INNER JOIN ai_leads l ON l.id = c.lead_id
+            {$crWhere}
+          )";
+        $bind = array_merge($cmBind, $crBind);
 
         $total = 0;
         $rows = [];
         try {
-            $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$baseSql}", $bind)['c'] ?? 0);
+            $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM ({$unionSql}) x", $bind)['c'] ?? 0);
             $rows = DB::select(
-                "SELECT cm.id, cm.lead_id, cm.username, cm.nickname, cm.comment_text,
-                        cm.intent_score, cm.profile_url, cm.created_at,
-                        l.name AS lead_name, l.keywords
-                 {$baseSql}
-                 ORDER BY cm.intent_score DESC, cm.created_at DESC, cm.id DESC
+                "SELECT * FROM ({$unionSql}) x
+                 ORDER BY x.intent_score DESC, x.created_at DESC, x.id DESC
                  LIMIT {$pageSize} OFFSET {$offset}",
                 $bind
             ) ?: [];
@@ -718,11 +745,12 @@ class PortalApiController extends Controller
 
         return $this->success([
             'items' => array_map(static function ($r) {
+                $sourceType = (string)($r['source_type'] ?? 'comment');
                 return [
                     'id' => (int)$r['id'],
                     'leadId' => (int)($r['lead_id'] ?? 0),
                     'leadName' => (string)($r['lead_name'] ?? ''),
-                    'sourceType' => 'comment',
+                    'sourceType' => $sourceType,
                     'username' => (string)($r['username'] ?? ''),
                     'nickname' => (string)($r['nickname'] ?? ''),
                     'commentText' => (string)($r['comment_text'] ?? ''),

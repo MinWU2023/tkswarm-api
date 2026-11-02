@@ -199,6 +199,14 @@ class AiLeadExecutionService
               UNIQUE KEY `uk_alcsu_comment_user` (`comment_id`, `user_id`),
               KEY `idx_alcsu_user` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            DB::query("CREATE TABLE IF NOT EXISTS `ai_lead_creator_shared_users` (
+              `id` INT AUTO_INCREMENT PRIMARY KEY,
+              `creator_id` INT NOT NULL,
+              `user_id` INT NOT NULL,
+              `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE KEY `uk_alcrsu_creator_user` (`creator_id`, `user_id`),
+              KEY `idx_alcrsu_user` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
             try {
                 DB::query(
                     'UPDATE ai_lead_comments cm
@@ -282,6 +290,7 @@ class AiLeadExecutionService
         $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
         $links = 0;
         $created = 0;
+        $okComments = 0;
         foreach ($commentIds as $cid) {
             if ($cid <= 0) {
                 continue;
@@ -290,6 +299,7 @@ class AiLeadExecutionService
             if (!$cm) {
                 continue;
             }
+            $okComments++;
             foreach ($userIds as $uid) {
                 if ($uid <= 0) {
                     continue;
@@ -305,7 +315,47 @@ class AiLeadExecutionService
             }
         }
         return [
-            'comments' => count($commentIds),
+            'comments' => $okComments,
+            'users' => count($userIds),
+            'links' => $links,
+            'created' => $created,
+        ];
+    }
+
+    /** @param list<int> $creatorIds @param list<int> $userIds @return array{creators:int,users:int,links:int,created:int} */
+    public static function shareCreatorsToUsers(array $creatorIds, array $userIds): array
+    {
+        self::ensureSchema();
+        $creatorIds = array_values(array_unique(array_filter(array_map('intval', $creatorIds))));
+        $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
+        $links = 0;
+        $created = 0;
+        $okCreators = 0;
+        foreach ($creatorIds as $cid) {
+            if ($cid <= 0) {
+                continue;
+            }
+            $cr = DB::selectOne('SELECT id FROM ai_lead_creators WHERE id=?', [$cid]);
+            if (!$cr) {
+                continue;
+            }
+            $okCreators++;
+            foreach ($userIds as $uid) {
+                if ($uid <= 0) {
+                    continue;
+                }
+                $links++;
+                $stmt = DB::query(
+                    'INSERT IGNORE INTO ai_lead_creator_shared_users (creator_id, user_id) VALUES (?,?)',
+                    [$cid, $uid]
+                );
+                if ($stmt->rowCount() > 0) {
+                    $created++;
+                }
+            }
+        }
+        return [
+            'creators' => $okCreators,
             'users' => count($userIds),
             'links' => $links,
             'created' => $created,
