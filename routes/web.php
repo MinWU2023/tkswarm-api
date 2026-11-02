@@ -117,6 +117,7 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
 
     Router::get('/api/company/dashboard', CompanyPortalApiController::class . '@dashboard');
     Router::get('/api/company/dashboard/publishes', CompanyPortalApiController::class . '@dashboardPublishes');
+    Router::get('/api/company/dashboard/charts', CompanyPortalApiController::class . '@dashboardCharts');
     Router::get('/api/company/accounts', CompanyPortalApiController::class . '@accounts');
     Router::get('/api/company/videos', CompanyPortalApiController::class . '@videos');
     Router::get('/api/company/clues', CompanyPortalApiController::class . '@clues');

@@ -260,6 +260,117 @@ class PortalApiController extends Controller
         ]);
     }
 
+    /**
+     * 控制面板：近 28 天数据 + 历史快照（按账号；无数据时 28 天补 0）
+     */
+    public function dashboardCharts(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $accountOptions = DB::select(
+            "SELECT a.id, a.username, a.nickname FROM accounts a
+             WHERE 1=1{$scopeSql}
+             ORDER BY a.username ASC, a.id ASC
+             LIMIT 300",
+            $scopeParams
+        ) ?: [];
+
+        $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
+        if ($accountId < 1 && $accountOptions) {
+            $accountId = (int)$accountOptions[0]['id'];
+        }
+
+        $account = null;
+        if ($accountId > 0) {
+            $account = DB::selectOne(
+                "SELECT a.id, a.username, a.nickname FROM accounts a WHERE a.id=?{$scopeSql} LIMIT 1",
+                array_merge([$accountId], $scopeParams)
+            );
+            if (!$account) {
+                return $this->error('账号不存在或无权访问', 403);
+            }
+        }
+
+        $dailyMap = [];
+        $snapshots = [];
+        if ($accountId > 0) {
+            try {
+                $dailyRows = DB::select(
+                    'SELECT metric_date, video_views, profile_views, likes_count, comments_count, shares_count, est_rewards
+                     FROM tiktok_analytics_28d WHERE account_id=? ORDER BY metric_date ASC',
+                    [$accountId]
+                ) ?: [];
+                foreach ($dailyRows as $row) {
+                    $d = substr((string)($row['metric_date'] ?? ''), 0, 10);
+                    if ($d === '') {
+                        continue;
+                    }
+                    $dailyMap[$d] = $row;
+                }
+            } catch (\Throwable $e) {
+                $dailyMap = [];
+            }
+            try {
+                $snapshots = DB::select(
+                    'SELECT captured_at, followers_count, following_count, likes_count, videos_count
+                     FROM tiktok_stat_snapshots WHERE account_id=? ORDER BY captured_at ASC LIMIT 60',
+                    [$accountId]
+                ) ?: [];
+            } catch (\Throwable $e) {
+                $snapshots = [];
+            }
+        }
+
+        $daily28 = [];
+        $tz = new \DateTimeZone(date_default_timezone_get() ?: 'UTC');
+        $end = new \DateTimeImmutable('today', $tz);
+        for ($i = 27; $i >= 0; $i--) {
+            $day = $end->modify("-{$i} days")->format('Y-m-d');
+            $row = $dailyMap[$day] ?? null;
+            $daily28[] = [
+                'metricDate' => $day,
+                'videoViews' => (int)($row['video_views'] ?? 0),
+                'profileViews' => (int)($row['profile_views'] ?? 0),
+                'likes' => (int)($row['likes_count'] ?? 0),
+                'comments' => (int)($row['comments_count'] ?? 0),
+                'shares' => (int)($row['shares_count'] ?? 0),
+                'estRewards' => (float)($row['est_rewards'] ?? 0),
+            ];
+        }
+
+        return $this->success([
+            'accountId' => $accountId,
+            'account' => $account ? [
+                'id' => (int)$account['id'],
+                'username' => (string)($account['username'] ?? ''),
+                'nickname' => (string)($account['nickname'] ?? ''),
+            ] : null,
+            'accountOptions' => array_map(static function ($r) {
+                return [
+                    'id' => (int)$r['id'],
+                    'username' => (string)($r['username'] ?? ''),
+                    'nickname' => (string)($r['nickname'] ?? ''),
+                ];
+            }, $accountOptions),
+            'daily28' => $daily28,
+            'hasDailyData' => count($dailyMap) > 0,
+            'snapshots' => array_map(static function ($r) {
+                return [
+                    'capturedAt' => (string)($r['captured_at'] ?? ''),
+                    'followers' => (int)($r['followers_count'] ?? 0),
+                    'following' => (int)($r['following_count'] ?? 0),
+                    'likes' => (int)($r['likes_count'] ?? 0),
+                    'videos' => (int)($r['videos_count'] ?? 0),
+                ];
+            }, $snapshots),
+            'hasSnapshots' => count($snapshots) > 0,
+        ]);
+    }
+
     public function accounts(Request $request): Response
     {
         if ($err = $this->gate($request)) {

@@ -63,6 +63,9 @@
     dashboardPublishes: function (params) {
       return request('/api/company/dashboard/publishes' + qs(params), { method: 'GET' });
     },
+    dashboardCharts: function (params) {
+      return request('/api/company/dashboard/charts' + qs(params), { method: 'GET' });
+    },
     accounts: function (params) { return request('/api/company/accounts' + qs(params), { method: 'GET' }); },
     videos: function (params) { return request('/api/company/videos' + qs(params), { method: 'GET' }); },
     clues: function (params) { return request('/api/company/clues' + qs(params), { method: 'GET' }); },

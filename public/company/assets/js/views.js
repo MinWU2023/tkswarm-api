@@ -34,6 +34,92 @@
     return m[s] || s || '—';
   }
 
+  function axisLabel(val) {
+    var v = Number(val) || 0;
+    if (Math.abs(v) >= 10000) return (v / 10000).toFixed(v >= 100000 ? 0 : 1) + '万';
+    if (Math.abs(v) >= 1000) return (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
+    return String(Math.round(v * 100) / 100);
+  }
+
+  /** SVG 折线图：pack = { labels, series:[{key,name,color,values}] } */
+  function lineChartBlock(pack, hiddenMap, onToggle) {
+    var labels = (pack && pack.labels) || [];
+    var series = (pack && pack.series) || [];
+    var hidden = hiddenMap || {};
+    if (!labels.length) {
+      return h('div', { class: 'cx-chart-empty' }, '暂无数据');
+    }
+    var active = series.filter(function (s) { return !hidden[s.key]; });
+    var W = 760, H = 260, padL = 48, padR = 16, padT = 18, padB = 36;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var n = labels.length;
+    var allVals = [];
+    active.forEach(function (s) {
+      (s.values || []).forEach(function (v) { allVals.push(Number(v) || 0); });
+    });
+    var minV = 0;
+    var maxV = Math.max(1, allVals.length ? Math.max.apply(null, allVals) : 1);
+    if (allVals.length && Math.min.apply(null, allVals) < 0) minV = Math.min.apply(null, allVals);
+    var span = maxV - minV || 1;
+    function xAt(i) { return padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW); }
+    function yAt(v) { return padT + plotH - ((Number(v) - minV) / span) * plotH; }
+
+    var children = [];
+    for (var g = 0; g <= 4; g++) {
+      var y = padT + (plotH * g) / 4;
+      var val = maxV - (span * g) / 4;
+      children.push(h('line', {
+        x1: padL, y1: y, x2: W - padR, y2: y,
+        class: 'cx-chart-grid', stroke: '#e8eef4', 'stroke-width': 1
+      }));
+      children.push(h('text', {
+        x: padL - 8, y: y + 4, 'text-anchor': 'end', class: 'cx-chart-axis',
+        fill: '#94a3b8', 'font-size': 10
+      }, axisLabel(val)));
+    }
+    var step = Math.max(1, Math.ceil(n / 8));
+    for (var i = 0; i < n; i++) {
+      if (i % step !== 0 && i !== n - 1) continue;
+      children.push(h('text', {
+        x: xAt(i), y: H - 10, 'text-anchor': 'middle', class: 'cx-chart-axis',
+        fill: '#94a3b8', 'font-size': 10
+      }, String(labels[i] || '')));
+    }
+    active.forEach(function (s) {
+      var pts = (s.values || []).map(function (v, idx) {
+        return (idx === 0 ? 'M' : 'L') + xAt(idx).toFixed(1) + ',' + yAt(v).toFixed(1);
+      }).join(' ');
+      children.push(h('path', {
+        d: pts, fill: 'none', stroke: s.color, 'stroke-width': 2,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+      }));
+      (s.values || []).forEach(function (v, idx) {
+        children.push(h('circle', {
+          cx: xAt(idx).toFixed(1), cy: yAt(v).toFixed(1), r: 2.5, fill: s.color
+        }, [h('title', s.name + ' ' + labels[idx] + ': ' + v)]));
+      });
+    });
+
+    return h('div', { class: 'cx-chart-wrap' }, [
+      h('svg', {
+        class: 'cx-chart-svg',
+        viewBox: '0 0 ' + W + ' ' + H,
+        role: 'img'
+      }, children),
+      h('div', { class: 'cx-chart-legend' }, series.map(function (s) {
+        var off = !!hidden[s.key];
+        return h('button', {
+          type: 'button',
+          class: 'cx-legend-item' + (off ? ' is-off' : ''),
+          onClick: function () { if (onToggle) onToggle(s.key); }
+        }, [
+          h('i', { style: 'background:' + s.color }),
+          h('span', s.name)
+        ]);
+      }))
+    ]);
+  }
+
   var LoginView = {
     name: 'LoginView',
     data: function () {
@@ -171,6 +257,7 @@
       return {
         loading: false,
         pubLoading: false,
+        chartLoading: false,
         stats: {},
         welcome: '',
         publishTab: 'success',
@@ -180,12 +267,20 @@
         publishTotal: 0,
         publishPage: 1,
         publishPageSize: 12,
-        publishCounts: { success: 0, progress: 0 }
+        publishCounts: { success: 0, progress: 0 },
+        chartAccountId: '',
+        chartAccountOptions: [],
+        daily28: [],
+        snapshots: [],
+        hasDailyData: false,
+        hasSnapshots: false,
+        chartHidden: { daily28: {}, snapshots: {} }
       };
     },
     mounted: function () {
       this.load();
       this.loadPublishes();
+      this.loadCharts();
     },
     methods: {
       load: async function () {
@@ -221,6 +316,27 @@
           this.pubLoading = false;
         }
       },
+      loadCharts: async function () {
+        this.chartLoading = true;
+        try {
+          var d = await CompanyAPI.dashboardCharts({
+            accountId: this.chartAccountId || undefined
+          });
+          if (Array.isArray(d.accountOptions)) {
+            this.chartAccountOptions = d.accountOptions;
+            if (!this.accountOptions.length) this.accountOptions = d.accountOptions;
+          }
+          if (d.accountId) this.chartAccountId = d.accountId;
+          this.daily28 = d.daily28 || [];
+          this.snapshots = d.snapshots || [];
+          this.hasDailyData = !!d.hasDailyData;
+          this.hasSnapshots = !!d.hasSnapshots;
+        } catch (e) {
+          ElMessage.error(e.message);
+        } finally {
+          this.chartLoading = false;
+        }
+      },
       setPublishTab: function (tab) {
         if (this.publishTab === tab) return;
         this.publishTab = tab;
@@ -231,6 +347,45 @@
         this.accountId = v === null || v === undefined ? '' : v;
         this.publishPage = 1;
         this.loadPublishes();
+      },
+      onChartAccount: function (v) {
+        this.chartAccountId = v === null || v === undefined ? '' : v;
+        this.loadCharts();
+      },
+      toggleChartSeries: function (panel, key) {
+        var cur = Object.assign({}, this.chartHidden[panel] || {});
+        cur[key] = !cur[key];
+        var next = { daily28: this.chartHidden.daily28 || {}, snapshots: this.chartHidden.snapshots || {} };
+        next[panel] = cur;
+        this.chartHidden = next;
+      },
+      dailyPack: function () {
+        var rows = this.daily28 || [];
+        return {
+          labels: rows.map(function (d) { return String(d.metricDate || '').slice(5); }),
+          series: [
+            { key: 'videoViews', name: '播放', color: '#3b9eff', values: rows.map(function (d) { return Number(d.videoViews || 0); }) },
+            { key: 'profileViews', name: '主页浏览', color: '#10b981', values: rows.map(function (d) { return Number(d.profileViews || 0); }) },
+            { key: 'likes', name: '点赞', color: '#f59e0b', values: rows.map(function (d) { return Number(d.likes || 0); }) },
+            { key: 'comments', name: '评论', color: '#ec4899', values: rows.map(function (d) { return Number(d.comments || 0); }) },
+            { key: 'shares', name: '转发', color: '#8b5cf6', values: rows.map(function (d) { return Number(d.shares || 0); }) },
+            { key: 'estRewards', name: '预估收益', color: '#64748b', values: rows.map(function (d) { return Number(d.estRewards || 0); }) }
+          ]
+        };
+      },
+      snapPack: function () {
+        var rows = this.snapshots || [];
+        return {
+          labels: rows.map(function (s) {
+            var t = String(s.capturedAt || '');
+            return t.length >= 16 ? t.slice(5, 16) : t.slice(5);
+          }),
+          series: [
+            { key: 'followers', name: '粉丝', color: '#3b9eff', values: rows.map(function (s) { return Number(s.followers || 0); }) },
+            { key: 'following', name: '关注', color: '#10b981', values: rows.map(function (s) { return Number(s.following || 0); }) },
+            { key: 'likes', name: '获赞', color: '#f59e0b', values: rows.map(function (s) { return Number(s.likes || 0); }) }
+          ]
+        };
       }
     },
     render: function () {
@@ -244,6 +399,7 @@
         { label: '线索', value: s.clues || 0, hint: '拓客沉淀', cls: 'tone-orange' }
       ];
       var counts = this.publishCounts || {};
+      var chartOpts = this.chartAccountOptions.length ? this.chartAccountOptions : this.accountOptions;
       return h('div', { class: 'page-view', 'v-loading': this.loading }, [
         pageHead(
           h('span', [h('span', '控制'), h('span', { class: 'grad' }, '面板')]),
@@ -274,23 +430,25 @@
                 onClick: function () { self.setPublishTab('progress'); }
               }, '进行中 (' + (counts.progress || 0) + ')')
             ]),
-            h(ElementPlus.ElSelect, {
-              modelValue: self.accountId,
-              'onUpdate:modelValue': function (v) { self.onAccountFilter(v); },
-              placeholder: '筛选账号',
-              clearable: true,
-              filterable: true,
-              style: 'width:240px'
-            }, function () {
-              return (self.accountOptions || []).map(function (a) {
-                var label = a.username || ('#' + a.id);
-                if (a.nickname) label += ' · ' + a.nickname;
-                return h(ElementPlus.ElOption, { key: a.id, label: label, value: a.id });
-              });
-            }),
-            h(ElementPlus.ElButton, {
-              onClick: function () { self.loadPublishes(); }
-            }, function () { return '刷新'; })
+            h('div', { class: 'dash-pub-actions' }, [
+              h(ElementPlus.ElSelect, {
+                modelValue: self.accountId,
+                'onUpdate:modelValue': function (v) { self.onAccountFilter(v); },
+                placeholder: '筛选账号',
+                clearable: true,
+                filterable: true,
+                style: 'width:240px'
+              }, function () {
+                return (self.accountOptions || []).map(function (a) {
+                  var label = a.username || ('#' + a.id);
+                  if (a.nickname) label += ' · ' + a.nickname;
+                  return h(ElementPlus.ElOption, { key: a.id, label: label, value: a.id });
+                });
+              }),
+              h(ElementPlus.ElButton, {
+                onClick: function () { self.loadPublishes(); }
+              }, function () { return '刷新'; })
+            ])
           ]),
           self.pubLoading
             ? h('div', { class: 'text-center text-slate-400 py-16' }, '加载中…')
@@ -334,6 +492,60 @@
               background: true
             })
           ])
+        ]),
+        h('div', { class: 'panel chart-panel' }, [
+          panelHead('账号数据趋势', h('div', { class: 'dash-pub-actions' }, [
+            h(ElementPlus.ElSelect, {
+              modelValue: self.chartAccountId,
+              'onUpdate:modelValue': function (v) { self.onChartAccount(v); },
+              placeholder: '切换账号',
+              filterable: true,
+              style: 'width:240px'
+            }, function () {
+              return (chartOpts || []).map(function (a) {
+                var label = a.username || ('#' + a.id);
+                if (a.nickname) label += ' · ' + a.nickname;
+                return h(ElementPlus.ElOption, { key: a.id, label: label, value: a.id });
+              });
+            }),
+            h(ElementPlus.ElButton, {
+              onClick: function () { self.loadCharts(); }
+            }, function () { return '刷新'; })
+          ])),
+          self.chartLoading
+            ? h('div', { class: 'text-center text-slate-400 py-12' }, '图表加载中…')
+            : (!chartOpts.length
+              ? h('div', { class: 'empty-pub' }, '暂无关联账号，无法展示趋势')
+              : h('div', { class: 'chart-grid' }, [
+                  h('div', { class: 'chart-box' }, [
+                    h('div', { class: 'chart-box-head' }, [
+                      h('h4', '近 28 天数据'),
+                      !self.hasDailyData
+                        ? h('span', { class: 'chart-hint' }, '未拉取，已按日期补 0')
+                        : null
+                    ]),
+                    lineChartBlock(
+                      self.dailyPack(),
+                      self.chartHidden.daily28,
+                      function (key) { self.toggleChartSeries('daily28', key); }
+                    )
+                  ]),
+                  h('div', { class: 'chart-box' }, [
+                    h('div', { class: 'chart-box-head' }, [
+                      h('h4', '历史快照'),
+                      !self.hasSnapshots
+                        ? h('span', { class: 'chart-hint' }, '暂无快照')
+                        : null
+                    ]),
+                    self.hasSnapshots
+                      ? lineChartBlock(
+                          self.snapPack(),
+                          self.chartHidden.snapshots,
+                          function (key) { self.toggleChartSeries('snapshots', key); }
+                        )
+                      : h('div', { class: 'cx-chart-empty' }, '拉取数据后会生成历史快照')
+                  ])
+                ]))
         ])
       ]);
     }
