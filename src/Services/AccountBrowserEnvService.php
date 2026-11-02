@@ -250,6 +250,51 @@ class AccountBrowserEnvService
     }
 
     /**
+     * 再绑/追加前：该后端已有绑定且中心库环境包文件存在时禁止更换（避免把可用环境换掉）。
+     * 首次主绑、或仅有绑定但中心库无包（可补齐）时放行。
+     *
+     * @return array{blocked:bool,profileId:string,reason:string,hasPack:bool}
+     */
+    public static function rebindGuard(int $accountId, string $browserBackend, ?string $incomingProfileId = null): array
+    {
+        self::ensureSchema();
+        $backend = self::normalizeBackend($browserBackend);
+        $typed = self::resolveTypedProfileIds($accountId);
+        $currentId = trim((string)($typed[$backend] ?? ''));
+        if ($currentId === '') {
+            return ['blocked' => false, 'profileId' => '', 'reason' => '', 'hasPack' => false];
+        }
+        $incoming = trim((string)($incomingProfileId ?? ''));
+        // 同一环境重复绑定/刷新归属：不算更换
+        if ($incoming !== '' && $incoming === $currentId) {
+            return ['blocked' => false, 'profileId' => $currentId, 'reason' => '', 'hasPack' => false];
+        }
+        $meta = self::packMeta($currentId);
+        $hasPack = !empty($meta['hasPack']) || !empty($meta['packFileExists']);
+        if (!$hasPack) {
+            return ['blocked' => false, 'profileId' => $currentId, 'reason' => '', 'hasPack' => false];
+        }
+        $short = substr($currentId, 0, 8);
+        return [
+            'blocked' => true,
+            'profileId' => $currentId,
+            'hasPack' => true,
+            'reason' => "账号已绑定环境 {$short}… 且中心库已有环境包，不允许再绑更换。如需更换请先解绑该环境",
+        ];
+    }
+
+    /**
+     * @throws \RuntimeException
+     */
+    public static function assertCanRebind(int $accountId, string $browserBackend, ?string $incomingProfileId = null): void
+    {
+        $g = self::rebindGuard($accountId, $browserBackend, $incomingProfileId);
+        if (!empty($g['blocked'])) {
+            throw new \RuntimeException((string)$g['reason']);
+        }
+    }
+
+    /**
      * 绑定环境到账号（同一 profile 全局唯一；账号可绑多个）。
      * @param string $browserBackend bit|tkswarm|linux
      * @param int|null $ownerUserIdOverride 超管再绑时可指定耗用额度的管理用户
@@ -269,6 +314,9 @@ class AccountBrowserEnvService
         if ($accountId < 1 || $profileId === '') {
             throw new \InvalidArgumentException('账号或环境 ID 无效');
         }
+        // 再绑追加，或主绑切到「另一个」环境 ID：已有同后端绑定且中心库有包 → 拒绝更换
+        // （同 ID 刷新归属仍放行；无包时可补齐/重建）
+        self::assertCanRebind($accountId, $backend, $profileId);
         $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
         if (!$acc) {
             throw new \InvalidArgumentException('账号不存在');

@@ -196,6 +196,11 @@ class NodeBridgeController extends Controller
             if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()) {
                 return $this->error('仅超级管理员可为环境指定管理用户归属', 403);
             }
+            try {
+                \App\Services\AccountBrowserEnvService::assertCanRebind((int)$id, $backend, $profileId);
+            } catch (\Throwable $e) {
+                return $this->error($e->getMessage(), 409);
+            }
             $env = \App\Services\AccountBrowserEnvService::bind(
                 (int)$id,
                 $profileId,
