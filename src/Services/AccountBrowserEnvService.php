@@ -174,10 +174,52 @@ class AccountBrowserEnvService
     public static function listByAccount(int $accountId): array
     {
         self::ensureSchema();
+        // 多环境：新 → 旧（id 最大优先）
         return DB::select(
-            'SELECT * FROM account_browser_envs WHERE account_id=? ORDER BY is_primary DESC, id ASC',
+            'SELECT * FROM account_browser_envs WHERE account_id=? ORDER BY id DESC',
             [$accountId]
         ) ?: [];
+    }
+
+    /**
+     * 把账号主列 / 分类型列 / is_primary 对齐为各后端 id 最大的那条。
+     * 任务与打开环境统一认「最新绑定」。
+     */
+    public static function syncAccountColumnsToNewest(int $accountId): void
+    {
+        self::ensureSchema();
+        $typed = self::resolveTypedProfileIds($accountId);
+        $newestOverall = DB::selectOne(
+            'SELECT browser_profile_id, browser_backend FROM account_browser_envs
+             WHERE account_id=? ORDER BY id DESC LIMIT 1',
+            [$accountId]
+        );
+        if (!$newestOverall) {
+            DB::query(
+                "UPDATE accounts SET browser_profile_id='', browser_backend='bit',
+                 tkswarm_browser_profile_id='', linux_browser_profile_id='',
+                 updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [$accountId]
+            );
+            return;
+        }
+        $primaryId = trim((string)($newestOverall['browser_profile_id'] ?? ''));
+        $primaryBe = self::normalizeBackend((string)($newestOverall['browser_backend'] ?? 'bit'));
+        if ($primaryId !== '') {
+            DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
+            DB::query(
+                'UPDATE account_browser_envs SET is_primary=1 WHERE account_id=? AND browser_profile_id=?',
+                [$accountId, $primaryId]
+            );
+            self::syncAccountPrimaryColumns($accountId, $primaryId, $primaryBe);
+        }
+        foreach (['tkswarm' => 'tkswarm_browser_profile_id', 'linux' => 'linux_browser_profile_id'] as $be => $col) {
+            $pid = trim((string)($typed[$be] ?? ''));
+            DB::query(
+                "UPDATE accounts SET {$col}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [$pid, $accountId]
+            );
+        }
     }
 
     /**
@@ -374,6 +416,8 @@ class AccountBrowserEnvService
         } else {
             self::syncTypedProfileColumn($accountId, $profileId, $backend);
         }
+        // 多环境时账号列始终指向各后端 id 最大的环境
+        self::syncAccountColumnsToNewest($accountId);
 
         return DB::selectOne('SELECT * FROM account_browser_envs WHERE id=?', [$id]) ?: [
             'id' => $id,
@@ -529,7 +573,7 @@ class AccountBrowserEnvService
         } else {
             // 该后端已无环境：主环境让给仍然存在的其他后端环境
             $first = DB::selectOne(
-                'SELECT id FROM account_browser_envs WHERE account_id=? ORDER BY is_primary DESC, id ASC LIMIT 1',
+                'SELECT id FROM account_browser_envs WHERE account_id=? ORDER BY id DESC LIMIT 1',
                 [$accountId]
             );
             if ($first) {
@@ -636,43 +680,8 @@ class AccountBrowserEnvService
             DB::query('DELETE FROM account_browser_envs WHERE account_id=?', [$accountId]);
         }
 
-        $primary = DB::selectOne(
-            "SELECT browser_profile_id, browser_backend FROM account_browser_envs
-             WHERE account_id=? ORDER BY is_primary DESC, id ASC LIMIT 1",
-            [$accountId]
-        );
-        $primaryBackend = self::normalizeBackend((string)($primary['browser_backend'] ?? 'bit'));
-        $primaryId = (string)($primary['browser_profile_id'] ?? '');
-        if ($primaryId !== '') {
-            self::syncAccountPrimaryColumns($accountId, $primaryId, $primaryBackend);
-            DB::query(
-                'UPDATE account_browser_envs SET is_primary=1 WHERE account_id=? AND browser_profile_id=?',
-                [$accountId, $primaryId]
-            );
-        } else {
-            // 全部解绑：主列 + 分类型列一并清空，避免 backfill 再从旧列恢复绑定
-            DB::query(
-                "UPDATE accounts SET browser_profile_id='', browser_backend='bit',
-                 tkswarm_browser_profile_id='', linux_browser_profile_id='',
-                 updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                [$accountId]
-            );
-        }
-        // 刷新分类型列：解绑后保留仍存在的该类型环境
-        if ($profileId !== null && trim($profileId) !== '') {
-            foreach (['tkswarm' => 'tkswarm_browser_profile_id', 'linux' => 'linux_browser_profile_id'] as $be => $col) {
-                $still = DB::selectOne(
-                    "SELECT browser_profile_id FROM account_browser_envs
-                     WHERE account_id=? AND browser_backend=?
-                     ORDER BY is_primary DESC, id ASC LIMIT 1",
-                    [$accountId, $be]
-                );
-                DB::query(
-                    "UPDATE accounts SET {$col}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    [(string)($still['browser_profile_id'] ?? ''), $accountId]
-                );
-            }
-        }
+        // 解绑后统一对齐到剩余环境中 id 最大的一条
+        self::syncAccountColumnsToNewest($accountId);
     }
 
     /**
@@ -712,7 +721,7 @@ class AccountBrowserEnvService
             $env = DB::selectOne(
                 "SELECT * FROM account_browser_envs
                  WHERE account_id=? AND saturation='idle' AND browser_backend=?
-                 ORDER BY is_primary DESC, id ASC
+                 ORDER BY id DESC
                  LIMIT 1",
                 [$accountId, $prefer]
             );
@@ -724,7 +733,7 @@ class AccountBrowserEnvService
             $env = DB::selectOne(
                 "SELECT * FROM account_browser_envs
                  WHERE account_id=? AND saturation='idle'
-                 ORDER BY is_primary DESC, id ASC
+                 ORDER BY id DESC
                  LIMIT 1",
                 [$accountId]
             );
