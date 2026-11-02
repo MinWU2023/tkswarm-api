@@ -168,22 +168,69 @@
   var DashboardView = {
     name: 'DashboardView',
     data: function () {
-      return { loading: false, stats: {}, recent: [], welcome: '' };
+      return {
+        loading: false,
+        pubLoading: false,
+        stats: {},
+        welcome: '',
+        publishTab: 'success',
+        accountId: '',
+        accountOptions: [],
+        publishItems: [],
+        publishTotal: 0,
+        publishPage: 1,
+        publishPageSize: 12,
+        publishCounts: { success: 0, progress: 0 }
+      };
     },
-    mounted: function () { this.load(); },
+    mounted: function () {
+      this.load();
+      this.loadPublishes();
+    },
     methods: {
       load: async function () {
         this.loading = true;
         try {
           var d = await CompanyAPI.dashboard();
           this.stats = d.stats || {};
-          this.recent = d.recentAccounts || [];
           this.welcome = d.welcome || '';
         } catch (e) {
           ElMessage.error(e.message);
         } finally {
           this.loading = false;
         }
+      },
+      loadPublishes: async function () {
+        this.pubLoading = true;
+        try {
+          var d = await CompanyAPI.dashboardPublishes({
+            tab: this.publishTab,
+            accountId: this.accountId || undefined,
+            page: this.publishPage,
+            pageSize: this.publishPageSize
+          });
+          this.publishItems = d.items || [];
+          this.publishTotal = d.total || 0;
+          this.publishCounts = d.counts || { success: 0, progress: 0 };
+          if (Array.isArray(d.accountOptions) && d.accountOptions.length) {
+            this.accountOptions = d.accountOptions;
+          }
+        } catch (e) {
+          ElMessage.error(e.message);
+        } finally {
+          this.pubLoading = false;
+        }
+      },
+      setPublishTab: function (tab) {
+        if (this.publishTab === tab) return;
+        this.publishTab = tab;
+        this.publishPage = 1;
+        this.loadPublishes();
+      },
+      onAccountFilter: function (v) {
+        this.accountId = v === null || v === undefined ? '' : v;
+        this.publishPage = 1;
+        this.loadPublishes();
       }
     },
     render: function () {
@@ -196,6 +243,7 @@
         { label: '评论', value: s.comments || 0, hint: '累计评论', cls: 'tone-pink', format: true },
         { label: '线索', value: s.clues || 0, hint: '拓客沉淀', cls: 'tone-orange' }
       ];
+      var counts = this.publishCounts || {};
       return h('div', { class: 'page-view', 'v-loading': this.loading }, [
         pageHead(
           h('span', [h('span', '控制'), h('span', { class: 'grad' }, '面板')]),
@@ -209,24 +257,83 @@
           ]);
         })),
         h('div', { class: 'panel' }, [
-          panelHead('最近更新账号', h(ElementPlus.ElButton, {
+          panelHead('最近发布视频', h(ElementPlus.ElButton, {
             text: true, type: 'primary',
-            onClick: function () { self.$router.push('/accounts'); }
-          }, function () { return '查看全部'; })),
-          h(ElementPlus.ElTable, { data: this.recent, stripe: true, size: 'default', style: 'width:100%' }, function () {
-            return [
-              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
-              h(ElementPlus.ElTableColumn, { prop: 'username', label: '账号', minWidth: 140 }),
-              h(ElementPlus.ElTableColumn, { prop: 'nickname', label: '昵称', minWidth: 140 }),
-              h(ElementPlus.ElTableColumn, { label: '登录态', width: 100 }, {
-                default: function (scope) {
-                  var online = scope.row.loginStatus === 'online';
-                  return h('span', { class: online ? 'status-online' : 'status-offline' }, loginLabel(scope.row.loginStatus));
-                }
-              }),
-              h(ElementPlus.ElTableColumn, { prop: 'updatedAt', label: '更新时间', width: 180 })
-            ];
-          })
+            onClick: function () { self.$router.push('/videos'); }
+          }, function () { return '全部视频'; })),
+          h('div', { class: 'page-toolbar dash-pub-toolbar' }, [
+            h('div', { class: 'dash-tabs' }, [
+              h('button', {
+                type: 'button',
+                class: 'dash-tab' + (self.publishTab === 'success' ? ' is-active' : ''),
+                onClick: function () { self.setPublishTab('success'); }
+              }, '成功 (' + (counts.success || 0) + ')'),
+              h('button', {
+                type: 'button',
+                class: 'dash-tab dash-tab-progress' + (self.publishTab === 'progress' ? ' is-active' : ''),
+                onClick: function () { self.setPublishTab('progress'); }
+              }, '进行中 (' + (counts.progress || 0) + ')')
+            ]),
+            h(ElementPlus.ElSelect, {
+              modelValue: self.accountId,
+              'onUpdate:modelValue': function (v) { self.onAccountFilter(v); },
+              placeholder: '筛选账号',
+              clearable: true,
+              filterable: true,
+              style: 'width:240px'
+            }, function () {
+              return (self.accountOptions || []).map(function (a) {
+                var label = a.username || ('#' + a.id);
+                if (a.nickname) label += ' · ' + a.nickname;
+                return h(ElementPlus.ElOption, { key: a.id, label: label, value: a.id });
+              });
+            }),
+            h(ElementPlus.ElButton, {
+              onClick: function () { self.loadPublishes(); }
+            }, function () { return '刷新'; })
+          ]),
+          self.pubLoading
+            ? h('div', { class: 'text-center text-slate-400 py-16' }, '加载中…')
+            : (self.publishItems.length
+              ? h('div', { class: 'video-grid' }, self.publishItems.map(function (item) {
+                  var isProgress = self.publishTab === 'progress' || item.publishStatus === 'publishing';
+                  return h('div', { class: 'video-card', key: item.materialId }, [
+                    item.coverUrl
+                      ? h('img', { class: 'cover', src: item.coverUrl, alt: '' })
+                      : h('div', { class: 'cover-ph' }, '▶'),
+                    h('div', { class: 'body' }, [
+                      h('div', { class: 'title-row' }, [
+                        h('div', { class: 'title' }, item.title || '未命名视频'),
+                        h('span', {
+                          class: 'pub-badge ' + (isProgress ? 'is-progress' : 'is-success')
+                        }, isProgress ? '进行中' : '已成功')
+                      ]),
+                      h('div', { class: 'meta' }, [
+                        h('span', '▶ ' + fmtNum(item.views)),
+                        h('span', '♡ ' + fmtNum(item.likes)),
+                        h('span', '💬 ' + fmtNum(item.comments))
+                      ]),
+                      h('div', { class: 'acct' },
+                        '@' + (item.accountUsername || '—') +
+                        (item.postedAt || item.updatedAt
+                          ? ' · ' + String(item.postedAt || item.updatedAt).slice(0, 16)
+                          : '')
+                      )
+                    ])
+                  ]);
+                }))
+              : h('div', { class: 'empty-pub' },
+                  self.publishTab === 'progress' ? '暂无进行中的发布任务' : '暂无成功发布的视频')),
+          h('div', { class: 'pager-row' }, [
+            h(ElementPlus.ElPagination, {
+              currentPage: self.publishPage,
+              'onUpdate:currentPage': function (v) { self.publishPage = v; self.loadPublishes(); },
+              pageSize: self.publishPageSize,
+              total: self.publishTotal,
+              layout: 'total, prev, pager, next',
+              background: true
+            })
+          ])
         ])
       ]);
     }

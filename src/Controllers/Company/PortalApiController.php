@@ -117,6 +117,149 @@ class PortalApiController extends Controller
         ]);
     }
 
+    /**
+     * 控制面板：企业关联账号的发布视频记录（成功 / 进行中）
+     */
+    public function dashboardPublishes(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+
+        $tab = strtolower(trim((string)$request->get('tab', 'success')));
+        if (!in_array($tab, ['success', 'progress'], true)) {
+            $tab = 'success';
+        }
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(48, max(1, (int)$request->get('pageSize', 12)));
+        $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
+        $offset = ($page - 1) * $pageSize;
+
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $filters = ['m.publish_account_id IS NOT NULL', 'm.publish_account_id > 0'];
+        $params = [];
+
+        if ($tab === 'progress') {
+            $filters[] = "m.publish_status='publishing'";
+        } else {
+            $filters[] = "(m.publish_status='published' OR (m.origin='online' AND TRIM(IFNULL(m.platform_video_id,''))<>''))";
+        }
+        if ($accountId > 0) {
+            $filters[] = 'm.publish_account_id=?';
+            $params[] = $accountId;
+        }
+
+        $where = implode(' AND ', $filters) . $scopeSql;
+        $bind = array_merge($params, $scopeParams);
+
+        $total = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE {$where}",
+            $bind
+        )['c'] ?? 0);
+
+        $rows = DB::select(
+            "SELECT m.id, m.name, m.share_title, m.platform_video_id, m.platform_video_url,
+                    m.view_count, m.like_count, m.comment_count, m.cover_base64, m.origin,
+                    m.publish_status, m.platform_published_at, m.updated_at, m.created_at,
+                    a.id AS account_id, a.username, a.nickname
+             FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE {$where}
+             ORDER BY COALESCE(m.platform_published_at, m.updated_at, m.created_at) DESC, m.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $bind
+        ) ?: [];
+
+        $countBind = $scopeParams;
+        $countAccountSql = '';
+        if ($accountId > 0) {
+            $countAccountSql = ' AND m.publish_account_id=?';
+            $countBind = array_merge([$accountId], $scopeParams);
+        }
+        $successCount = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE m.publish_account_id > 0
+               AND (m.publish_status='published' OR (m.origin='online' AND TRIM(IFNULL(m.platform_video_id,''))<>''))
+               {$countAccountSql}{$scopeSql}",
+            $countBind
+        )['c'] ?? 0);
+        $progressCount = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE m.publish_account_id > 0
+               AND m.publish_status='publishing'
+               {$countAccountSql}{$scopeSql}",
+            $countBind
+        )['c'] ?? 0);
+
+        $accountOptions = DB::select(
+            "SELECT a.id, a.username, a.nickname FROM accounts a
+             WHERE 1=1{$scopeSql}
+             ORDER BY a.username ASC, a.id ASC
+             LIMIT 300",
+            $scopeParams
+        ) ?: [];
+
+        $items = [];
+        foreach ($rows as $r) {
+            $cover = trim((string)($r['cover_base64'] ?? ''));
+            $coverUrl = '';
+            if ($cover !== '' && (str_starts_with($cover, 'http') || str_starts_with($cover, 'data:'))) {
+                $coverUrl = $cover;
+            } elseif ((int)$r['id'] > 0) {
+                $coverUrl = '/api/materials/' . (int)$r['id'] . '/cover';
+            }
+            $title = trim((string)($r['share_title'] ?? '')) ?: trim((string)($r['name'] ?? '')) ?: ('素材 #' . (int)$r['id']);
+            $status = (string)($r['publish_status'] ?? '');
+            if ($status === '' && (string)($r['origin'] ?? '') === 'online') {
+                $status = 'published';
+            }
+            $items[] = [
+                'materialId' => (int)$r['id'],
+                'videoId' => trim((string)($r['platform_video_id'] ?? '')),
+                'videoUrl' => (string)($r['platform_video_url'] ?? ''),
+                'title' => $title,
+                'coverUrl' => $coverUrl,
+                'views' => (int)($r['view_count'] ?? 0),
+                'likes' => (int)($r['like_count'] ?? 0),
+                'comments' => (int)($r['comment_count'] ?? 0),
+                'publishStatus' => $status,
+                'origin' => (string)($r['origin'] ?? ''),
+                'postedAt' => (string)($r['platform_published_at'] ?? ''),
+                'updatedAt' => (string)($r['updated_at'] ?? ''),
+                'createdAt' => (string)($r['created_at'] ?? ''),
+                'accountId' => (int)($r['account_id'] ?? 0),
+                'accountUsername' => (string)($r['username'] ?? ''),
+                'accountNickname' => (string)($r['nickname'] ?? ''),
+            ];
+        }
+
+        return $this->success([
+            'tab' => $tab,
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => max(1, (int)ceil($total / max(1, $pageSize))),
+            'counts' => [
+                'success' => $successCount,
+                'progress' => $progressCount,
+            ],
+            'accountOptions' => array_map(static function ($r) {
+                return [
+                    'id' => (int)$r['id'],
+                    'username' => (string)($r['username'] ?? ''),
+                    'nickname' => (string)($r['nickname'] ?? ''),
+                ];
+            }, $accountOptions),
+        ]);
+    }
+
     public function accounts(Request $request): Response
     {
         if ($err = $this->gate($request)) {
