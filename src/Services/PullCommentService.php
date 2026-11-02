@@ -309,7 +309,7 @@ class PullCommentService
         $backend = $browserBackend === 'tkswarm' ? 'tkswarm' : 'bit';
         $ph = implode(',', array_fill(0, count($ids), '?'));
         $rows = DB::select(
-            "SELECT id, name, publish_account_id, publish_account, platform_video_id, platform_video_url, owner_id
+            "SELECT id, name, publish_account_id, publish_account, platform_video_id, platform_video_url, owner_id, origin
              FROM materials
              WHERE id IN ({$ph})",
             $ids
@@ -318,18 +318,87 @@ class PullCommentService
             throw new \InvalidArgumentException('未找到所选素材');
         }
 
+        // 可见性与「已发布/线上视频」选择器一致：按素材归属 ∪ 发布账号 DataScope，
+        // 不能只用 materials.owner_id===当前用户（线上视频常挂账号归属，运营可见却会被误拒）
+        $visibleIds = [];
+        if ($restrictOwner) {
+            [$scopeSql, $scopeParams] = DataScope::materialListSql('m');
+            $visRows = DB::select(
+                "SELECT m.id FROM materials m WHERE m.id IN ({$ph})" . $scopeSql,
+                array_merge($ids, $scopeParams)
+            ) ?: [];
+            foreach ($visRows as $vr) {
+                $visibleIds[(int)($vr['id'] ?? 0)] = true;
+            }
+        } else {
+            foreach ($ids as $mid) {
+                $visibleIds[(int)$mid] = true;
+            }
+        }
+
         $byAccount = [];
+        $skipNoAccount = 0;
+        $skipNoLink = 0;
+        $skipScope = 0;
         foreach ($rows as $r) {
+            $mid = (int)($r['id'] ?? 0);
+            if ($mid < 1) {
+                continue;
+            }
+            if ($restrictOwner && !isset($visibleIds[$mid])) {
+                $skipScope++;
+                continue;
+            }
+
             $aid = (int)($r['publish_account_id'] ?? 0);
             $url = trim((string)($r['platform_video_url'] ?? ''));
             $vid = trim((string)($r['platform_video_id'] ?? ''));
+            $accName = trim((string)($r['publish_account'] ?? ''));
+
+            // 缺链接时先从 tiktok_videos / 已有字段补齐（线上列表同步偶发漏写）
+            if ($aid > 0 && $url === '' && $vid === '') {
+                try {
+                    AccountWorkBatchService::backfillPlatformVideoFromSyncedVideos($mid, $aid);
+                } catch (\Throwable $e) {
+                }
+                $fresh = DB::selectOne(
+                    'SELECT publish_account_id, publish_account, platform_video_id, platform_video_url FROM materials WHERE id=?',
+                    [$mid]
+                );
+                if ($fresh) {
+                    $aid = (int)($fresh['publish_account_id'] ?? $aid);
+                    $url = trim((string)($fresh['platform_video_url'] ?? ''));
+                    $vid = trim((string)($fresh['platform_video_id'] ?? ''));
+                    $accName = trim((string)($fresh['publish_account'] ?? $accName));
+                    $r['publish_account_id'] = $aid;
+                    $r['publish_account'] = $accName;
+                    $r['platform_video_id'] = $vid;
+                    $r['platform_video_url'] = $url;
+                }
+            }
+
+            if ($vid === '' && $url !== '' && preg_match('#/video/(\d{8,})#', $url, $vm)) {
+                $vid = $vm[1];
+                $r['platform_video_id'] = $vid;
+            }
+            if ($url === '' && $vid !== '') {
+                if ($accName === '' && $aid > 0) {
+                    $acc = DB::selectOne('SELECT username, nickname FROM accounts WHERE id=?', [$aid]);
+                    $accName = trim((string)($acc['username'] ?? $acc['nickname'] ?? ''));
+                }
+                $url = $accName !== ''
+                    ? ('https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $vid)
+                    : ('https://www.tiktok.com/video/' . $vid);
+                $r['platform_video_url'] = $url;
+                $r['publish_account'] = $accName;
+            }
+
             if ($aid < 1) {
+                $skipNoAccount++;
                 continue;
             }
             if ($url === '' && $vid === '') {
-                continue;
-            }
-            if ($restrictOwner && $ownerId > 0 && (int)($r['owner_id'] ?? 0) > 0 && (int)$r['owner_id'] !== $ownerId) {
+                $skipNoLink++;
                 continue;
             }
             if (!isset($byAccount[$aid])) {
@@ -338,7 +407,20 @@ class PullCommentService
             $byAccount[$aid][] = $r;
         }
         if (!$byAccount) {
-            throw new \InvalidArgumentException('所选素材均无有效发布账号或平台视频链接，请先完成发布');
+            $hints = [];
+            if ($skipScope > 0) {
+                $hints[] = "{$skipScope} 条不在当前可见范围";
+            }
+            if ($skipNoAccount > 0) {
+                $hints[] = "{$skipNoAccount} 条缺少发布账号";
+            }
+            if ($skipNoLink > 0) {
+                $hints[] = "{$skipNoLink} 条缺少平台视频链接/ID";
+            }
+            $detail = $hints ? ('（' . implode('；', $hints) . '）') : '';
+            throw new \InvalidArgumentException(
+                '所选素材无法创建拉取视频详情任务' . $detail . '。线上视频请确认已通过「拉取视频列表」同步到当前可见账号'
+            );
         }
 
         $created = [];
