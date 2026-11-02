@@ -44,10 +44,25 @@ class PortalApiController extends Controller
             $accParams
         )['c'] ?? 0);
 
+        $videoWhere = "(m.origin='online' OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>''))";
         $videoTotal = (int)(DB::selectOne(
             "SELECT COUNT(*) AS c FROM materials m
              INNER JOIN accounts a ON a.id = m.publish_account_id
-             WHERE (m.origin='online' OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>''))
+             WHERE {$videoWhere}
+             {$accSql}",
+            $accParams
+        )['c'] ?? 0);
+        $viewTotal = (int)(DB::selectOne(
+            "SELECT COALESCE(SUM(m.view_count),0) AS c FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE {$videoWhere}
+             {$accSql}",
+            $accParams
+        )['c'] ?? 0);
+        $commentTotal = (int)(DB::selectOne(
+            "SELECT COALESCE(SUM(m.comment_count),0) AS c FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             WHERE {$videoWhere}
              {$accSql}",
             $accParams
         )['c'] ?? 0);
@@ -85,6 +100,8 @@ class PortalApiController extends Controller
                 'accounts' => $accountTotal,
                 'online' => $onlineTotal,
                 'videos' => $videoTotal,
+                'views' => $viewTotal,
+                'comments' => $commentTotal,
                 'clues' => $clueTotal,
             ],
             'recentAccounts' => array_map(static function ($r) {

@@ -190,20 +190,21 @@
       var self = this;
       var s = this.stats || {};
       var cards = [
-        { label: '账号总数', value: s.accounts || 0, hint: '在线 ' + (s.online || 0), cls: 'tone-sky' },
-        { label: '在线账号', value: s.online || 0, hint: '当前可作业', cls: 'tone-emerald' },
-        { label: '视频数据', value: s.videos || 0, hint: '已收录线上视频', cls: 'tone-violet' },
-        { label: '拓客线索', value: s.clues || 0, hint: 'AI 线索沉淀', cls: 'tone-orange' }
+        { label: '账号', value: s.accounts || 0, hint: '在线 ' + (s.online || 0), cls: 'tone-sky' },
+        { label: '视频', value: s.videos || 0, hint: '线上收录', cls: 'tone-emerald' },
+        { label: '浏览', value: s.views || 0, hint: '累计播放', cls: 'tone-violet', format: true },
+        { label: '评论', value: s.comments || 0, hint: '累计评论', cls: 'tone-pink', format: true },
+        { label: '线索', value: s.clues || 0, hint: '拓客沉淀', cls: 'tone-orange' }
       ];
       return h('div', { class: 'page-view', 'v-loading': this.loading }, [
         pageHead(
           h('span', [h('span', '控制'), h('span', { class: 'grad' }, '面板')]),
           (this.welcome ? ('你好，' + this.welcome + '。') : '') + '企业门户数据总览'
         ),
-        h('div', { class: 'stat-grid' }, cards.map(function (c) {
+        h('div', { class: 'stat-grid stat-grid-5' }, cards.map(function (c) {
           return h('div', { class: 'stat-card ' + c.cls }, [
             h('div', { class: 'label' }, c.label),
-            h('div', { class: 'value' }, String(c.value)),
+            h('div', { class: 'value' }, c.format ? fmtNum(c.value) : String(c.value)),
             h('div', { class: 'hint' }, c.hint)
           ]);
         })),
