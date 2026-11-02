@@ -6,9 +6,14 @@
 
   function pageHead(title, desc) {
     return h('div', { class: 'page-head' }, [
-      h('h1', title),
+      typeof title === 'string' ? h('h1', title) : h('h1', [title]),
       desc ? h('p', desc) : null
     ]);
+  }
+
+  var PILL_TONES = ['pill-sky', 'pill-violet', 'pill-pink', 'pill-teal', 'pill-orange', 'pill-emerald', 'pill-amber', 'pill-indigo'];
+  function pillTone(i) {
+    return PILL_TONES[i % PILL_TONES.length];
   }
 
   function panelHead(title, extra) {
@@ -185,13 +190,16 @@
       var self = this;
       var s = this.stats || {};
       var cards = [
-        { label: '账号总数', value: s.accounts || 0, hint: '在线 ' + (s.online || 0), cls: 'accent-a' },
-        { label: '在线账号', value: s.online || 0, hint: '当前可作业', cls: 'accent-b' },
-        { label: '视频数据', value: s.videos || 0, hint: '已收录线上视频', cls: 'accent-c' },
-        { label: '拓客线索', value: s.clues || 0, hint: 'AI 线索沉淀', cls: 'accent-d' }
+        { label: '账号总数', value: s.accounts || 0, hint: '在线 ' + (s.online || 0), cls: 'tone-sky' },
+        { label: '在线账号', value: s.online || 0, hint: '当前可作业', cls: 'tone-emerald' },
+        { label: '视频数据', value: s.videos || 0, hint: '已收录线上视频', cls: 'tone-violet' },
+        { label: '拓客线索', value: s.clues || 0, hint: 'AI 线索沉淀', cls: 'tone-orange' }
       ];
       return h('div', { class: 'page-view', 'v-loading': this.loading }, [
-        pageHead('控制面板', (this.welcome ? ('你好，' + this.welcome + '。') : '') + '企业门户数据总览'),
+        pageHead(
+          h('span', [h('span', '控制'), h('span', { class: 'grad' }, '面板')]),
+          (this.welcome ? ('你好，' + this.welcome + '。') : '') + '企业门户数据总览'
+        ),
         h('div', { class: 'stat-grid' }, cards.map(function (c) {
           return h('div', { class: 'stat-card ' + c.cls }, [
             h('div', { class: 'label' }, c.label),
@@ -471,8 +479,8 @@
         h('div', { class: 'stat-grid', style: 'grid-template-columns: 1fr 1fr; margin-bottom:18px' }, [
           h('div', { class: 'panel' }, [
             panelHead('账号登录分布'),
-            h('div', { class: 'pill-row' }, (this.loginBreakdown.length ? this.loginBreakdown : [{ key: '暂无', count: 0 }]).map(function (x) {
-              return h('span', { class: 'pill' }, [
+            h('div', { class: 'pill-row' }, (this.loginBreakdown.length ? this.loginBreakdown : [{ key: '暂无', count: 0 }]).map(function (x, i) {
+              return h('span', { class: 'pill ' + pillTone(i) }, [
                 h('span', loginLabel(x.key)),
                 h('span', { class: 'n' }, String(x.count))
               ]);
