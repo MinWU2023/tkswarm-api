@@ -12,9 +12,8 @@
     { path: '/dashboard', title: '控制面板', icon: 'Odometer' },
     { path: '/accounts', title: '账号列表', icon: 'User' },
     { path: '/videos', title: '视频数据', icon: 'VideoCamera' },
-    { path: '/clues', title: '拓客线索', icon: 'Opportunity' }
-    // 数据看板暂时隐藏
-    // { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' }
+    { path: '/clues', title: '拓客线索', icon: 'Opportunity' },
+    { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' }
   ];
 
   var AppLayout = {
@@ -310,7 +309,7 @@
         { path: 'videos', component: CompanyViews.VideosView, meta: { title: '视频数据' } },
         { path: 'videos/:id', component: CompanyViews.VideoDetailView, meta: { title: '视频详情' } },
         { path: 'clues', component: CompanyViews.CluesView, meta: { title: '拓客线索' } },
-        { path: 'analytics', redirect: '/dashboard' }
+        { path: 'analytics', component: CompanyViews.AnalyticsView, meta: { title: '数据看板' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }
