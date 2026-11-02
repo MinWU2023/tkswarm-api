@@ -563,6 +563,15 @@ class AccountWorkController extends Controller
             $payload = [];
         }
         $payload['source'] = $payload['source'] ?? 'account_wizard';
+        // 拉取数据 / 修改资料：省流默认开启（前端未传或显式空时）
+        if (!array_key_exists('saveTraffic', $payload) && !array_key_exists('save_traffic', $payload)) {
+            $payload['saveTraffic'] = true;
+        } else {
+            $raw = $payload['saveTraffic'] ?? $payload['save_traffic'];
+            $payload['saveTraffic'] = !($raw === false || $raw === 0 || $raw === '0'
+                || (is_string($raw) && in_array(strtolower(trim($raw)), ['false', 'off', 'no', '关闭'], true)));
+            unset($payload['save_traffic']);
+        }
         $account = DB::selectOne(
             'SELECT id, owner_id, username, username_prev, nickname, profile_bio, profile_avatar, nickname_changed_at FROM accounts WHERE id=?',
             [$accountId]
