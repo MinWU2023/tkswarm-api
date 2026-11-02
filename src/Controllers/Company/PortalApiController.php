@@ -67,24 +67,21 @@ class PortalApiController extends Controller
             $accParams
         )['c'] ?? 0);
 
-        $ownerId = DataScope::filterOwnerId();
-        $clueWhere = '';
-        $clueBind = [];
-        if ($ownerId !== null) {
-            $clueWhere = ' AND l.owner_id=?';
-            $clueBind = [$ownerId];
-        }
         $clueTotal = 0;
-        try {
-            $clueTotal = (int)(DB::selectOne(
-                "SELECT COUNT(*) AS c
-                 FROM ai_lead_clue_items x
-                 INNER JOIN ai_leads l ON l.id = x.lead_id
-                 WHERE 1=1{$clueWhere}",
-                $clueBind
-            )['c'] ?? 0);
-        } catch (\Throwable $e) {
-            $clueTotal = 0;
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId > 0) {
+            try {
+                $clueTotal = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c
+                     FROM ai_lead_comments cm
+                     INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id AND su.user_id=?
+                     INNER JOIN ai_leads l ON l.id = cm.lead_id
+                     WHERE cm.ai_pass=1",
+                    [$userId]
+                )['c'] ?? 0);
+            } catch (\Throwable $e) {
+                $clueTotal = 0;
+            }
         }
 
         $recentAccounts = DB::select(
@@ -311,18 +308,21 @@ class PortalApiController extends Controller
         }
 
         $clueNew = 0;
-        $ownerId = DataScope::filterOwnerId();
-        try {
-            $clueWhere = $ownerId !== null ? ' AND l.owner_id=?' : '';
-            $clueBind = $ownerId !== null ? [$ownerId] : [];
-            $clueNew = (int)(DB::selectOne(
-                "SELECT COUNT(*) AS c FROM ai_lead_clue_items x
-                 INNER JOIN ai_leads l ON l.id = x.lead_id
-                 WHERE x.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY){$clueWhere}",
-                $clueBind
-            )['c'] ?? 0);
-        } catch (\Throwable $e) {
-            $clueNew = 0;
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId > 0) {
+            try {
+                $clueNew = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c
+                     FROM ai_lead_comments cm
+                     INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id AND su.user_id=?
+                     INNER JOIN ai_leads l ON l.id = cm.lead_id
+                     WHERE cm.ai_pass=1
+                       AND cm.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+                    [$userId]
+                )['c'] ?? 0);
+            } catch (\Throwable $e) {
+                $clueNew = 0;
+            }
         }
         if ($clueNew > 0) {
             $items[] = [
@@ -667,36 +667,41 @@ class PortalApiController extends Controller
         $keyword = trim((string)$request->get('keyword', ''));
         $offset = ($page - 1) * $pageSize;
 
-        $ownerId = DataScope::filterOwnerId();
-        $where = '1=1';
-        $bind = [];
-        if ($ownerId !== null) {
-            $where .= ' AND l.owner_id=?';
-            $bind[] = $ownerId;
+        // 企业客户只看「批量抄送」到自己的评论线索（与 /api/ai-lead-clue-data 一致）
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->success([
+                'items' => [],
+                'total' => 0,
+                'page' => 1,
+                'pageSize' => $pageSize,
+                'pages' => 1,
+            ]);
         }
+
+        $filters = ['su.user_id=?', 'cm.ai_pass=1'];
+        $bind = [$userId];
         if ($keyword !== '') {
-            $where .= ' AND (x.nickname LIKE ? OR x.username LIKE ? OR x.comment_text LIKE ?)';
+            $filters[] = '(cm.nickname LIKE ? OR cm.username LIKE ? OR cm.comment_text LIKE ? OR l.keywords LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($bind, $like, $like, $like);
+            array_push($bind, $like, $like, $like, $like);
         }
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $baseSql = "FROM ai_lead_comments cm
+            INNER JOIN ai_lead_comment_shared_users su ON su.comment_id = cm.id
+            INNER JOIN ai_leads l ON l.id = cm.lead_id
+            {$where}";
 
         $total = 0;
         $rows = [];
         try {
-            $total = (int)(DB::selectOne(
-                "SELECT COUNT(*) AS c FROM ai_lead_clue_items x
-                 INNER JOIN ai_leads l ON l.id = x.lead_id
-                 WHERE {$where}",
-                $bind
-            )['c'] ?? 0);
+            $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$baseSql}", $bind)['c'] ?? 0);
             $rows = DB::select(
-                "SELECT x.id, x.lead_id, x.source_type, x.username, x.nickname, x.comment_text,
-                        x.intent_score, x.dm_status, x.profile_url, x.created_at,
+                "SELECT cm.id, cm.lead_id, cm.username, cm.nickname, cm.comment_text,
+                        cm.intent_score, cm.profile_url, cm.created_at,
                         l.name AS lead_name, l.keywords
-                 FROM ai_lead_clue_items x
-                 INNER JOIN ai_leads l ON l.id = x.lead_id
-                 WHERE {$where}
-                 ORDER BY x.id DESC
+                 {$baseSql}
+                 ORDER BY cm.intent_score DESC, cm.created_at DESC, cm.id DESC
                  LIMIT {$pageSize} OFFSET {$offset}",
                 $bind
             ) ?: [];
@@ -707,7 +712,7 @@ class PortalApiController extends Controller
                 'page' => 1,
                 'pageSize' => $pageSize,
                 'pages' => 1,
-                'message' => '暂无线索数据表或无权限',
+                'message' => '暂无线索数据或无权限',
             ]);
         }
 
@@ -717,12 +722,12 @@ class PortalApiController extends Controller
                     'id' => (int)$r['id'],
                     'leadId' => (int)($r['lead_id'] ?? 0),
                     'leadName' => (string)($r['lead_name'] ?? ''),
-                    'sourceType' => (string)($r['source_type'] ?? ''),
+                    'sourceType' => 'comment',
                     'username' => (string)($r['username'] ?? ''),
                     'nickname' => (string)($r['nickname'] ?? ''),
                     'commentText' => (string)($r['comment_text'] ?? ''),
                     'intentScore' => (int)($r['intent_score'] ?? 0),
-                    'dmStatus' => (string)($r['dm_status'] ?? ''),
+                    'dmStatus' => '',
                     'profileUrl' => (string)($r['profile_url'] ?? ''),
                     'keywords' => (string)($r['keywords'] ?? ''),
                     'createdAt' => (string)($r['created_at'] ?? ''),
