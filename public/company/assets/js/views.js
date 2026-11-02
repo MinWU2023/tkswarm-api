@@ -554,7 +554,7 @@
   var AccountsView = {
     name: 'AccountsView',
     data: function () {
-      return { loading: false, items: [], total: 0, page: 1, pageSize: 20, keyword: '' };
+      return { loading: false, items: [], total: 0, page: 1, pageSize: 24, keyword: '' };
     },
     mounted: function () { this.load(); },
     methods: {
@@ -592,27 +592,61 @@
             h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.search(); } }, function () { return '搜索'; }),
             h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
           ]),
-          h(ElementPlus.ElTable, { data: this.items, stripe: true, vLoading: this.loading, style: 'width:100%' }, function () {
-            return [
-              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
-              h(ElementPlus.ElTableColumn, { prop: 'username', label: '账号', minWidth: 140 }),
-              h(ElementPlus.ElTableColumn, { prop: 'nickname', label: '昵称', minWidth: 140 }),
-              h(ElementPlus.ElTableColumn, { prop: 'country', label: '国家', width: 90 }),
-              h(ElementPlus.ElTableColumn, { prop: 'groupName', label: '分组', width: 120 }),
-              h(ElementPlus.ElTableColumn, { label: '登录态', width: 100 }, {
-                default: function (scope) {
-                  var online = scope.row.loginStatus === 'online';
-                  return h(ElementPlus.ElTag, {
-                    type: online ? 'success' : 'info',
-                    size: 'small',
-                    effect: 'light'
-                  }, function () { return loginLabel(scope.row.loginStatus); });
-                }
-              }),
-              h(ElementPlus.ElTableColumn, { prop: 'accountStatus', label: '状态', width: 100 }),
-              h(ElementPlus.ElTableColumn, { prop: 'updatedAt', label: '更新时间', width: 180 })
-            ];
-          }),
+          self.loading
+            ? h('div', { class: 'text-center text-slate-400 py-16' }, '加载中…')
+            : (self.items.length
+              ? h('div', { class: 'account-card-grid' }, self.items.map(function (item) {
+                  var online = item.loginStatus === 'online';
+                  var banned = item.accountStatus === 'banned';
+                  var initial = String(item.username || item.nickname || '#').trim().charAt(0).toUpperCase() || 'A';
+                  return h('div', { class: 'account-card', key: item.id }, [
+                    h('div', { class: 'account-card-hero' }, [
+                      item.avatarUrl
+                        ? h('img', { class: 'account-card-avatar', src: item.avatarUrl, alt: '', loading: 'lazy' })
+                        : h('div', { class: 'account-card-avatar-ph' }, initial),
+                      h('div', { class: 'account-card-main' }, [
+                        h('div', { class: 'account-card-name' }, item.username || ('#' + item.id)),
+                        h('div', { class: 'account-card-sub' },
+                          (item.nickname ? item.nickname + ' · ' : '') + 'ID #' + item.id
+                        ),
+                        h('div', { class: 'account-card-tags' }, [
+                          h(ElementPlus.ElTag, {
+                            type: online ? 'success' : 'info',
+                            size: 'small',
+                            effect: 'light'
+                          }, function () { return loginLabel(item.loginStatus); }),
+                          h(ElementPlus.ElTag, {
+                            type: banned ? 'danger' : 'success',
+                            size: 'small',
+                            effect: 'light'
+                          }, function () { return banned ? '封号' : '正常'; })
+                        ])
+                      ])
+                    ]),
+                    h('div', { class: 'account-card-body' }, [
+                      h('div', { class: 'account-card-stats' }, [
+                        h('div', { class: 'account-card-stat' }, [
+                          h('small', '粉丝'),
+                          h('b', fmtNum(item.followers))
+                        ]),
+                        h('div', { class: 'account-card-stat' }, [
+                          h('small', '关注'),
+                          h('b', fmtNum(item.following))
+                        ]),
+                        h('div', { class: 'account-card-stat' }, [
+                          h('small', '获赞'),
+                          h('b', fmtNum(item.likes))
+                        ])
+                      ]),
+                      h('div', { class: 'account-card-meta' }, [
+                        h('div', ['分组：', h('span', item.groupName || '未分组')]),
+                        h('div', ['国家：', h('span', item.country || '—')]),
+                        h('div', ['更新：', h('span', String(item.updatedAt || '—').slice(0, 16))])
+                      ])
+                    ])
+                  ]);
+                }))
+              : h('div', { class: 'empty-pub' }, '还没有账号')),
           h('div', { class: 'pager-row' }, [
             h(ElementPlus.ElPagination, {
               currentPage: self.page,
@@ -631,7 +665,7 @@
   var VideosView = {
     name: 'VideosView',
     data: function () {
-      return { loading: false, items: [], total: 0, page: 1, pageSize: 24, keyword: '' };
+      return { loading: false, items: [], total: 0, page: 1, pageSize: 12, keyword: '' };
     },
     mounted: function () { this.load(); },
     methods: {
@@ -666,28 +700,46 @@
               style: 'width:300px',
               onKeyup: function (e) { if (e.key === 'Enter') self.search(); }
             }),
-            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.search(); } }, function () { return '搜索'; })
+            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.search(); } }, function () { return '搜索'; }),
+            h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
           ]),
-          this.loading
+          self.loading
             ? h('div', { class: 'text-center text-slate-400 py-16' }, '加载中…')
-            : (this.items.length
-              ? h('div', { class: 'video-grid' }, this.items.map(function (item) {
-                  return h('div', { class: 'video-card', key: item.materialId }, [
-                    item.coverUrl
-                      ? h('img', { class: 'cover', src: item.coverUrl, alt: '' })
-                      : h('div', { class: 'cover-ph' }, '▶'),
-                    h('div', { class: 'body' }, [
-                      h('div', { class: 'title' }, item.title || '未命名视频'),
-                      h('div', { class: 'meta' }, [
+            : (self.items.length
+              ? h('div', { class: 'material-grid' }, self.items.map(function (item) {
+                  return h('div', { class: 'material-card', key: item.materialId }, [
+                    h('div', { class: 'material-thumb' }, [
+                      item.coverUrl
+                        ? h('img', { class: 'material-thumb-img', src: item.coverUrl, alt: '', loading: 'lazy' })
+                        : h('div', { class: 'material-thumb-empty' }, '无封面')
+                    ]),
+                    h('div', { class: 'material-body' }, [
+                      h('div', {
+                        class: 'material-title',
+                        title: item.title || ''
+                      }, item.title || '未命名视频'),
+                      h('div', null, [
+                        h(ElementPlus.ElTag, {
+                          type: 'success',
+                          size: 'small',
+                          effect: 'light'
+                        }, function () { return item.origin === 'online' ? '线上收录' : '已发布'; })
+                      ]),
+                      h('div', { class: 'material-meta-row' }, [
                         h('span', '▶ ' + fmtNum(item.views)),
                         h('span', '♡ ' + fmtNum(item.likes)),
                         h('span', '💬 ' + fmtNum(item.comments))
                       ]),
-                      h('div', { class: 'acct' }, '@' + (item.accountUsername || '—'))
+                      h('div', { class: 'material-acct' },
+                        '@' + (item.accountUsername || '—') +
+                        (item.postedAt || item.updatedAt
+                          ? ' · ' + String(item.postedAt || item.updatedAt).slice(0, 16)
+                          : '')
+                      )
                     ])
                   ]);
                 }))
-              : h('div', { class: 'text-center text-slate-400 py-16' }, '暂无视频数据')),
+              : h('div', { class: 'empty-pub' }, '暂无视频数据')),
           h('div', { class: 'pager-row' }, [
             h(ElementPlus.ElPagination, {
               currentPage: self.page,

@@ -484,19 +484,43 @@ class PortalApiController extends Controller
         $bind = array_merge($params, $scopeParams);
 
         $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM accounts a WHERE {$where}", $bind)['c'] ?? 0);
-        $rows = DB::select(
-            "SELECT a.id, a.username, a.nickname, a.login_status, a.account_status, a.country,
-                    a.group_id, g.name AS group_name, a.updated_at, a.created_at
-             FROM accounts a
-             LEFT JOIN `groups` g ON g.id = a.group_id
-             WHERE {$where}
-             ORDER BY a.id DESC
-             LIMIT {$pageSize} OFFSET {$offset}",
-            $bind
-        ) ?: [];
+        $rows = [];
+        try {
+            $rows = DB::select(
+                "SELECT a.id, a.username, a.nickname, a.login_status, a.account_status, a.country,
+                        a.group_id, g.name AS group_name, a.updated_at, a.created_at,
+                        a.profile_avatar, a.notes,
+                        COALESCE(p.followers_count, 0) AS followers_count,
+                        COALESCE(p.following_count, 0) AS following_count,
+                        COALESCE(p.likes_count, 0) AS likes_count,
+                        COALESCE(p.avatar_url, '') AS profile_avatar_url
+                 FROM accounts a
+                 LEFT JOIN `groups` g ON g.id = a.group_id
+                 LEFT JOIN tiktok_profiles p ON p.account_id = a.id
+                 WHERE {$where}
+                 ORDER BY a.id DESC
+                 LIMIT {$pageSize} OFFSET {$offset}",
+                $bind
+            ) ?: [];
+        } catch (\Throwable $e) {
+            $rows = DB::select(
+                "SELECT a.id, a.username, a.nickname, a.login_status, a.account_status, a.country,
+                        a.group_id, g.name AS group_name, a.updated_at, a.created_at
+                 FROM accounts a
+                 LEFT JOIN `groups` g ON g.id = a.group_id
+                 WHERE {$where}
+                 ORDER BY a.id DESC
+                 LIMIT {$pageSize} OFFSET {$offset}",
+                $bind
+            ) ?: [];
+        }
 
         return $this->success([
             'items' => array_map(static function ($r) {
+                $avatar = trim((string)($r['profile_avatar'] ?? ''));
+                if ($avatar === '') {
+                    $avatar = trim((string)($r['profile_avatar_url'] ?? ''));
+                }
                 return [
                     'id' => (int)$r['id'],
                     'username' => (string)($r['username'] ?? ''),
@@ -505,6 +529,11 @@ class PortalApiController extends Controller
                     'accountStatus' => (string)($r['account_status'] ?? 'normal'),
                     'country' => (string)($r['country'] ?? ''),
                     'groupName' => (string)($r['group_name'] ?? ''),
+                    'avatarUrl' => $avatar,
+                    'notes' => (string)($r['notes'] ?? ''),
+                    'followers' => (int)($r['followers_count'] ?? 0),
+                    'following' => (int)($r['following_count'] ?? 0),
+                    'likes' => (int)($r['likes_count'] ?? 0),
                     'updatedAt' => (string)($r['updated_at'] ?? ''),
                     'createdAt' => (string)($r['created_at'] ?? ''),
                 ];
