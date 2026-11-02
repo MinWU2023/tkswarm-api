@@ -167,6 +167,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/auto-follow-tasks', AutoFollowController::class . '@create');
     Router::post('/api/auto-follow-tasks/batch-dispatch', AutoFollowController::class . '@batchDispatch');
     Router::get('/api/auto-follow-tasks/eligible-count', AutoFollowController::class . '@eligibleCount');
+    Router::get('/api/auto-follow-tasks/eligible-accounts', AutoFollowController::class . '@eligibleAccounts');
     Router::get('/api/auto-follow-tasks/target-search', AutoFollowController::class . '@targetSearch');
     Router::get('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@detail');
     Router::put('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@update');

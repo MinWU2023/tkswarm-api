@@ -410,15 +410,18 @@ class NodeBridgeController extends Controller
                 "INSERT INTO tiktok_profiles(
                     account_id, handle, display_name, bio, avatar_url, region,
                     followers_count, following_count, likes_count, videos_count,
-                    comments_count, shares_count,
+                    views_count, comments_count, shares_count,
                     period_video_views, period_profile_views, period_likes, period_comments, period_shares, period_est_rewards,
                     sync_status, sync_error, last_synced_at
-                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ok', '', CURRENT_TIMESTAMP)
+                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ok', '', CURRENT_TIMESTAMP)
                  ON DUPLICATE KEY UPDATE
                     handle=VALUES(handle),
                     display_name=IF(VALUES(display_name)='', display_name, VALUES(display_name)),
+                    bio=IF(VALUES(bio)='', bio, VALUES(bio)),
+                    avatar_url=IF(VALUES(avatar_url)='', avatar_url, VALUES(avatar_url)),
                     followers_count=VALUES(followers_count), following_count=VALUES(following_count),
                     likes_count=VALUES(likes_count), videos_count=VALUES(videos_count),
+                    views_count=VALUES(views_count),
                     comments_count=VALUES(comments_count), shares_count=VALUES(shares_count),
                     period_video_views=VALUES(period_video_views), period_profile_views=VALUES(period_profile_views),
                     period_likes=VALUES(period_likes), period_comments=VALUES(period_comments),
@@ -435,8 +438,9 @@ class NodeBridgeController extends Controller
                     (int)($profile['following'] ?? $profile['following_count'] ?? 0),
                     (int)($profile['likes'] ?? $profile['likes_count'] ?? 0),
                     (int)($profile['videos'] ?? $profile['videos_count'] ?? 0),
-                    (int)($profile['comments'] ?? $profile['comments_count'] ?? $profile['periodComments'] ?? 0),
-                    (int)($profile['shares'] ?? $profile['shares_count'] ?? $profile['periodShares'] ?? 0),
+                    (int)($profile['views'] ?? $profile['views_count'] ?? 0),
+                    (int)($profile['comments'] ?? $profile['comments_count'] ?? 0),
+                    (int)($profile['shares'] ?? $profile['shares_count'] ?? 0),
                     (int)($profile['periodVideoViews'] ?? $profile['period_video_views'] ?? 0),
                     (int)($profile['periodProfileViews'] ?? $profile['period_profile_views'] ?? 0),
                     (int)($profile['periodLikes'] ?? $profile['period_likes'] ?? 0),
@@ -1441,6 +1445,8 @@ class NodeBridgeController extends Controller
             'shareTitle' => (string)($row['share_title'] ?? ''),
             'share_caption' => (string)($row['share_caption'] ?? ''),
             'shareCaption' => (string)($row['share_caption'] ?? ''),
+            'tags' => (string)($row['tags'] ?? ''),
+            'description' => (string)($row['description'] ?? ''),
             'platform_video_id' => (string)($row['platform_video_id'] ?? ''),
             'platformVideoId' => (string)($row['platform_video_id'] ?? ''),
             'cover_base64' => (string)($row['cover_base64'] ?? ''),
@@ -2591,11 +2597,12 @@ class NodeBridgeController extends Controller
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
-        // Studio 周期汇总字段（挂在 profile 上）
+        // Studio 周期汇总字段 + 账号终身浏览量（挂在 profile 上）
         $cols = array_column(DB::select('SHOW COLUMNS FROM tiktok_profiles') ?: [], 'Field');
         $extra = [
             'comments_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN comments_count INT NOT NULL DEFAULT 0',
             'shares_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN shares_count INT NOT NULL DEFAULT 0',
+            'views_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN views_count BIGINT NOT NULL DEFAULT 0',
             'period_video_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_video_views BIGINT NOT NULL DEFAULT 0',
             'period_profile_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_profile_views BIGINT NOT NULL DEFAULT 0',
             'period_likes' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_likes BIGINT NOT NULL DEFAULT 0',

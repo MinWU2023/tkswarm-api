@@ -268,6 +268,7 @@ class AiLeadController extends Controller
                 'scrape_account_id' => $payload['scrape_account_id'],
                 'industry_id' => $payload['industry_id'],
                 'browser_backend' => $payload['browser_backend'],
+                'save_traffic' => $payload['save_traffic'] ? 1 : 0,
             ];
             $this->stampOwner($row);
             $id = (int)DB::table('ai_leads')->insert($row);
@@ -302,7 +303,7 @@ class AiLeadController extends Controller
         try {
             $payload = $this->parseBody($request);
             DB::query(
-                'UPDATE ai_leads SET type=?, limit_follows=?, limit_likes=?, limit_look=?, keywords=?, dm_message=?, dm_dispatch_enabled=?, status=?, scrape_account_id=?, industry_id=?, browser_backend=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                'UPDATE ai_leads SET type=?, limit_follows=?, limit_likes=?, limit_look=?, keywords=?, dm_message=?, dm_dispatch_enabled=?, status=?, scrape_account_id=?, industry_id=?, browser_backend=?, save_traffic=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
                 [
                     $payload['type'],
                     $payload['limit_follows'],
@@ -315,6 +316,7 @@ class AiLeadController extends Controller
                     $payload['scrape_account_id'],
                     $payload['industry_id'],
                     $payload['browser_backend'],
+                    $payload['save_traffic'] ? 1 : 0,
                     (int)$id,
                 ]
             );
@@ -897,6 +899,10 @@ class AiLeadController extends Controller
             'industry_id' => $industryId,
             'shared_user_ids' => $sharedUserIds,
             'browser_backend' => $browserBackend,
+            'save_traffic' => $this->parseBoolInput(
+                $request->input('saveTraffic', $request->input('save_traffic', true)),
+                true
+            ),
         ];
     }
 
@@ -968,6 +974,8 @@ class AiLeadController extends Controller
             'browserBackend' => in_array(strtolower(trim((string)($row['browser_backend'] ?? 'bit'))), ['bit', 'tkswarm', 'linux'], true)
                 ? strtolower(trim((string)($row['browser_backend'] ?? 'bit')))
                 : 'bit',
+            'saveTraffic' => !array_key_exists('save_traffic', $row)
+                || (int)($row['save_traffic'] ?? 1) === 1,
             'dailyDmLimit' => null,
             'status' => $status,
             'statusLabel' => self::STATUSES[$status] ?? $status,
@@ -1174,6 +1182,9 @@ class AiLeadController extends Controller
                 }
                 if (!in_array('browser_backend', $leadCols, true)) {
                     DB::query("ALTER TABLE ai_leads ADD COLUMN browser_backend VARCHAR(16) NOT NULL DEFAULT 'bit' AFTER industry_id");
+                }
+                if (!in_array('save_traffic', $leadCols, true)) {
+                    DB::query("ALTER TABLE ai_leads ADD COLUMN save_traffic TINYINT(1) NOT NULL DEFAULT 1 COMMENT '省流模式' AFTER browser_backend");
                 }
             } catch (\Throwable $e) {
             }

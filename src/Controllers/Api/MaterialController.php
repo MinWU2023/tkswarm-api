@@ -204,9 +204,12 @@ class MaterialController extends Controller
         if ($cover === '' && $filePath !== '') {
             $cover = $this->extractCoverBase64($filePath);
         }
+        // 本机 Node ingest / register 走此接口，必须落库分享标题与文案，否则编辑弹窗无法回显
+        $shareTitle = trim((string)$request->input('shareTitle', $request->input('share_title', '')));
+        $shareCaption = trim((string)$request->input('shareCaption', $request->input('share_caption', '')));
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $name,
                 $filePath,
@@ -222,6 +225,8 @@ class MaterialController extends Controller
                 '',
                 '',
                 $cover,
+                $shareTitle,
+                $shareCaption,
                 $this->writeMaterialOwnerId(),
             ]
         );

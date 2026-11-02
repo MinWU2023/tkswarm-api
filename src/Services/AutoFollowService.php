@@ -116,6 +116,7 @@ class AutoFollowService
             'comment_text' => "ADD COLUMN comment_text VARCHAR(512) NOT NULL DEFAULT '' AFTER comment_ai_prompt",
             // 计划任务推送开关：关闭后 auto-follow:dispatch 不再入队
             'dispatch_enabled' => "ADD COLUMN dispatch_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否允许间断关注派发' AFTER status",
+            'save_traffic' => "ADD COLUMN save_traffic TINYINT(1) NOT NULL DEFAULT 1 COMMENT '省流模式：拦截图片视频字体广告' AFTER dispatch_enabled",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {
@@ -440,21 +441,13 @@ class AutoFollowService
         if ($minH <= 0 || $maxH <= 0 || $minH > $maxH) {
             throw new \InvalidArgumentException('间隔小时须满足 0 < 最小间隔 ≤ 最大间隔');
         }
-        $eligible = self::eligibleAccounts($target);
-        $eligibleCount = count($eligible);
-        if ($eligibleCount < 1) {
-            throw new \InvalidArgumentException('没有可用的增粉源账号（可能均已关注该目标）');
-        }
-        if ($followCount < 1 || $followCount > $eligibleCount) {
-            throw new \InvalidArgumentException("增粉数量须在 1 ~ {$eligibleCount} 之间");
-        }
-
-        $picked = self::pickRandom($eligible, $followCount);
+        $picked = self::resolvePickedSources($input, $target, $followCount);
         $schedule = self::buildSchedule($picked, $minH, $maxH);
         $homeCfg = AutoFollowHomepagePlan::normalizeTaskConfig($input, null);
         if ($homeCfg['searchKeyword'] === '') {
             $homeCfg['searchKeyword'] = (string)$target['targetUsername'];
         }
+        $saveTraffic = self::parseBoolInput($input['saveTraffic'] ?? $input['save_traffic'] ?? true, true);
         $name = self::buildTaskName();
 
         $taskId = DB::transaction(static function () use (
@@ -465,7 +458,8 @@ class AutoFollowService
             $minH,
             $maxH,
             $schedule,
-            $homeCfg
+            $homeCfg,
+            $saveTraffic
         ) {
             DB::query(
                 "INSERT INTO auto_follow_tasks
@@ -473,8 +467,8 @@ class AutoFollowService
                   follow_count, min_interval_hours, max_interval_hours,
                   search_keyword, stay_seconds_min, stay_seconds_max, watch_video_count,
                   like_rate, comment_rate, comment_mode, comment_ai_template_id, comment_ai_prompt, comment_text,
-                  status, scheduled_count)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)",
+                  status, scheduled_count, save_traffic)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)",
                 [
                     $ownerId,
                     $name,
@@ -496,6 +490,7 @@ class AutoFollowService
                     $homeCfg['commentAiPrompt'],
                     $homeCfg['commentText'],
                     count($schedule),
+                    $saveTraffic ? 1 : 0,
                 ]
             );
             $id = (int)DB::getPdo()->lastInsertId();
@@ -544,13 +539,7 @@ class AutoFollowService
         if ($minH <= 0 || $maxH <= 0 || $minH > $maxH) {
             throw new \InvalidArgumentException('间隔小时须满足 0 < 最小间隔 ≤ 最大间隔');
         }
-        $eligible = self::eligibleAccounts($target);
-        $eligibleCount = count($eligible);
-        if ($followCount < 1 || $followCount > $eligibleCount) {
-            throw new \InvalidArgumentException("增粉数量须在 1 ~ {$eligibleCount} 之间");
-        }
-
-        $picked = self::pickRandom($eligible, $followCount);
+        $picked = self::resolvePickedSources($input, $target, $followCount);
         $schedule = self::buildSchedule($picked, $minH, $maxH);
         $homeCfg = AutoFollowHomepagePlan::normalizeTaskConfig($input, [
             'search_keyword' => $row['search_keyword'] ?? '',
@@ -567,8 +556,11 @@ class AutoFollowService
         if ($homeCfg['searchKeyword'] === '') {
             $homeCfg['searchKeyword'] = (string)$target['targetUsername'];
         }
+        $saveTraffic = array_key_exists('saveTraffic', $input) || array_key_exists('save_traffic', $input)
+            ? self::parseBoolInput($input['saveTraffic'] ?? $input['save_traffic'], true)
+            : (!array_key_exists('save_traffic', $row) || (int)($row['save_traffic'] ?? 1) === 1);
 
-        DB::transaction(static function () use ($id, $target, $followCount, $minH, $maxH, $schedule, $homeCfg) {
+        DB::transaction(static function () use ($id, $target, $followCount, $minH, $maxH, $schedule, $homeCfg, $saveTraffic) {
             DB::query('DELETE FROM auto_follow_task_items WHERE task_id=?', [$id]);
             self::insertItems($id, $schedule, $homeCfg, $target);
             DB::query(
@@ -577,7 +569,7 @@ class AutoFollowService
                    follow_count=?, min_interval_hours=?, max_interval_hours=?,
                    search_keyword=?, stay_seconds_min=?, stay_seconds_max=?, watch_video_count=?,
                    like_rate=?, comment_rate=?, comment_mode=?, comment_ai_template_id=?,
-                   comment_ai_prompt=?, comment_text=?,
+                   comment_ai_prompt=?, comment_text=?, save_traffic=?,
                    status='pending', scheduled_count=?, enqueued_count=0, success_count=0, failed_count=0,
                    error_message='', updated_at=CURRENT_TIMESTAMP
                  WHERE id=?",
@@ -599,6 +591,7 @@ class AutoFollowService
                     $homeCfg['commentAiTemplateId'],
                     $homeCfg['commentAiPrompt'],
                     $homeCfg['commentText'],
+                    $saveTraffic ? 1 : 0,
                     count($schedule),
                     $id,
                 ]
@@ -757,6 +750,8 @@ class AutoFollowService
                 'targetDisplay' => (string)($taskRow['target_display'] ?? ''),
                 'searchKeyword' => (string)($actionPlan['searchKeyword'] ?? $taskRow['search_keyword'] ?? ''),
                 'actionPlan' => $actionPlan,
+                'saveTraffic' => !array_key_exists('save_traffic', $taskRow)
+                    || (int)($taskRow['save_traffic'] ?? 1) === 1,
             ];
             $enqueued = AccountWorkBatchService::enqueueItem(
                 $sourceAccountId,
@@ -976,6 +971,52 @@ class AutoFollowService
     }
 
     /**
+     * 解析粉丝账号池：random=从全部可用源随机；custom=从自选池随机抽增粉数量。
+     * 自定义时所选账号数必须严格大于增粉数量。
+     *
+     * @param array<string,mixed> $input
+     * @param array<string,mixed> $target
+     * @return list<array{id:int,owner_id:int,username:string}>
+     */
+    private static function resolvePickedSources(array $input, array $target, int $followCount): array
+    {
+        $eligible = self::eligibleAccounts($target);
+        $eligibleCount = count($eligible);
+        if ($eligibleCount < 1) {
+            throw new \InvalidArgumentException('没有可用的增粉源账号（可能均已关注该目标）');
+        }
+        if ($followCount < 1 || $followCount > $eligibleCount) {
+            throw new \InvalidArgumentException("增粉数量须在 1 ~ {$eligibleCount} 之间");
+        }
+
+        $mode = strtolower(trim((string)($input['sourceMode'] ?? $input['source_mode'] ?? 'random')));
+        if ($mode === 'custom' || $mode === 'manual') {
+            $rawIds = $input['sourceAccountIds'] ?? $input['source_account_ids'] ?? [];
+            if (!is_array($rawIds)) {
+                $rawIds = preg_split('/[,\s]+/', (string)$rawIds) ?: [];
+            }
+            $wantIds = array_values(array_unique(array_filter(array_map('intval', $rawIds))));
+            if (!$wantIds) {
+                throw new \InvalidArgumentException('自定义模式请至少选择粉丝账号');
+            }
+            $idSet = array_fill_keys($wantIds, true);
+            $pool = array_values(array_filter(
+                $eligible,
+                static fn(array $a) => isset($idSet[(int)$a['id']])
+            ));
+            $selected = count($pool);
+            if ($selected <= $followCount) {
+                throw new \InvalidArgumentException(
+                    "自定义所选粉丝账号数须大于增粉数量（已选 {$selected}，增粉数量 {$followCount}）"
+                );
+            }
+            return self::pickRandom($pool, $followCount);
+        }
+
+        return self::pickRandom($eligible, $followCount);
+    }
+
+    /**
      * @param list<array{id:int,owner_id:int,username:string}> $pool
      * @return list<array{id:int,owner_id:int,username:string}>
      */
@@ -1066,6 +1107,8 @@ class AutoFollowService
             'status' => (string)($row['status'] ?? 'pending'),
             'dispatchEnabled' => !array_key_exists('dispatch_enabled', $row)
                 || (int)($row['dispatch_enabled'] ?? 1) === 1,
+            'saveTraffic' => !array_key_exists('save_traffic', $row)
+                || (int)($row['save_traffic'] ?? 1) === 1,
             'scheduledCount' => (int)($row['scheduled_count'] ?? 0),
             'enqueuedCount' => (int)($row['enqueued_count'] ?? 0),
             'successCount' => (int)($row['success_count'] ?? 0),
@@ -1155,5 +1198,23 @@ class AutoFollowService
             'executedAt' => (string)($row['executed_at'] ?? ''),
             'createdAt' => (string)($row['created_at'] ?? ''),
         ];
+    }
+
+    private static function parseBoolInput(mixed $raw, bool $default = false): bool
+    {
+        if ($raw === null) {
+            return $default;
+        }
+        if (is_bool($raw)) {
+            return $raw;
+        }
+        if (is_int($raw) || is_float($raw)) {
+            return (int)$raw !== 0;
+        }
+        $s = strtolower(trim((string)$raw));
+        if ($s === '' || $s === 'null') {
+            return $default;
+        }
+        return in_array($s, ['1', 'true', 'yes', 'on', '开启'], true);
     }
 }

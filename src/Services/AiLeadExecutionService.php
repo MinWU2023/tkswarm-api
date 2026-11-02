@@ -50,6 +50,12 @@ class AiLeadExecutionService
                      COMMENT '是否允许私信派发' AFTER dm_message"
                 );
             }
+            if (!in_array('save_traffic', $cols, true)) {
+                DB::query(
+                    "ALTER TABLE ai_leads ADD COLUMN save_traffic TINYINT(1) NOT NULL DEFAULT 1
+                     COMMENT '省流模式' AFTER browser_backend"
+                );
+            }
             $ccols = array_column(DB::select('SHOW COLUMNS FROM ai_lead_creators') ?: [], 'Field');
             if (!in_array('profile_url', $ccols, true)) {
                 DB::query("ALTER TABLE ai_lead_creators ADD COLUMN profile_url VARCHAR(512) NOT NULL DEFAULT '' AFTER avatar");
@@ -657,6 +663,8 @@ class AiLeadExecutionService
             'filterPrompt' => AiLeadFilterService::resolvePrompt(),
             'dmMessage' => trim((string)($lead['dm_message'] ?? '')) ?: self::defaultDmMessage(),
             'browserBackend' => $browserBackend,
+            'saveTraffic' => !array_key_exists('save_traffic', $lead)
+                || (int)($lead['save_traffic'] ?? 1) === 1,
         ];
     }
 
@@ -1062,7 +1070,7 @@ class AiLeadExecutionService
         array $payloadExtra = []
     ): array {
         AccountWorkBatchService::ensureSchema();
-        $lead = DB::selectOne('SELECT owner_id, keywords, browser_backend FROM ai_leads WHERE id=?', [$leadId]);
+        $lead = DB::selectOne('SELECT owner_id, keywords, browser_backend, save_traffic FROM ai_leads WHERE id=?', [$leadId]);
         if (!$lead) {
             throw new \InvalidArgumentException('拓客任务不存在');
         }
@@ -1084,6 +1092,8 @@ class AiLeadExecutionService
             'forceTarget' => $target,
             'browserBackend' => $browserBackend,
             'username' => (string)($target['username'] ?? ''),
+            'saveTraffic' => !array_key_exists('save_traffic', $lead)
+                || (int)($lead['save_traffic'] ?? 1) === 1,
         ], $payloadExtra);
 
         $out = AccountWorkBatchService::enqueueDedicatedItem(

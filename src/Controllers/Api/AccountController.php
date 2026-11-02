@@ -3346,6 +3346,7 @@ class AccountController extends Controller
             $extra = [
                 'comments_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN comments_count INT NOT NULL DEFAULT 0',
                 'shares_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN shares_count INT NOT NULL DEFAULT 0',
+                'views_count' => 'ALTER TABLE tiktok_profiles ADD COLUMN views_count BIGINT NOT NULL DEFAULT 0',
                 'period_video_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_video_views BIGINT NOT NULL DEFAULT 0',
                 'period_profile_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_profile_views BIGINT NOT NULL DEFAULT 0',
                 'period_likes' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_likes BIGINT NOT NULL DEFAULT 0',

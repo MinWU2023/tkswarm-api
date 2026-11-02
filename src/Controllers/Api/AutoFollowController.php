@@ -191,6 +191,26 @@ class AutoFollowController extends Controller
         }
     }
 
+    /** 可选粉丝账号 ID 列表（排除目标本身与已关注） */
+    public function eligibleAccounts(Request $request): Response
+    {
+        DataScope::ensureColumns();
+        AutoFollowService::ensureSchema();
+        try {
+            $target = AutoFollowService::resolveTarget($request->all());
+            $items = AutoFollowService::eligibleAccounts($target);
+            $ids = array_map(static fn(array $a) => (int)$a['id'], $items);
+            return $this->success([
+                'count' => count($ids),
+                'ids' => $ids,
+                'items' => $items,
+                'target' => $target,
+            ]);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
     public function targetSearch(Request $request): Response
     {
         DataScope::ensureColumns();
