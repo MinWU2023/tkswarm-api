@@ -312,7 +312,8 @@ class AccountBrowserEnvService
             return ['blocked' => false, 'profileId' => $currentId, 'reason' => '', 'hasPack' => false];
         }
         $meta = self::packMeta($currentId);
-        $hasPack = !empty($meta['hasPack']) || !empty($meta['packFileExists']);
+        // 仅认「可拉取的有效包」(revision>0 + 文件在)；残缺 pack 路径不拦任务代建恢复
+        $hasPack = !empty($meta['hasPack']);
         if (!$hasPack) {
             return ['blocked' => false, 'profileId' => $currentId, 'reason' => '', 'hasPack' => false];
         }
@@ -356,9 +357,11 @@ class AccountBrowserEnvService
         if ($accountId < 1 || $profileId === '') {
             throw new \InvalidArgumentException('账号或环境 ID 无效');
         }
-        // 再绑追加，或主绑切到「另一个」环境 ID：已有同后端绑定且中心库有包 → 拒绝更换
-        // （同 ID 刷新归属仍放行；无包时可补齐/重建）
-        self::assertCanRebind($accountId, $backend, $profileId);
+        // 仅拦截「再绑追加」(asPrimary=false)：有有效环境包时不许再新建一条把主环境换掉。
+        // 主绑/任务代建恢复 (asPrimary=true) 必须放行，否则本机缺窗时无法自愈。
+        if (!$asPrimary) {
+            self::assertCanRebind($accountId, $backend, $profileId);
+        }
         $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
         if (!$acc) {
             throw new \InvalidArgumentException('账号不存在');
