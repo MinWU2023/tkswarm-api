@@ -9,6 +9,7 @@ use App\Core\Response;
 use App\Core\Database\DB;
 use App\Services\AccountWorkBatchService;
 use App\Services\AiLeadExecutionService;
+use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\PullCommentService;
 use App\Services\TikTokVideoScreenshotService;
@@ -1096,5 +1097,249 @@ class PortalApiController extends Controller
             ],
             'screenshots' => $shots,
         ]);
+    }
+
+    /** 发布视频可选账号（企业可见范围） */
+    public function publishAccounts(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $rows = DB::select(
+            "SELECT a.id, a.username, a.nickname, a.login_status
+             FROM accounts a
+             WHERE 1=1{$scopeSql}
+             ORDER BY a.updated_at DESC, a.id DESC
+             LIMIT 500",
+            $scopeParams
+        ) ?: [];
+        return $this->success([
+            'items' => array_map(static function ($r) {
+                return [
+                    'id' => (int)$r['id'],
+                    'username' => (string)($r['username'] ?? ''),
+                    'nickname' => (string)($r['nickname'] ?? ''),
+                    'loginStatus' => (string)($r['login_status'] ?? ''),
+                    'label' => trim((string)(($r['nickname'] ?? '') !== '' ? $r['nickname'] : ($r['username'] ?? '')))
+                        ?: ('#' . (int)$r['id']),
+                ];
+            }, $rows),
+        ]);
+    }
+
+    /** 本企业客户提交的委托发布任务 */
+    public function publishTasks(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->success(['items' => [], 'total' => 0, 'page' => 1, 'pageSize' => 20, 'pages' => 1]);
+        }
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(50, max(1, (int)$request->get('pageSize', 20)));
+        $offset = ($page - 1) * $pageSize;
+
+        $filters = [
+            't.owner_id=?',
+            't.type=?',
+            "JSON_UNQUOTE(JSON_EXTRACT(t.payload, '$.source'))='company_entrust'",
+        ];
+        $params = [$userId, 'publish'];
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM tasks t {$where}", $params)['c'] ?? 0);
+        $rows = DB::select(
+            "SELECT t.* FROM tasks t {$where} ORDER BY t.id DESC LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+
+        return $this->success([
+            'items' => array_map([$this, 'mapCompanyPublishTask'], $rows),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => max(1, (int)ceil($total / max(1, $pageSize))),
+        ]);
+    }
+
+    /**
+     * 企业委托发布：选账号 + 上传视频 → draft 任务（运营专员启动）
+     */
+    public function createPublishTask(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+
+        $user = $GLOBALS['auth_user'] ?? [];
+        $userId = (int)($user['id'] ?? 0);
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        if ($accountId <= 0) {
+            return $this->error('请选择发布账号', 422);
+        }
+
+        $account = DB::selectOne('SELECT id, username, nickname, owner_id, company_id FROM accounts WHERE id=?', [$accountId]);
+        if (!$account) {
+            return $this->error('账号不存在', 404);
+        }
+        if ($err = DataScope::assertAccountOwns($account)) {
+            return $err;
+        }
+
+        if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return $this->error('请上传视频文件', 422);
+        }
+
+        $title = trim((string)$request->input('title', $request->input('publishTitle', '')));
+        $caption = trim((string)$request->input('caption', $request->input('publishCaption', '')));
+        $taskName = trim((string)$request->input('name', ''));
+        if ($taskName === '') {
+            $accLabel = (string)(($account['nickname'] ?? '') !== '' ? $account['nickname'] : ($account['username'] ?? ''));
+            $taskName = '企业委托发布 · ' . ($accLabel !== '' ? $accLabel : ('#' . $accountId));
+        }
+
+        $mat = $this->storeCompanyMaterial($_FILES['file'], $title !== '' ? $title : '', $userId);
+        if ($mat instanceof Response) {
+            return $mat;
+        }
+        $materialId = (int)($mat['id'] ?? 0);
+        if ($materialId <= 0) {
+            return $this->error('素材入库失败', 500);
+        }
+
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($userId);
+        $payload = [
+            'source' => 'company_entrust',
+            'publishMode' => 'independent',
+            'publishStrategy' => 'deduplicate',
+            'accountIds' => [$accountId],
+            'materialIds' => [$materialId],
+            'publishTitle' => $title,
+            'publishCaption' => $caption,
+            'pushChannel' => 'tkswarm',
+            'hashtags' => '',
+            'entrustCompanyIds' => $companyIds,
+            'entrustBy' => [
+                'userId' => $userId,
+                'username' => (string)($user['username'] ?? ''),
+                'nickname' => (string)($user['nickname'] ?? ''),
+            ],
+            'entrustAccount' => [
+                'id' => $accountId,
+                'username' => (string)($account['username'] ?? ''),
+                'nickname' => (string)($account['nickname'] ?? ''),
+            ],
+            'entrustMaterial' => [
+                'id' => $materialId,
+                'name' => (string)($mat['name'] ?? ''),
+                'fileName' => (string)($mat['file_name'] ?? ''),
+            ],
+        ];
+
+        DB::query(
+            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+            [
+                mb_substr($taskName, 0, 120),
+                'publish',
+                null,
+                1,
+                null,
+                json_encode($payload, JSON_UNESCAPED_UNICODE),
+                $userId,
+            ]
+        );
+        $taskId = (int)DB::getPdo()->lastInsertId();
+        $row = DB::selectOne('SELECT * FROM tasks WHERE id=?', [$taskId]);
+
+        return $this->success([
+            'task' => $this->mapCompanyPublishTask($row ?: ['id' => $taskId, 'payload' => json_encode($payload), 'status' => 'draft', 'name' => $taskName]),
+            'materialId' => $materialId,
+            'accountId' => $accountId,
+        ], '委托任务已创建，等待运营处理');
+    }
+
+    /** @param array<string,mixed> $row */
+    private function mapCompanyPublishTask(array $row): array
+    {
+        $payload = json_decode((string)($row['payload'] ?? '{}'), true) ?: [];
+        $accountIds = $payload['accountIds'] ?? [];
+        $materialIds = $payload['materialIds'] ?? [];
+        $accountId = (int)($payload['entrustAccount']['id'] ?? (is_array($accountIds) ? ($accountIds[0] ?? 0) : 0));
+        $materialId = (int)($payload['entrustMaterial']['id'] ?? (is_array($materialIds) ? ($materialIds[0] ?? 0) : 0));
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'name' => (string)($row['name'] ?? ''),
+            'status' => (string)($row['status'] ?? ''),
+            'accountId' => $accountId,
+            'accountUsername' => (string)($payload['entrustAccount']['username'] ?? ''),
+            'accountNickname' => (string)($payload['entrustAccount']['nickname'] ?? ''),
+            'materialId' => $materialId,
+            'materialName' => (string)($payload['entrustMaterial']['name'] ?? ''),
+            'publishTitle' => (string)($payload['publishTitle'] ?? ''),
+            'publishCaption' => (string)($payload['publishCaption'] ?? ''),
+            'successCount' => (int)($row['success_count'] ?? 0),
+            'failCount' => (int)($row['fail_count'] ?? 0),
+            'totalCount' => (int)($row['total_count'] ?? 0),
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+            'finishedAt' => (string)($row['finished_at'] ?? ''),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $file
+     * @return array<string,mixed>|Response
+     */
+    private function storeCompanyMaterial(array $file, string $name, int $ownerId)
+    {
+        $origName = (string)($file['name'] ?? 'video.mp4');
+        if (!mb_check_encoding($origName, 'UTF-8')) {
+            $origName = mb_convert_encoding($origName, 'UTF-8', 'ISO-8859-1');
+        }
+        $mime = (string)($file['type'] ?? '');
+        $ext = strtolower(ltrim((string)pathinfo($origName, PATHINFO_EXTENSION), '.'));
+        if ($mime !== '' && !str_starts_with($mime, 'video/') && !in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true)) {
+            return $this->error('只能上传视频文件', 415);
+        }
+        $size = (int)($file['size'] ?? 0);
+        $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
+        $dir = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . 'materials';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+        $destName = time() . '-' . bin2hex(random_bytes(4)) . ($ext ? ".{$ext}" : '');
+        $dest = $dir . DIRECTORY_SEPARATOR . $destName;
+        if (!move_uploaded_file((string)$file['tmp_name'], $dest)) {
+            return $this->error('保存文件失败');
+        }
+        $sha = hash_file('sha256', $dest) ?: '';
+        $display = $name !== '' ? $name : pathinfo($origName, PATHINFO_FILENAME);
+        $mimeFinal = $mime !== '' ? $mime : match ($ext) {
+            'webm' => 'video/webm',
+            'mov' => 'video/quicktime',
+            'avi' => 'video/x-msvideo',
+            'mkv' => 'video/x-matroska',
+            default => 'video/mp4',
+        };
+        DB::query(
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $display, $dest, $origName, $ext, $mimeFinal, $size, 'company_entrust', 'company',
+                'ready', 'unused', null, '', $sha, '', $name, '', $ownerId,
+            ]
+        );
+        $id = (int)DB::getPdo()->lastInsertId();
+        return DB::selectOne('SELECT * FROM materials WHERE id=?', [$id]) ?: ['id' => $id, 'name' => $display, 'file_name' => $origName];
     }
 }

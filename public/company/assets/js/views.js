@@ -1245,6 +1245,221 @@
     }
   };
 
+  var SupportView = {
+    name: 'SupportView',
+    render: function () {
+      return h('div', { class: 'page-view' }, [
+        pageHead('客服消息', '企业账号私信与客服会话（即将开放）'),
+        h('div', { class: 'panel placeholder-panel' }, [
+          h('div', { class: 'placeholder-icon' }, '💬'),
+          h('h3', '客服消息功能筹备中'),
+          h('p', { class: 'muted' }, '后续将支持查看与回复企业关联账号的客服私信。')
+        ])
+      ]);
+    }
+  };
+
+  var PublishView = {
+    name: 'PublishView',
+    data: function () {
+      return {
+        loading: false,
+        submitting: false,
+        accounts: [],
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        form: { accountId: null, title: '', caption: '', file: null, fileName: '' }
+      };
+    },
+    mounted: function () {
+      this.loadAccounts();
+      this.loadTasks();
+    },
+    methods: {
+      loadAccounts: async function () {
+        try {
+          var d = await CompanyAPI.publishAccounts();
+          this.accounts = d.items || [];
+        } catch (e) {
+          ElMessage.error(e.message || '加载账号失败');
+        }
+      },
+      loadTasks: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.publishTasks({ page: this.page, pageSize: this.pageSize });
+          this.items = d.items || [];
+          this.total = d.total || 0;
+        } catch (e) {
+          ElMessage.error(e.message || '加载委托任务失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      onFileChange: function (uploadFile) {
+        var raw = uploadFile && (uploadFile.raw || uploadFile);
+        if (!raw) return;
+        this.form.file = raw;
+        this.form.fileName = raw.name || 'video.mp4';
+        if (!this.form.title) {
+          this.form.title = String(raw.name || '').replace(/\.[^.]+$/, '');
+        }
+      },
+      clearFile: function () {
+        this.form.file = null;
+        this.form.fileName = '';
+      },
+      statusLabel: function (s) {
+        var map = {
+          draft: '待处理', queued: '排队中', running: '发布中', paused: '已暂停',
+          completed: '已完成', failed: '失败', cancelled: '已取消'
+        };
+        return map[s] || s || '-';
+      },
+      submit: async function () {
+        if (!this.form.accountId) {
+          ElMessage.warning('请选择发布账号');
+          return;
+        }
+        if (!this.form.file) {
+          ElMessage.warning('请上传视频文件');
+          return;
+        }
+        this.submitting = true;
+        try {
+          var fd = new FormData();
+          fd.append('accountId', String(this.form.accountId));
+          fd.append('file', this.form.file);
+          if (this.form.title) fd.append('title', this.form.title);
+          if (this.form.caption) fd.append('caption', this.form.caption);
+          await CompanyAPI.createPublishTask(fd);
+          ElMessage.success('委托任务已创建，等待运营处理');
+          this.form.title = '';
+          this.form.caption = '';
+          this.clearFile();
+          this.page = 1;
+          this.loadTasks();
+        } catch (e) {
+          ElMessage.error(e.message || '提交失败');
+        } finally {
+          this.submitting = false;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page-view' }, [
+        pageHead('发布视频', '选择账号并上传视频，生成委托发布任务供运营执行'),
+        h('div', { class: 'panel publish-form-panel' }, [
+          panelHead('新建委托'),
+          h('div', { class: 'publish-form-grid' }, [
+            h('div', { class: 'field' }, [
+              h('label', '发布账号'),
+              h(ElementPlus.ElSelect, {
+                modelValue: self.form.accountId,
+                'onUpdate:modelValue': function (v) { self.form.accountId = v; },
+                placeholder: '选择账号',
+                filterable: true,
+                style: 'width:100%'
+              }, function () {
+                return self.accounts.map(function (a) {
+                  return h(ElementPlus.ElOption, {
+                    key: a.id,
+                    label: (a.label || a.username) + ' (#' + a.id + ')',
+                    value: a.id
+                  });
+                });
+              })
+            ]),
+            h('div', { class: 'field' }, [
+              h('label', '视频标题（可选）'),
+              h(ElementPlus.ElInput, {
+                modelValue: self.form.title,
+                'onUpdate:modelValue': function (v) { self.form.title = v; },
+                placeholder: '发布标题'
+              })
+            ]),
+            h('div', { class: 'field full' }, [
+              h('label', '视频描述（可选）'),
+              h(ElementPlus.ElInput, {
+                type: 'textarea',
+                rows: 3,
+                modelValue: self.form.caption,
+                'onUpdate:modelValue': function (v) { self.form.caption = v; },
+                placeholder: '发布文案 / 描述'
+              })
+            ]),
+            h('div', { class: 'field full' }, [
+              h('label', '上传视频'),
+              h(ElementPlus.ElUpload, {
+                drag: true,
+                autoUpload: false,
+                showFileList: false,
+                accept: 'video/*,.mp4,.mov,.webm,.mkv,.avi,.m4v',
+                onChange: function (f) { self.onFileChange(f); }
+              }, {
+                default: function () {
+                  return [
+                    h('div', { class: 'el-upload__text' }, [
+                      self.form.fileName
+                        ? ('已选：' + self.form.fileName)
+                        : h('span', [h('em', '点击或拖拽'), ' 视频到此处'])
+                    ])
+                  ];
+                }
+              }),
+              self.form.fileName
+                ? h('div', { class: 'publish-file-row' }, [
+                    h('span', { class: 'muted' }, self.form.fileName),
+                    h(ElementPlus.ElButton, { link: true, type: 'danger', onClick: function () { self.clearFile(); } }, function () { return '清除'; })
+                  ])
+                : null
+            ])
+          ]),
+          h('div', { class: 'publish-form-actions' }, [
+            h(ElementPlus.ElButton, {
+              type: 'primary',
+              loading: self.submitting,
+              onClick: function () { self.submit(); }
+            }, function () { return '提交委托'; })
+          ])
+        ]),
+        h('div', { class: 'panel' }, [
+          panelHead('委托任务列表'),
+          h(ElementPlus.ElTable, { data: self.items, stripe: true, vLoading: self.loading, style: 'width:100%' }, function () {
+            return [
+              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
+              h(ElementPlus.ElTableColumn, { prop: 'name', label: '任务', minWidth: 180, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { label: '账号', minWidth: 140 }, {
+                default: function (scope) {
+                  var r = scope.row;
+                  return (r.accountNickname || r.accountUsername || '') + (r.accountId ? (' #' + r.accountId) : '');
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'materialName', label: '素材', minWidth: 140, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { label: '状态', width: 100 }, {
+                default: function (scope) { return self.statusLabel(scope.row.status); }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'createdAt', label: '创建时间', width: 170 })
+            ];
+          }),
+          h('div', { class: 'pager-row' }, [
+            h(ElementPlus.ElPagination, {
+              currentPage: self.page,
+              'onUpdate:currentPage': function (v) { self.page = v; self.loadTasks(); },
+              pageSize: self.pageSize,
+              total: self.total,
+              layout: 'total, prev, pager, next',
+              background: true
+            })
+          ])
+        ])
+      ]);
+    }
+  };
+
   global.CompanyViews = {
     LoginView: LoginView,
     DashboardView: DashboardView,
@@ -1253,6 +1468,8 @@
     VideosView: VideosView,
     VideoDetailView: VideoDetailView,
     CluesView: CluesView,
-    AnalyticsView: AnalyticsView
+    AnalyticsView: AnalyticsView,
+    SupportView: SupportView,
+    PublishView: PublishView
   };
 })(window);

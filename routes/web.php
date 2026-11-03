@@ -111,6 +111,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/company/videos/{id}', CompanyPortalController::class . '@spa');
     Router::get('/company/clues', CompanyPortalController::class . '@spa');
     Router::get('/company/analytics', CompanyPortalController::class . '@spa');
+    Router::get('/company/support', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops/publish', CompanyPortalController::class . '@spa');
 
     Router::get('/api/company/auth/captcha', CompanyAuthController::class . '@captcha');
     Router::get('/api/company/auth/status', CompanyAuthController::class . '@status');
@@ -128,6 +131,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/videos/{id}', CompanyPortalApiController::class . '@videoDetail');
     Router::get('/api/company/clues', CompanyPortalApiController::class . '@clues');
     Router::get('/api/company/analytics', CompanyPortalApiController::class . '@analytics');
+    Router::get('/api/company/publish/accounts', CompanyPortalApiController::class . '@publishAccounts');
+    Router::get('/api/company/publish/tasks', CompanyPortalApiController::class . '@publishTasks');
+    Router::post('/api/company/publish/tasks', CompanyPortalApiController::class . '@createPublishTask');
 });
 
 // 需登录（authEnabled=false 时 AuthMiddleware 放行 guest 超管）

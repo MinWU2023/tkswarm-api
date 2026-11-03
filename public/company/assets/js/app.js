@@ -13,7 +13,16 @@
     { path: '/accounts', title: '账号列表', icon: 'User' },
     { path: '/videos', title: '视频数据', icon: 'VideoCamera' },
     { path: '/clues', title: '拓客线索', icon: 'Opportunity' },
-    { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' }
+    { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' },
+    { path: '/support', title: '客服消息', icon: 'ChatDotRound' },
+    {
+      path: '/ops',
+      title: '视频运营',
+      icon: 'Film',
+      children: [
+        { path: '/ops/publish', title: '发布视频', icon: 'Upload' }
+      ]
+    }
   ];
 
   var AppLayout = {
@@ -34,6 +43,11 @@
     computed: {
       active: function () {
         return this.$route.path;
+      },
+      openMenus: function () {
+        var p = this.$route.path || '';
+        if (p.indexOf('/ops') === 0) return ['/ops'];
+        return [];
       }
     },
     mounted: async function () {
@@ -149,9 +163,32 @@
           h('div', { class: 'side-nav' }, [
             h(ElementPlus.ElMenu, {
               defaultActive: self.active,
+              defaultOpeneds: self.openMenus,
               router: true
             }, function () {
               return self.menuItems.map(function (item) {
+                if (item.children && item.children.length) {
+                  return h(ElementPlus.ElSubMenu, { index: item.path }, {
+                    title: function () {
+                      return h('div', { class: 'flex items-center gap-2' }, [
+                        h(ElementPlus.ElIcon, null, function () { return h(self.icon(item.icon)); }),
+                        h('span', item.title)
+                      ]);
+                    },
+                    default: function () {
+                      return item.children.map(function (child) {
+                        return h(ElementPlus.ElMenuItem, { index: child.path, route: child.path }, {
+                          default: function () {
+                            return h('div', { class: 'flex items-center gap-2' }, [
+                              h(ElementPlus.ElIcon, null, function () { return h(self.icon(child.icon || 'Document')); }),
+                              h('span', child.title)
+                            ]);
+                          }
+                        });
+                      });
+                    }
+                  });
+                }
                 return h(ElementPlus.ElMenuItem, { index: item.path, route: item.path }, {
                   default: function () {
                     return h('div', { class: 'flex items-center gap-2' }, [
@@ -309,7 +346,10 @@
         { path: 'videos', component: CompanyViews.VideosView, meta: { title: '视频数据' } },
         { path: 'videos/:id', component: CompanyViews.VideoDetailView, meta: { title: '视频详情' } },
         { path: 'clues', component: CompanyViews.CluesView, meta: { title: '拓客线索' } },
-        { path: 'analytics', component: CompanyViews.AnalyticsView, meta: { title: '数据看板' } }
+        { path: 'analytics', component: CompanyViews.AnalyticsView, meta: { title: '数据看板' } },
+        { path: 'support', component: CompanyViews.SupportView, meta: { title: '客服消息' } },
+        { path: 'ops', redirect: '/ops/publish' },
+        { path: 'ops/publish', component: CompanyViews.PublishView, meta: { title: '发布视频' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }
