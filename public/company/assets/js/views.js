@@ -1434,13 +1434,13 @@
     render: function () {
       var self = this;
       var tabLabel = { dm: '私信', follower: '粉丝', following: '关注' };
-      var emptyFriend = '暂无' + (tabLabel[self.friendTab] || '联系人') + '（仅展示已入库数据，不可拉取）';
+      var emptyFriend = '暂无' + (tabLabel[self.friendTab] || '联系人');
       var currentAccount = (self.accounts || []).find(function (a) {
         return Number(a.id) === Number(self.accountId);
       }) || null;
 
       return h('div', { class: 'page-view support-page' }, [
-        pageHead('客服坐席', '查看企业权限范围内账号的私信 / 粉丝 / 关注（只读，不可拉取、分析、搜索）'),
+        pageHead('客服坐席', '企业账号私信、粉丝与关注会话'),
         h('div', { class: 'cx-chat-shell' + (self.loading ? ' is-loading' : '') }, [
           h('aside', { class: 'cx-chat-col cx-chat-accounts' }, [
             h('div', { class: 'cx-chat-col-head' }, [h('h3', '账号')]),
@@ -1518,7 +1518,6 @@
                 onClick: function () { self.setFriendTab('following'); }
               }, '关注' + (self.friendCounts.following ? ' (' + self.friendCounts.following + ')' : ''))
             ]),
-            h('div', { class: 'cx-chat-tab-note' }, '仅可查看已同步入库的用户，不支持拉取私信 / 粉丝 / 关注 / 搜索'),
             h('div', { class: 'cx-chat-list' },
               !self.accountId
                 ? [h('div', { class: 'cx-chat-empty' }, '请先选择左侧账号')]
@@ -1554,7 +1553,7 @@
                 h('div', { class: 'muted' }, self.friend
                   ? ('关系：' + (self.friend.relation || '-') + ' · UID ' + (self.friend.friendUid || '-'))
                   : (currentAccount
-                    ? ('账号：' + (currentAccount.username || '') + ' · 只读坐席')
+                    ? ('账号：' + (currentAccount.username || ''))
                     : '请选择联系人查看消息'))
               ])
             ]),
@@ -1578,10 +1577,9 @@
                   ]);
                 })
                 : [h('div', { class: 'cx-chat-empty' }, self.friend
-                  ? '该会话暂无本地消息'
-                  : '选择联系人后查看会话。企业坐席为只读，不支持发送、拉取与搜索。')])
-            ),
-            h('div', { class: 'cx-chat-readonly-bar' }, '只读模式 · 不可发送 / 拉取私信 / 分析 / 刷新关注 / 搜索用户')
+                  ? '该会话暂无消息'
+                  : '请选择联系人查看会话')])
+            )
           ])
         ])
       ]);
