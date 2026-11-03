@@ -1192,8 +1192,10 @@ class AccountBrowserEnvService
             return ['ok' => false, 'message' => '上传临时文件不存在'];
         }
         $bytes = (int)filesize($tmpFile);
-        if ($bytes < 64) {
-            return ['ok' => false, 'message' => '环境包过小或损坏'];
+        // 含 Cookie 的会话包通常远大于 8KB；过小多为空目录/未刷盘，禁止盖掉中心库有效包
+        $minPackBytes = 8 * 1024;
+        if ($bytes < $minPackBytes) {
+            return ['ok' => false, 'message' => '环境包过小（疑似未含登录会话），已拒绝覆盖'];
         }
         if ($bytes > self::PACK_MAX_BYTES) {
             return ['ok' => false, 'message' => '环境包超过 500MB 上限'];
