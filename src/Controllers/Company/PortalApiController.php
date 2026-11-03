@@ -429,22 +429,7 @@ class PortalApiController extends Controller
             }
         }
 
-        $daily28 = [];
-        $tz = new \DateTimeZone(date_default_timezone_get() ?: 'UTC');
-        $end = new \DateTimeImmutable('today', $tz);
-        for ($i = 27; $i >= 0; $i--) {
-            $day = $end->modify("-{$i} days")->format('Y-m-d');
-            $row = $dailyMap[$day] ?? null;
-            $daily28[] = [
-                'metricDate' => $day,
-                'videoViews' => (int)($row['video_views'] ?? 0),
-                'profileViews' => (int)($row['profile_views'] ?? 0),
-                'likes' => (int)($row['likes_count'] ?? 0),
-                'comments' => (int)($row['comments_count'] ?? 0),
-                'shares' => (int)($row['shares_count'] ?? 0),
-                'estRewards' => (float)($row['est_rewards'] ?? 0),
-            ];
-        }
+        $daily28 = $this->buildDaily28Series($dailyMap);
 
         return $this->success([
             'accountId' => $accountId,
@@ -943,22 +928,7 @@ class PortalApiController extends Controller
         } catch (\Throwable $e) {
             $dailyMap = [];
         }
-        $daily28 = [];
-        $tz = new \DateTimeZone(date_default_timezone_get() ?: 'UTC');
-        $end = new \DateTimeImmutable('today', $tz);
-        for ($i = 27; $i >= 0; $i--) {
-            $day = $end->modify("-{$i} days")->format('Y-m-d');
-            $row = $dailyMap[$day] ?? null;
-            $daily28[] = [
-                'metricDate' => $day,
-                'videoViews' => (int)($row['video_views'] ?? 0),
-                'profileViews' => (int)($row['profile_views'] ?? 0),
-                'likes' => (int)($row['likes_count'] ?? 0),
-                'comments' => (int)($row['comments_count'] ?? 0),
-                'shares' => (int)($row['shares_count'] ?? 0),
-                'estRewards' => (float)($row['est_rewards'] ?? 0),
-            ];
-        }
+        $daily28 = $this->buildDaily28Series($dailyMap);
 
         $snapshots = [];
         try {
@@ -1631,6 +1601,38 @@ class PortalApiController extends Controller
             'pageSize' => $pageSize,
             'pages' => max(1, (int)ceil($total / max(1, $pageSize))),
         ]);
+    }
+
+    /**
+     * 近 28 天日历横轴：有数据填真实值，缺天补 0。
+     *
+     * @param array<string,array<string,mixed>> $dailyMap key=Y-m-d
+     * @return list<array<string,mixed>>
+     */
+    private function buildDaily28Series(array $dailyMap): array
+    {
+        $tzName = date_default_timezone_get() ?: 'Asia/Shanghai';
+        try {
+            $tz = new \DateTimeZone($tzName);
+        } catch (\Throwable $e) {
+            $tz = new \DateTimeZone('Asia/Shanghai');
+        }
+        $end = new \DateTimeImmutable('today', $tz);
+        $out = [];
+        for ($i = 27; $i >= 0; $i--) {
+            $day = $end->modify("-{$i} days")->format('Y-m-d');
+            $row = $dailyMap[$day] ?? null;
+            $out[] = [
+                'metricDate' => $day,
+                'videoViews' => (int)($row['video_views'] ?? $row['videoViews'] ?? 0),
+                'profileViews' => (int)($row['profile_views'] ?? $row['profileViews'] ?? 0),
+                'likes' => (int)($row['likes_count'] ?? $row['likes'] ?? 0),
+                'comments' => (int)($row['comments_count'] ?? $row['comments'] ?? 0),
+                'shares' => (int)($row['shares_count'] ?? $row['shares'] ?? 0),
+                'estRewards' => (float)($row['est_rewards'] ?? $row['estRewards'] ?? 0),
+            ];
+        }
+        return $out;
     }
 
     /**

@@ -41,6 +41,39 @@
     return String(Math.round(v * 100) / 100);
   }
 
+  /** 近 28 天横轴：日历日凑满；有数据用真实值，缺天补 0 */
+  function padDaily28(rows) {
+    var map = {};
+    (rows || []).forEach(function (r) {
+      if (!r) return;
+      var d = String(r.metricDate || r.metric_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      map[d] = r;
+    });
+    var out = [];
+    var end = new Date();
+    end.setHours(0, 0, 0, 0);
+    for (var i = 27; i >= 0; i--) {
+      var dt = new Date(end.getTime());
+      dt.setDate(end.getDate() - i);
+      var y = dt.getFullYear();
+      var m = String(dt.getMonth() + 1).padStart(2, '0');
+      var day = String(dt.getDate()).padStart(2, '0');
+      var key = y + '-' + m + '-' + day;
+      var row = map[key];
+      out.push({
+        metricDate: key,
+        videoViews: Number(row && (row.videoViews != null ? row.videoViews : row.video_views) || 0),
+        profileViews: Number(row && (row.profileViews != null ? row.profileViews : row.profile_views) || 0),
+        likes: Number(row && (row.likes != null ? row.likes : row.likes_count) || 0),
+        comments: Number(row && (row.comments != null ? row.comments : row.comments_count) || 0),
+        shares: Number(row && (row.shares != null ? row.shares : row.shares_count) || 0),
+        estRewards: Number(row && (row.estRewards != null ? row.estRewards : row.est_rewards) || 0)
+      });
+    }
+    return out;
+  }
+
   /** SVG 折线图：pack = { labels, series:[{key,name,color,values}] } */
   function lineChartBlock(pack, hiddenMap, onToggle) {
     var labels = (pack && pack.labels) || [];
@@ -327,12 +360,13 @@
             if (!this.accountOptions.length) this.accountOptions = d.accountOptions;
           }
           if (d.accountId) this.chartAccountId = d.accountId;
-          this.daily28 = d.daily28 || [];
+          this.daily28 = padDaily28(d.daily28 || []);
           this.snapshots = d.snapshots || [];
           this.hasDailyData = !!d.hasDailyData;
           this.hasSnapshots = !!d.hasSnapshots;
         } catch (e) {
           ElMessage.error(e.message);
+          this.daily28 = padDaily28([]);
         } finally {
           this.chartLoading = false;
         }
@@ -360,7 +394,7 @@
         this.chartHidden = next;
       },
       dailyPack: function () {
-        var rows = this.daily28 || [];
+        var rows = padDaily28(this.daily28 || []);
         return {
           labels: rows.map(function (d) { return String(d.metricDate || '').slice(5); }),
           series: [
@@ -805,13 +839,14 @@
           this.account = d.account || null;
           this.stats = d.stats || {};
           this.recentVideos = d.recentVideos || [];
-          this.daily28 = d.daily28 || [];
+          this.daily28 = padDaily28(d.daily28 || []);
           this.snapshots = d.snapshots || [];
           this.hasDailyData = !!d.hasDailyData;
           this.hasSnapshots = !!d.hasSnapshots;
         } catch (e) {
           ElMessage.error(e.message || '加载失败');
           this.account = null;
+          this.daily28 = padDaily28([]);
         } finally {
           this.loading = false;
         }
@@ -824,7 +859,7 @@
         this.chartHidden = next;
       },
       dailyPack: function () {
-        var rows = this.daily28 || [];
+        var rows = padDaily28(this.daily28 || []);
         return {
           labels: rows.map(function (d) { return String(d.metricDate || '').slice(5); }),
           series: [
