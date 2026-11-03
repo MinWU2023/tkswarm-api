@@ -2660,8 +2660,9 @@ class NodeBridgeController extends Controller
     {
         AccountWorkBatchService::ensureSchema();
         $workerId = trim((string)$request->input('workerId', $request->input('worker_id', '')));
+        $reason = trim((string)$request->input('reason', $request->input('errorMessage', $request->input('error_message', ''))));
         try {
-            $out = AccountWorkBatchService::releaseClaim((int)$id, $workerId);
+            $out = AccountWorkBatchService::releaseClaim((int)$id, $workerId, $reason);
             return $this->success($out, $out['released'] ?? false ? '已退回排队' : ($out['message'] ?? '未释放'));
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 409);

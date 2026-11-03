@@ -29,11 +29,12 @@ class AccountWorkBatchService
 {
     public const BATCH_SCOPE_GENERAL = 'general';
     public const BATCH_SCOPE_AI_LEAD = 'ai_lead';
+    /** 客服坐席（服务器浏览器长驻，与 general / ai_lead 独立） */
+    public const BATCH_SCOPE_CS_SEAT = 'cs_seat';
     /**
-     * 允许使用服务器浏览器（Linux 常驻服务）的分任务类型。
-     * 架构约定：服务器浏览器只跑长期占用的公共任务；多账号客服（坐席）对接后在此追加。
+     * 允许使用服务器浏览器（Linux 常驻 EL 核）的分任务类型：AI 拓客 + 客服坐席。
      */
-    public const SERVER_BROWSER_TASK_TYPES = ['ai_lead', 'ai_lead_dm'];
+    public const SERVER_BROWSER_TASK_TYPES = ['ai_lead', 'ai_lead_dm', 'dm_sync', 'message', 'dm_reply'];
     /** @var array<string,int> 越小越先执行 */
     public const TYPE_PRIORITY = [
         'modify_profile' => 5,  // 修改资料（紧接登录后）
@@ -529,7 +530,7 @@ class AccountWorkBatchService
             DB::query(
                 "ALTER TABLE account_work_batches
                  ADD COLUMN batch_scope VARCHAR(32) NOT NULL DEFAULT 'general'
-                 COMMENT 'general|ai_lead'
+                 COMMENT 'general|ai_lead|cs_seat'
                  AFTER owner_id"
             );
         } catch (\Throwable $e) {
@@ -867,7 +868,7 @@ class AccountWorkBatchService
                AND i.priority < ?
                AND b.deleted_at IS NULL
                AND b.status IN ('pending','running','paused')
-               AND COALESCE(b.batch_scope,'general') <> 'ai_lead'
+               AND COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
              LIMIT 1",
             [$accountId, $thanPriority]
         );
@@ -1216,9 +1217,14 @@ class AccountWorkBatchService
         if (!self::isBrowserType($taskType)) {
             throw new \InvalidArgumentException("不支持的任务类型: {$taskType}");
         }
-        // AI 拓客必须走独立总任务，禁止挂入 general batch
+        // AI 拓客必须走独立总任务；坐席若指定 linux 也走独立 cs_seat
         if (in_array($taskType, ['ai_lead', 'ai_lead_dm'], true)) {
             return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId);
+        }
+        $wantBackend = strtolower(trim((string)($payload['browserBackend'] ?? $payload['browser_backend'] ?? '')));
+        if ($wantBackend === 'linux' && self::isCsSeatTaskType($taskType)) {
+            self::assertServerBrowserTask($taskType);
+            return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId, self::BATCH_SCOPE_CS_SEAT);
         }
         $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
         if (!$acc) {
@@ -1267,7 +1273,8 @@ class AccountWorkBatchService
         string $taskType,
         array $payload = [],
         int $taskRefId = 0,
-        ?int $ownerId = null
+        ?int $ownerId = null,
+        ?string $batchScope = null
     ): array {
         self::ensureBatchScopeReady();
         AccountBrowserEnvService::ensureSchema();
@@ -1289,7 +1296,14 @@ class AccountWorkBatchService
         if (!in_array($wantBackend, ['bit', 'tkswarm', 'linux'], true)) {
             $wantBackend = 'bit';
         }
-        // Linux 服务器浏览器：与桌面自研共用环境包；入队不强制绑，由 node 拉包/复用/补建。
+        $scope = strtolower(trim((string)($batchScope ?? '')));
+        if ($scope === '') {
+            $scope = self::isCsSeatTaskType($taskType) ? self::BATCH_SCOPE_CS_SEAT : self::BATCH_SCOPE_AI_LEAD;
+        }
+        if (!self::isDedicatedBatchScope($scope)) {
+            $scope = self::BATCH_SCOPE_AI_LEAD;
+        }
+        // Linux 服务器浏览器：与桌面自研共用环境包；入队不强制绑，由 node 拉包（无包则等待）。
         if ($wantBackend === 'linux') {
             self::assertServerBrowserTask($taskType);
         } else {
@@ -1306,7 +1320,7 @@ class AccountWorkBatchService
 
         DB::query(
             "INSERT INTO account_work_batches (account_id, owner_id, batch_scope, status) VALUES (?,?, ?, 'pending')",
-            [$accountId, $owner, self::BATCH_SCOPE_AI_LEAD]
+            [$accountId, $owner, $scope]
         );
         $batchId = (int)DB::getPdo()->lastInsertId();
         DB::query(
@@ -1353,7 +1367,7 @@ class AccountWorkBatchService
             "SELECT * FROM account_work_batches
              WHERE account_id=?{$ownerSql} AND status IN ('pending','running','paused')
                AND deleted_at IS NULL
-               AND COALESCE(batch_scope, 'general') <> 'ai_lead'
+               AND COALESCE(batch_scope, 'general') NOT IN ('ai_lead','cs_seat')
              ORDER BY FIELD(status,'running','pending','paused'), id ASC
              LIMIT 1",
             $batchParams
@@ -1421,7 +1435,7 @@ class AccountWorkBatchService
         $row = DB::selectOne(
             "SELECT b.id FROM account_work_batches b
              WHERE b.account_id=? AND b.deleted_at IS NULL
-               AND COALESCE(b.batch_scope,'general') <> 'ai_lead'
+               AND COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                AND b.status IN ('pending','running')
                {$excludeSql}
                AND EXISTS (
@@ -1485,12 +1499,12 @@ class AccountWorkBatchService
                      WHERE e.account_id=b.account_id AND e.saturation='idle'
                    )
                    AND (
-                     COALESCE(b.batch_scope,'general') <> 'ai_lead'
+                     COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                      OR NOT EXISTS (
                        SELECT 1 FROM account_work_batches g
                        WHERE g.account_id=b.account_id AND g.deleted_at IS NULL
                          AND g.id <> b.id
-                         AND COALESCE(g.batch_scope,'general') <> 'ai_lead'
+                         AND COALESCE(g.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                          AND g.status IN ('pending','running')
                          AND EXISTS (
                            SELECT 1 FROM account_work_items gi
@@ -1501,7 +1515,7 @@ class AccountWorkBatchService
                    {$ownerSql}
                    {$excludeSql}
                  ORDER BY
-                   CASE WHEN COALESCE(b.batch_scope,'general') = 'ai_lead' THEN 1 ELSE 0 END,
+                   CASE WHEN COALESCE(b.batch_scope,'general') IN ('ai_lead','cs_seat') THEN 1 ELSE 0 END,
                    b.id ASC
                  LIMIT 1",
                 $params
@@ -1696,7 +1710,7 @@ class AccountWorkBatchService
             $generalRunning = DB::selectOne(
                 "SELECT b.id FROM account_work_batches b
                  WHERE b.account_id=? AND b.status='running' AND b.id<>?
-                   AND COALESCE(b.batch_scope,'general') <> 'ai_lead'
+                   AND COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                    AND EXISTS (
                      SELECT 1 FROM account_work_items i
                      WHERE i.batch_id=b.id AND i.task_type NOT IN ('ai_lead','ai_lead_dm')
@@ -1798,7 +1812,7 @@ class AccountWorkBatchService
         $row = DB::selectOne(
             "SELECT b.id FROM account_work_batches b
              WHERE b.account_id=? AND b.status='running' AND b.deleted_at IS NULL
-               AND COALESCE(b.batch_scope,'general') <> 'ai_lead'
+               AND COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                AND EXISTS (
                  SELECT 1 FROM account_work_items i
                  WHERE i.batch_id=b.id AND i.task_type NOT IN ('ai_lead','ai_lead_dm')
@@ -2709,7 +2723,7 @@ class AccountWorkBatchService
      * 将已领取但未真正执行的总任务退回 pending（不取消分任务）。
      * 用于：WSS 推送失败 / 前台未接单 / Node 重启后孤儿租约。
      */
-    public static function releaseClaim(int $batchId, string $workerId): array
+    public static function releaseClaim(int $batchId, string $workerId, string $reason = ''): array
     {
         self::ensureSchema();
         $batch = DB::selectOne('SELECT * FROM account_work_batches WHERE id=?', [$batchId]);
@@ -2735,19 +2749,31 @@ class AccountWorkBatchService
              WHERE batch_id=? AND status='running'",
             [$batchId]
         );
-        DB::query(
-            "UPDATE account_work_batches
-             SET status='pending', push_status='none', locked_by='', lease_until=NULL, browser_env_id=NULL,
-                 heartbeat_at=NULL, updated_at=CURRENT_TIMESTAMP
-             WHERE id=? AND status='running'",
-            [$batchId]
-        );
+        $reasonTrim = mb_substr(trim($reason), 0, 500);
+        if ($reasonTrim !== '') {
+            DB::query(
+                "UPDATE account_work_batches
+                 SET status='pending', push_status='none', locked_by='', lease_until=NULL, browser_env_id=NULL,
+                     heartbeat_at=NULL, last_error=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND status='running'",
+                [$reasonTrim, $batchId]
+            );
+        } else {
+            DB::query(
+                "UPDATE account_work_batches
+                 SET status='pending', push_status='none', locked_by='', lease_until=NULL, browser_env_id=NULL,
+                     heartbeat_at=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND status='running'",
+                [$batchId]
+            );
+        }
 
         return [
             'id' => $batchId,
             'status' => 'pending',
             'push_status' => 'none',
             'released' => true,
+            'last_error' => $reasonTrim,
         ];
     }
 
@@ -3314,14 +3340,25 @@ class AccountWorkBatchService
             $preferredBackend
         );
     }
-    /** 服务器浏览器（Linux）只给 AI 拓客 / 客服类任务用，其它类型直接拒绝 */
+    /** 服务器浏览器（Linux EL）只给 AI 拓客 / 客服坐席用，其它类型直接拒绝 */
     private static function assertServerBrowserTask(string $taskType): void
     {
         if (!in_array(strtolower(trim($taskType)), self::SERVER_BROWSER_TASK_TYPES, true)) {
             throw new \InvalidArgumentException(
-                '服务器浏览器只用于 AI 拓客和在线多账号客服，' . $taskType . ' 任务不能使用'
+                '服务器浏览器只用于 AI 拓客和客服坐席，' . $taskType . ' 任务不能使用'
             );
         }
+    }
+
+    public static function isCsSeatTaskType(string $taskType): bool
+    {
+        return in_array(strtolower(trim($taskType)), ['dm_sync', 'message', 'dm_reply'], true);
+    }
+
+    public static function isDedicatedBatchScope(string $scope): bool
+    {
+        $s = strtolower(trim($scope));
+        return $s === self::BATCH_SCOPE_AI_LEAD || $s === self::BATCH_SCOPE_CS_SEAT;
     }
 
     /** 入队/推送用的归属：优先账号/任务 owner，否则当前有效身份（含切换后） */
