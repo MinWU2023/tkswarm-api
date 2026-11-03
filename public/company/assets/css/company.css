@@ -858,7 +858,6 @@ html { color-scheme: light; }
 .cx-chart-svg {
   width: 100%;
   height: auto;
-  max-height: 280px;
   display: block;
   overflow: visible;
   shape-rendering: geometricPrecision;
