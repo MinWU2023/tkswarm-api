@@ -971,19 +971,70 @@ class AccountBrowserEnvService
         return $row ?: null;
     }
 
+    /** 默认落盘路径：storage/browser-env-packs/{safeProfileId}.tgz */
+    public static function defaultPackPath(string $profileId, int $envId = 0): string
+    {
+        $safeId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($profileId)) ?: ('env' . max(0, $envId));
+        return self::packStorageDir() . DIRECTORY_SEPARATOR . $safeId . '.tgz';
+    }
+
+    /**
+     * 解析真实可读的包文件路径：优先 DB pack_path，其次默认 storage 落盘（修复路径漂移/只传了文件未写库）。
+     * @return array{0:string,1:bool,2:bool} [path, hasFile, healedFromDefault]
+     */
+    public static function resolvePackFile(array $env): array
+    {
+        $profileId = trim((string)($env['browser_profile_id'] ?? ''));
+        $path = trim((string)($env['pack_path'] ?? ''));
+        $hasFile = $path !== '' && is_file($path);
+        if ($hasFile) {
+            return [$path, true, false];
+        }
+        $fallback = self::defaultPackPath($profileId, (int)($env['id'] ?? 0));
+        if ($fallback !== '' && is_file($fallback)) {
+            // 静默回写，避免下次再 miss
+            try {
+                $bytes = (int)@filesize($fallback);
+                $sha = (string)(hash_file('sha256', $fallback) ?: '');
+                $rev = max(1, (int)($env['pack_revision'] ?? 0));
+                DB::query(
+                    "UPDATE account_browser_envs
+                     SET pack_path=?, pack_bytes=IF(pack_bytes>0,pack_bytes,?), pack_sha256=IF(pack_sha256='',?,pack_sha256),
+                         pack_revision=IF(pack_revision>0,pack_revision,?), updated_at=CURRENT_TIMESTAMP
+                     WHERE id=?",
+                    [$fallback, $bytes, $sha, $rev, (int)($env['id'] ?? 0)]
+                );
+            } catch (\Throwable $e) {
+                // 忽略回写失败，仍允许本次按 fallback 读
+            }
+            return [$fallback, true, true];
+        }
+        return [$path, false, false];
+    }
+
     /** @return array<string,mixed> */
     public static function packMeta(string $profileId): array
     {
         $env = self::findByProfileId($profileId);
         if (!$env) {
+            // 绑定行不存在时，仍探测默认落盘文件（便于诊断「磁盘有包、库无行」）
+            $fallback = self::defaultPackPath($profileId, 0);
+            $orphan = $fallback !== '' && is_file($fallback);
             return [
                 'exists' => false,
                 'hasPack' => false,
                 'profileId' => $profileId,
+                'packFileExists' => $orphan,
+                'packBytes' => $orphan ? (int)@filesize($fallback) : 0,
+                'packPath' => $orphan ? $fallback : '',
+                'reason' => $orphan ? 'orphan-pack-file-no-env-row' : 'env-row-missing',
             ];
         }
-        $path = trim((string)($env['pack_path'] ?? ''));
-        $hasFile = $path !== '' && is_file($path);
+        [$path, $hasFile, $healed] = self::resolvePackFile($env);
+        $bytes = $hasFile ? (int)@filesize($path) : (int)($env['pack_bytes'] ?? 0);
+        $rev = (int)($env['pack_revision'] ?? 0);
+        // 有可读文件即视为可拉：revision=0 但文件在（半上传/回写失败）也应能 hydrate
+        $hasPack = $hasFile && ($rev > 0 || $bytes > 64);
         $leaseUntil = (string)($env['lease_until'] ?? '');
         $lockedBy = (string)($env['locked_by'] ?? '');
         $leaseActive = ($env['saturation'] ?? '') === 'busy'
@@ -991,7 +1042,7 @@ class AccountBrowserEnvService
             && strtotime($leaseUntil) > time();
         return [
             'exists' => true,
-            'hasPack' => $hasFile && (int)($env['pack_revision'] ?? 0) > 0,
+            'hasPack' => $hasPack,
             'profileId' => (string)$env['browser_profile_id'],
             'accountId' => (int)($env['account_id'] ?? 0),
             'envId' => (int)($env['id'] ?? 0),
@@ -999,18 +1050,47 @@ class AccountBrowserEnvService
             'label' => (string)($env['label'] ?? ''),
             'browserBackend' => (string)($env['browser_backend'] ?? $env['browser_type'] ?? ''),
             'packSha256' => (string)($env['pack_sha256'] ?? ''),
-            'packBytes' => (int)($env['pack_bytes'] ?? 0),
-            'packRevision' => (int)($env['pack_revision'] ?? 0),
+            'packBytes' => $bytes,
+            'packRevision' => max($rev, $hasPack && $rev < 1 ? 1 : $rev),
             'packUpdatedAt' => $env['pack_updated_at'] ?? null,
             'packHostId' => (string)($env['pack_host_id'] ?? ''),
             'packPath' => $path,
             'packFileExists' => $hasFile,
+            'packPathHealed' => $healed,
             'saturation' => (string)($env['saturation'] ?? 'idle'),
             'lockedBy' => $lockedBy,
             'leaseUntil' => $leaseUntil ?: null,
             'leaseActive' => $leaseActive,
             'leaseHolder' => $leaseActive ? $lockedBy : '',
+            'reason' => $hasPack ? '' : ($hasFile ? 'pack-too-small' : 'pack-file-missing'),
         ];
+    }
+
+    /**
+     * 账号下可用于服务器浏览器拉包的环境（tkswarm/linux，且 hasPack）。
+     * @return list<array<string,mixed>>
+     */
+    public static function listPackableEnvsForAccount(int $accountId): array
+    {
+        self::ensureSchema();
+        if ($accountId < 1) {
+            return [];
+        }
+        $rows = DB::select(
+            "SELECT * FROM account_browser_envs
+             WHERE account_id=? AND browser_backend IN ('tkswarm','linux')
+             ORDER BY id DESC",
+            [$accountId]
+        ) ?: [];
+        $out = [];
+        foreach ($rows as $row) {
+            $meta = self::packMeta((string)($row['browser_profile_id'] ?? ''));
+            if (empty($meta['hasPack']) && empty($meta['packFileExists'])) {
+                continue;
+            }
+            $out[] = $meta;
+        }
+        return $out;
     }
 
     /**

@@ -3357,20 +3357,47 @@ class NodeBridgeController extends Controller
             return $err;
         }
         $meta = \App\Services\AccountBrowserEnvService::packMeta((string)$env['browser_profile_id']);
-        if (empty($meta['hasPack'])) {
+        if (empty($meta['hasPack']) && empty($meta['packFileExists'])) {
             return $this->error('服务器尚无该环境包，请先在有数据的机器上打开并关闭一次以完成首传', 404);
         }
-        $path = trim((string)($env['pack_path'] ?? ''));
+        $path = trim((string)($meta['packPath'] ?? ''));
         if ($path === '' || !is_file($path)) {
-            return $this->error('环境包文件缺失', 404);
+            [$resolved] = \App\Services\AccountBrowserEnvService::resolvePackFile($env);
+            $path = $resolved;
+        }
+        if ($path === '' || !is_file($path)) {
+            return $this->error('环境包文件缺失（DB 有记录但 API 机磁盘无文件）', 404);
         }
         $name = basename($path) ?: ((string)$env['browser_profile_id'] . '.tgz');
         return Response::file($path, 200, [
             'Content-Type' => 'application/gzip',
             'Content-Disposition' => 'attachment; filename="' . $name . '"',
             'Content-Length' => (string)filesize($path),
-            'X-Pack-Sha256' => (string)($env['pack_sha256'] ?? ''),
-            'X-Pack-Revision' => (string)(int)($env['pack_revision'] ?? 0),
+            'X-Pack-Sha256' => (string)($env['pack_sha256'] ?? $meta['packSha256'] ?? ''),
+            'X-Pack-Revision' => (string)(int)($meta['packRevision'] ?? $env['pack_revision'] ?? 0),
+        ]);
+    }
+
+    /** GET 账号下可跨机拉包的环境列表（诊断 / 服务器浏览器兜底） */
+    public function accountEnvPacks(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        \App\Services\AccountBrowserEnvService::ensureSchema();
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        $items = \App\Services\AccountBrowserEnvService::listPackableEnvsForAccount((int)$id);
+        // 附带全部绑定的 meta（含无包），便于排查「明明有包却 no-cloud-pack」
+        $all = [];
+        foreach (\App\Services\AccountBrowserEnvService::listByAccount((int)$id) as $row) {
+            $all[] = \App\Services\AccountBrowserEnvService::packMeta((string)($row['browser_profile_id'] ?? ''));
+        }
+        return $this->success([
+            'accountId' => (int)$id,
+            'packable' => $items,
+            'all' => $all,
+            'storageDir' => \App\Services\AccountBrowserEnvService::packStorageDir(),
         ]);
     }
 

@@ -580,6 +580,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/browser-envs/wipe-all', NodeBridgeController::class . '@wipeAllBrowserEnvData');
     Router::post('/api/admin/browser-envs/wipe-all', NodeBridgeController::class . '@wipeAllBrowserEnvData');
     Router::get('/api/node/accounts/{id}/bundle', NodeBridgeController::class . '@accountBundle');
+    Router::get('/api/node/accounts/{id}/env-packs', NodeBridgeController::class . '@accountEnvPacks');
     Router::post('/api/node/accounts/{id}/browser-binding', NodeBridgeController::class . '@browserBinding');
     Router::post('/api/node/accounts/{id}/fingerprint', NodeBridgeController::class . '@fingerprint');
     Router::post('/api/node/accounts/{id}/tiktok-sync', NodeBridgeController::class . '@tiktokSync');
