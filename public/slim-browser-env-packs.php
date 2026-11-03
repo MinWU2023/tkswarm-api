@@ -182,13 +182,125 @@ function slimUserdata(string $srcUserdata, string $destUserdata): array
     return ['kept' => $kept, 'bytes' => $bytes];
 }
 
+function hasSystemTar(): bool
+{
+    static $ok = null;
+    if ($ok !== null) {
+        return $ok;
+    }
+    $bin = PHP_OS_FAMILY === 'Windows' ? 'tar.exe' : 'tar';
+    $out = [];
+    $code = 1;
+    @exec(escapeshellarg($bin) . ' --version 2>&1', $out, $code);
+    $ok = ($code === 0);
+    return $ok;
+}
+
+/** 仅解压会话相关路径，避开 blob_storage / IndexedDB 等 Phar 易失败目录 */
+function sessionExtractTargets(): array
+{
+    $files = ['meta.json'];
+    foreach (SESSION_KEEP_RELS as $rel) {
+        $rel = str_replace('\\', '/', $rel);
+        $files[] = 'userdata/' . $rel;
+        // tar 里目录项有时带尾斜杠
+        $files[] = 'userdata/' . $rel . '/';
+    }
+    return array_values(array_unique($files));
+}
+
+function pathIsSessionKeep(string $rel): bool
+{
+    $rel = ltrim(str_replace('\\', '/', $rel), '/');
+    if ($rel === 'meta.json') {
+        return true;
+    }
+    $sub = $rel;
+    if (str_starts_with($rel, 'userdata/')) {
+        $sub = substr($rel, strlen('userdata/'));
+    }
+    foreach (SESSION_KEEP_RELS as $keep) {
+        $keep = str_replace('\\', '/', $keep);
+        if ($sub === $keep || str_starts_with($sub, $keep . '/')) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function extractTgz(string $tgzPath, string $destDir): void
 {
     if (!is_dir($destDir)) {
         mkdir($destDir, 0775, true);
     }
+    $errors = [];
+
+    // 1) 系统 tar：先列目录，只抽白名单（绝不全量，避开 blob_storage）
+    if (hasSystemTar()) {
+        $bin = PHP_OS_FAMILY === 'Windows' ? 'tar.exe' : 'tar';
+        $listOut = [];
+        $listCode = 1;
+        @exec(escapeshellarg($bin) . ' -tzf ' . escapeshellarg($tgzPath) . ' 2>&1', $listOut, $listCode);
+        $want = [];
+        if ($listCode === 0 && $listOut) {
+            foreach ($listOut as $line) {
+                $rel = trim(str_replace('\\', '/', (string)$line));
+                $rel = rtrim($rel, '/');
+                if ($rel === '' || str_contains($rel, '..')) {
+                    continue;
+                }
+                if (pathIsSessionKeep($rel)) {
+                    $want[] = $rel;
+                }
+            }
+            $want = array_values(array_unique($want));
+        }
+        if ($want) {
+            // 分批抽取，避免命令行过长
+            foreach (array_chunk($want, 40) as $chunk) {
+                $cmd = escapeshellarg($bin) . ' -xzf ' . escapeshellarg($tgzPath)
+                    . ' -C ' . escapeshellarg($destDir);
+                foreach ($chunk as $t) {
+                    $cmd .= ' ' . escapeshellarg($t);
+                }
+                $cmd .= ' 2>&1';
+                $out = [];
+                $code = 1;
+                @exec($cmd, $out, $code);
+                if ($code !== 0 && $out) {
+                    $errors[] = implode(' | ', array_slice($out, 0, 2));
+                }
+            }
+            if (is_file($destDir . DIRECTORY_SEPARATOR . 'meta.json')
+                || is_dir($destDir . DIRECTORY_SEPARATOR . 'userdata')
+                || is_dir($destDir . DIRECTORY_SEPARATOR . 'Default')) {
+                return;
+            }
+        } else {
+            // 列表失败时仍尝试固定白名单路径
+            $cmd = escapeshellarg($bin) . ' -xzf ' . escapeshellarg($tgzPath)
+                . ' -C ' . escapeshellarg($destDir);
+            foreach (sessionExtractTargets() as $t) {
+                $t = rtrim($t, '/');
+                if ($t !== '') {
+                    $cmd .= ' ' . escapeshellarg($t);
+                }
+            }
+            $cmd .= ' 2>&1';
+            $out = [];
+            $code = 1;
+            @exec($cmd, $out, $code);
+            if (is_file($destDir . DIRECTORY_SEPARATOR . 'meta.json')
+                || is_dir($destDir . DIRECTORY_SEPARATOR . 'userdata')) {
+                return;
+            }
+            $errors[] = 'tar 白名单解压失败：' . implode(' | ', array_slice($out, 0, 3));
+        }
+    }
+
+    // 2) Phar：只 extract 白名单（绝不全量）
     if (!class_exists('PharData')) {
-        throw new RuntimeException('PHP 未启用 Phar 扩展，无法解压 .tgz');
+        throw new RuntimeException('无法解压环境包：无可用 tar/Phar。' . ($errors ? implode('; ', $errors) : ''));
     }
     $work = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tk-slim-x-' . bin2hex(random_bytes(6));
     mkdir($work, 0775, true);
@@ -199,18 +311,37 @@ function extractTgz(string $tgzPath, string $destDir): void
     }
     try {
         $phar = new PharData($tarGz);
-        // .tar.gz → 先解压出 .tar 再 extract，兼容部分 PHP/Phar 行为
-        try {
-            $phar->decompress(); // creates pack.tar beside pack.tar.gz
-            $tar = $work . DIRECTORY_SEPARATOR . 'pack.tar';
-            if (is_file($tar)) {
-                $phar2 = new PharData($tar);
-                $phar2->extractTo($destDir, null, true);
-            } else {
-                $phar->extractTo($destDir, null, true);
+        $candidates = [];
+        $iter = new RecursiveIteratorIterator($phar);
+        foreach ($iter as $file) {
+            $rel = str_replace('\\', '/', (string)$iter->getSubPathName());
+            if ($rel === '' || str_contains($rel, '..')) {
+                continue;
             }
-        } catch (Throwable $e) {
-            $phar->extractTo($destDir, null, true);
+            $candidates[] = $rel;
+        }
+        $candidates = array_values(array_unique($candidates));
+        $want = array_values(array_filter($candidates, 'pathIsSessionKeep'));
+        if (!$want) {
+            throw new RuntimeException(
+                '包内未匹配到会话白名单路径（扫描 ' . count($candidates) . ' 项）'
+                . ($errors ? '；' . implode('; ', $errors) : '')
+            );
+        }
+        $extracted = 0;
+        foreach ($want as $rel) {
+            try {
+                $phar->extractTo($destDir, $rel, true);
+                $extracted++;
+            } catch (Throwable $e) {
+                $errors[] = $rel . ': ' . $e->getMessage();
+            }
+        }
+        if ($extracted < 1
+            && !is_file($destDir . DIRECTORY_SEPARATOR . 'meta.json')
+            && !is_dir($destDir . DIRECTORY_SEPARATOR . 'userdata')
+            && !is_dir($destDir . DIRECTORY_SEPARATOR . 'Default')) {
+            throw new RuntimeException('Phar 白名单解压失败：' . implode('; ', array_slice($errors, 0, 3)));
         }
     } finally {
         rrmdir($work);
@@ -219,8 +350,52 @@ function extractTgz(string $tgzPath, string $destDir): void
 
 function buildTgzFromDir(string $srcDir, string $destTgz): void
 {
+    $parent = dirname($destTgz);
+    if (!is_dir($parent)) {
+        mkdir($parent, 0775, true);
+    }
+    if (is_file($destTgz)) {
+        @unlink($destTgz);
+    }
+
+    // 优先系统 tar（Linux 生产环境最稳）
+    if (hasSystemTar()) {
+        $bin = PHP_OS_FAMILY === 'Windows' ? 'tar.exe' : 'tar';
+        $outName = basename($destTgz) ?: 'slim.tgz';
+        // 在 srcDir 内打相对包，避免路径问题
+        $cmd = 'cd ' . escapeshellarg($srcDir)
+            . ' && ' . escapeshellarg($bin) . ' -czf ' . escapeshellarg($outName)
+            . ' meta.json userdata 2>&1';
+        // Windows cmd 不认 && 同法：用 cwd
+        $out = [];
+        $code = 1;
+        @exec(
+            escapeshellarg($bin) . ' -czf ' . escapeshellarg($destTgz)
+            . ' -C ' . escapeshellarg($srcDir)
+            . ' meta.json userdata 2>&1',
+            $out,
+            $code
+        );
+        if ($code === 0 && is_file($destTgz) && filesize($destTgz) > 64) {
+            return;
+        }
+        // meta 可能没有：只打 userdata
+        $out = [];
+        $code = 1;
+        @exec(
+            escapeshellarg($bin) . ' -czf ' . escapeshellarg($destTgz)
+            . ' -C ' . escapeshellarg($srcDir)
+            . ' . 2>&1',
+            $out,
+            $code
+        );
+        if ($code === 0 && is_file($destTgz) && filesize($destTgz) > 64) {
+            return;
+        }
+    }
+
     if (!class_exists('PharData')) {
-        throw new RuntimeException('PHP 未启用 Phar 扩展，无法打包 .tgz');
+        throw new RuntimeException('无法打包：无 tar 且未启用 Phar');
     }
     $work = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tk-slim-p-' . bin2hex(random_bytes(6));
     mkdir($work, 0775, true);
@@ -231,19 +406,11 @@ function buildTgzFromDir(string $srcDir, string $destTgz): void
         }
         $phar = new PharData($tar);
         $phar->buildFromDirectory($srcDir);
-        // compress → pack.tar.gz
         $phar->compress(Phar::GZ);
         unset($phar);
         $gz = $tar . '.gz';
         if (!is_file($gz)) {
             throw new RuntimeException('压缩 .tar.gz 失败');
-        }
-        $parent = dirname($destTgz);
-        if (!is_dir($parent)) {
-            mkdir($parent, 0775, true);
-        }
-        if (is_file($destTgz)) {
-            @unlink($destTgz);
         }
         if (!@rename($gz, $destTgz) && !@copy($gz, $destTgz)) {
             throw new RuntimeException('写出精简包失败');
