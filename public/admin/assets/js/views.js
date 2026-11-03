@@ -1290,6 +1290,13 @@
                 url: '/clear-browser-env-owner.php',
                 danger: false,
                 confirm: false
+              },
+              {
+                title: '环境包精简（原名覆盖）',
+                desc: '分页列出中心库环境包；单包解压后按会话白名单去掉 IndexedDB/Cache 等，再打包覆盖原 {profileId}.tgz，并更新体积与 revision。',
+                url: '/slim-browser-env-packs.php',
+                danger: true,
+                confirm: false
               }
             ]
           },
