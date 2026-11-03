@@ -17,6 +17,7 @@
     { path: '/help-docs', title: '帮助文档', icon: 'Document' },
     { path: '/scheduled-jobs', title: '计划任务', icon: 'Timer' },
     { path: '/github-configs', title: 'GitHub配置', icon: 'Link' },
+    { path: '/ssh-servers', title: 'SSH服务器', icon: 'Monitor' },
     { path: '/quick-ops', title: '快捷操作', icon: 'Operation' }
   ];
 
@@ -121,6 +122,7 @@
         { path: 'help-docs', component: AdminViews.HelpDocsView, meta: { title: '帮助文档' } },
         { path: 'scheduled-jobs', component: AdminViews.ScheduledJobsView, meta: { title: '计划任务' } },
         { path: 'github-configs', component: AdminViews.GithubConfigsView, meta: { title: 'GitHub配置' } },
+        { path: 'ssh-servers', component: AdminViews.SshServersView, meta: { title: 'SSH服务器' } },
         { path: 'quick-ops', component: AdminViews.QuickOpsView, meta: { title: '快捷操作' } },
         // 兼容旧书签
         { path: 'task-reset', redirect: '/quick-ops' },

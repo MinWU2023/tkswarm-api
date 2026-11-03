@@ -2928,11 +2928,16 @@ class AccountController extends Controller
         if (!$isEnterprise && !$isOperator) {
             return [0, null, $this->error('只能分配给运营专员或企业客户', 422)];
         }
+        CompanyService::ensureSchema();
+        // 运营专员：允许显式绑定企业；未传 companyId 时不绑企业（不从用户档案推断）
         if ($isOperator) {
-            return [$targetOwnerId, null, null];
+            $resolvedCompany = ($companyId !== null && $companyId > 0) ? $companyId : null;
+            if ($resolvedCompany !== null && !CompanyService::find($resolvedCompany)) {
+                return [0, null, $this->error('企业不存在', 404)];
+            }
+            return [$targetOwnerId, $resolvedCompany, null];
         }
 
-        CompanyService::ensureSchema();
         $companyIds = CompanyService::companyIdsOfUser($targetOwnerId);
         if (!$companyIds) {
             return [0, null, $this->error('该企业客户未关联企业，请先在企业数据中绑定', 422)];
@@ -3009,31 +3014,30 @@ class AccountController extends Controller
         }
         DataScope::ensureColumns();
         CompanyService::ensureSchema();
+
         $ownerIds = [];
+        $accountCompanyIds = [];
         foreach ($rows as $r) {
             $oid = (int)($r['owner_id'] ?? 0);
             if ($oid > 0) {
                 $ownerIds[] = $oid;
             }
-        }
-        $ownerIds = array_values(array_unique($ownerIds));
-        if (!$ownerIds) {
-            return $rows;
-        }
-        $ph = implode(',', array_fill(0, count($ownerIds), '?'));
-        $users = DB::select(
-            "SELECT id, username, nickname, company_id FROM admin_users WHERE id IN ({$ph})",
-            $ownerIds
-        ) ?: [];
-        $userMap = [];
-        foreach ($users as $u) {
-            $userMap[(int)$u['id']] = $u;
-        }
-        $accountCompanyIds = [];
-        foreach ($rows as $r) {
+            // 列表回显必须用账号表显式绑定的 company_id（即使暂无关联人员也要展示企业名）
             $cid = (int)($r['company_id'] ?? 0);
             if ($cid > 0) {
                 $accountCompanyIds[] = $cid;
+            }
+        }
+        $ownerIds = array_values(array_unique($ownerIds));
+        $userMap = [];
+        if ($ownerIds) {
+            $ph = implode(',', array_fill(0, count($ownerIds), '?'));
+            $users = DB::select(
+                "SELECT id, username, nickname, company_id FROM admin_users WHERE id IN ({$ph})",
+                $ownerIds
+            ) ?: [];
+            foreach ($users as $u) {
+                $userMap[(int)$u['id']] = $u;
             }
         }
         $companies = CompanyService::mapByIds(array_values(array_unique($accountCompanyIds)));
@@ -3052,13 +3056,17 @@ class AccountController extends Controller
                 $row['owner_label'] = '';
             }
 
-            // 仅展示账号表显式绑定的企业/行业；运营专员分配时 company_id 为空，不从用户档案推断
+            // 仅展示账号表显式绑定的企业/行业；不从用户档案推断
             $cid = (int)($row['company_id'] ?? 0);
             $company = ($cid > 0 && isset($companies[$cid])) ? $companies[$cid] : null;
-            $row['company_name'] = $company ? (string)($company['name'] ?? '') : '';
+            $companyName = $company ? (string)($company['name'] ?? '') : '';
+            $row['company_id'] = $cid > 0 ? $cid : null;
+            $row['company_name'] = $companyName;
+            $row['companyName'] = $companyName;
             $iid = (int)($row['industry_id'] ?? 0);
             $path = $iid > 0 ? IndustryDataService::pathLabel($iid) : '';
             $row['industry_path'] = $path !== '' ? str_replace(' / ', ' - ', $path) : '';
+            $row['industryPath'] = $row['industry_path'];
         }
         unset($row);
         return $rows;

@@ -49,6 +49,7 @@ use App\Controllers\Admin\HelpManageController;
 use App\Controllers\Admin\EnvInstallerManageController;
 use App\Controllers\Admin\ScheduleManageController;
 use App\Controllers\Admin\GithubConfigManageController;
+use App\Controllers\Admin\SshServerManageController;
 use App\Controllers\Company\PortalController as CompanyPortalController;
 use App\Controllers\Company\AuthController as CompanyAuthController;
 use App\Controllers\Company\PortalApiController as CompanyPortalApiController;
@@ -558,6 +559,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
 
     // 客服端 Node 无 MySQL：自动化读写中心库
     Router::get('/api/node/settings', NodeBridgeController::class . '@settingsForNode');
+    Router::get('/api/node/linux-browsers', NodeBridgeController::class . '@linuxBrowsers');
     Router::get('/api/node/monitor/config', NodeBridgeController::class . '@monitorConfig');
     Router::get('/api/node/materials/{id}', NodeBridgeController::class . '@materialForNode');
     Router::post('/api/node/materials/{id}/mark-published', NodeBridgeController::class . '@markMaterialPublished');
@@ -692,4 +694,13 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::put('/admin/api/github-configs/{id}', GithubConfigManageController::class . '@update');
     Router::post('/admin/api/github-configs/{id}/enable', GithubConfigManageController::class . '@enable');
     Router::delete('/admin/api/github-configs/{id}', GithubConfigManageController::class . '@delete');
+
+    Router::get('/admin/api/ssh-servers', SshServerManageController::class . '@list');
+    Router::post('/admin/api/ssh-servers', SshServerManageController::class . '@create');
+    Router::put('/admin/api/ssh-servers/{id}', SshServerManageController::class . '@update');
+    Router::delete('/admin/api/ssh-servers/{id}', SshServerManageController::class . '@delete');
+    Router::post('/admin/api/ssh-servers/{id}/test', SshServerManageController::class . '@test');
+    Router::post('/admin/api/ssh-servers/{id}/health', SshServerManageController::class . '@health');
+    Router::post('/admin/api/ssh-servers/{id}/deploy', SshServerManageController::class . '@deploy');
+    Router::get('/admin/api/ssh-servers/{id}/deploy-log', SshServerManageController::class . '@deployLog');
 });

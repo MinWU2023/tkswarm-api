@@ -2081,6 +2081,391 @@
     }
   };
 
+  var SshServersView = {
+    name: 'SshServersView',
+    data: function () {
+      return {
+        loading: false,
+        rows: [],
+        dialog: false,
+        logDialog: false,
+        editing: null,
+        logText: '',
+        logRow: null,
+        pollTimer: null,
+        busyId: 0,
+        form: {
+          name: '', host: '', sshPort: 22, username: 'root', authType: 'password',
+          password: '', privateKey: '', publicHost: '', browserPort: 54345,
+          apiBase: '', vncPassword: '',
+          gitUrl: 'https://github.com/MinWU2023/tkswarm-linuxbrowse.git',
+          gitBranch: 'main', notes: ''
+        }
+      };
+    },
+    mounted: function () { this.load(); },
+    unmounted: function () { this.stopPoll(); },
+    methods: {
+      statusMeta: function (row) {
+        if (row.healthOk) return { t: '可用', type: 'success' };
+        var s = row.status || 'pending';
+        var map = {
+          pending: { t: '待部署', type: 'info' },
+          deploying: { t: '部署中', type: 'warning' },
+          ok: { t: '可用', type: 'success' },
+          failed: { t: '失败', type: 'danger' },
+          unreachable: { t: 'SSH不通', type: 'danger' }
+        };
+        return map[s] || { t: s, type: 'info' };
+      },
+      load: async function () {
+        this.loading = true;
+        try {
+          var data = await AdminAPI.sshServers();
+          this.rows = (data && data.items) || [];
+        } catch (e) { ElMessage.error(e.message); }
+        finally { this.loading = false; }
+      },
+      openCreate: function () {
+        this.editing = null;
+        var origin = '';
+        try { origin = location.origin || ''; } catch (e) {}
+        this.form = {
+          name: '', host: '', sshPort: 22, username: 'root', authType: 'password',
+          password: '', privateKey: '', publicHost: '', browserPort: 54345,
+          apiBase: origin ? (origin.replace(/\/+$/, '') + '/api') : '',
+          vncPassword: '',
+          gitUrl: 'https://github.com/MinWU2023/tkswarm-linuxbrowse.git',
+          gitBranch: 'main', notes: ''
+        };
+        this.dialog = true;
+      },
+      openEdit: function (row) {
+        this.editing = row;
+        this.form = {
+          name: row.name || '',
+          host: row.host || '',
+          sshPort: row.sshPort || 22,
+          username: row.username || 'root',
+          authType: row.authType || 'password',
+          password: '',
+          privateKey: '',
+          publicHost: row.publicHost || '',
+          browserPort: row.browserPort || 54345,
+          apiBase: row.apiBase || '',
+          vncPassword: '',
+          gitUrl: row.gitUrl || 'https://github.com/MinWU2023/tkswarm-linuxbrowse.git',
+          gitBranch: row.gitBranch || 'main',
+          notes: row.notes || ''
+        };
+        this.dialog = true;
+      },
+      save: async function () {
+        try {
+          if (!this.form.host) {
+            ElMessage.warning('请填写主机');
+            return;
+          }
+          if (!this.editing && this.form.authType === 'password' && !this.form.password) {
+            ElMessage.warning('请填写 SSH 密码');
+            return;
+          }
+          if (!this.editing && this.form.authType === 'key' && !this.form.privateKey) {
+            ElMessage.warning('请填写 SSH 私钥');
+            return;
+          }
+          var body = {
+            name: this.form.name,
+            host: this.form.host,
+            sshPort: Number(this.form.sshPort) || 22,
+            username: this.form.username,
+            authType: this.form.authType,
+            password: this.form.password,
+            privateKey: this.form.privateKey,
+            publicHost: this.form.publicHost,
+            browserPort: Number(this.form.browserPort) || 54345,
+            apiBase: this.form.apiBase,
+            vncPassword: this.form.vncPassword,
+            gitUrl: this.form.gitUrl,
+            gitBranch: this.form.gitBranch,
+            notes: this.form.notes
+          };
+          if (this.editing) await AdminAPI.updateSshServer(this.editing.id, body);
+          else await AdminAPI.createSshServer(body);
+          ElMessage.success('已保存');
+          this.dialog = false;
+          this.load();
+        } catch (e) { ElMessage.error(e.message); }
+      },
+      remove: async function (row) {
+        try {
+          await ElMessageBox.confirm('确定删除「' + (row.name || row.host) + '」吗？', '确认', { type: 'warning' });
+          await AdminAPI.deleteSshServer(row.id);
+          ElMessage.success('已删除');
+          this.load();
+        } catch (e) { if (e !== 'cancel') ElMessage.error(e.message || String(e)); }
+      },
+      test: async function (row) {
+        this.busyId = row.id;
+        try {
+          var data = await AdminAPI.testSshServer(row.id);
+          ElMessage.success((data && data.stdout) ? ('SSH 成功：' + String(data.stdout).slice(0, 120)) : 'SSH 连接成功');
+          this.load();
+        } catch (e) { ElMessage.error(e.message); }
+        finally { this.busyId = 0; }
+      },
+      health: async function (row) {
+        this.busyId = row.id;
+        try {
+          await AdminAPI.healthSshServer(row.id);
+          ElMessage.success('健康检测通过，Node 基础设置可选此服务器');
+          this.load();
+        } catch (e) { ElMessage.error(e.message); this.load(); }
+        finally { this.busyId = 0; }
+      },
+      deploy: async function (row) {
+        try {
+          await ElMessageBox.confirm(
+            '将通过 SSH 在该机执行 linuxbrowse 一键安装（耗时可能较长）。确认开始？',
+            '部署服务器浏览器',
+            { type: 'warning', confirmButtonText: '开始部署' }
+          );
+        } catch (e) { return; }
+        this.busyId = row.id;
+        try {
+          var data = await AdminAPI.deploySshServer(row.id, {});
+          ElMessage.success((data && data.async) ? '已开始后台部署' : '部署完成');
+          this.openLog(row);
+          this.startPoll(row.id);
+          this.load();
+        } catch (e) {
+          ElMessage.error(e.message);
+          this.openLog(row);
+          this.load();
+        } finally { this.busyId = 0; }
+      },
+      openLog: async function (row) {
+        this.logRow = row;
+        this.logDialog = true;
+        await this.refreshLog();
+      },
+      refreshLog: async function () {
+        if (!this.logRow) return;
+        try {
+          var data = await AdminAPI.sshServerDeployLog(this.logRow.id);
+          this.logText = (data && data.deployLog) || '';
+          if (data && data.server) {
+            this.logRow = data.server;
+            var idx = this.rows.findIndex(function (r) { return r.id === data.server.id; });
+            if (idx >= 0) this.rows.splice(idx, 1, data.server);
+          }
+          if (data && data.status && data.status !== 'deploying') {
+            this.stopPoll();
+          }
+        } catch (e) { /* ignore poll errors */ }
+      },
+      startPoll: function (id) {
+        var self = this;
+        this.stopPoll();
+        this.pollTimer = setInterval(function () {
+          if (self.logRow && self.logRow.id === id) self.refreshLog();
+          else self.load();
+        }, 4000);
+      },
+      stopPoll: function () {
+        if (this.pollTimer) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', [
+        pageHead('SSH服务器', '管理 Linux 主机；在线 SSH 部署服务器浏览器（linuxbrowse / EL）。检测成功后，Node「基础设置」可下拉选择，无需手输地址', [
+          h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '添加服务器'; })
+        ]),
+        h('div', { class: 'panel' }, [
+          h(ElementPlus.ElTable, { data: self.rows, stripe: true, vLoading: self.loading, style: 'width:100%' }, function () {
+            return [
+              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 60 }),
+              h(ElementPlus.ElTableColumn, { prop: 'name', label: '名称', minWidth: 110 }),
+              h(ElementPlus.ElTableColumn, { label: 'SSH', minWidth: 160 }, {
+                default: function (scope) {
+                  return (scope.row.username || 'root') + '@' + (scope.row.host || '') + ':' + (scope.row.sshPort || 22);
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'browserApiUrl', label: '浏览器 URL', minWidth: 180 }),
+              h(ElementPlus.ElTableColumn, { label: '状态', width: 100 }, {
+                default: function (scope) {
+                  var m = self.statusMeta(scope.row);
+                  return h(ElementPlus.ElTag, { type: m.type, size: 'small' }, function () { return m.t; });
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { label: '最近检测', width: 160, prop: 'lastHealthAt' }),
+              h(ElementPlus.ElTableColumn, { label: '操作', width: 320, fixed: 'right' }, {
+                default: function (scope) {
+                  var row = scope.row;
+                  var busy = self.busyId === row.id;
+                  return h('div', { class: 'flex flex-wrap gap-1' }, [
+                    h(ElementPlus.ElButton, { size: 'small', link: true, disabled: busy, onClick: function () { self.openEdit(row); } }, function () { return '编辑'; }),
+                    h(ElementPlus.ElButton, { size: 'small', link: true, disabled: busy, onClick: function () { self.test(row); } }, function () { return '测SSH'; }),
+                    h(ElementPlus.ElButton, { size: 'small', link: true, type: 'primary', disabled: busy || row.status === 'deploying', onClick: function () { self.deploy(row); } }, function () { return '部署'; }),
+                    h(ElementPlus.ElButton, { size: 'small', link: true, disabled: busy, onClick: function () { self.health(row); } }, function () { return '检测'; }),
+                    h(ElementPlus.ElButton, { size: 'small', link: true, onClick: function () { self.openLog(row); self.startPoll(row.id); } }, function () { return '日志'; }),
+                    h(ElementPlus.ElButton, { size: 'small', link: true, type: 'danger', disabled: busy, onClick: function () { self.remove(row); } }, function () { return '删除'; })
+                  ]);
+                }
+              })
+            ];
+          })
+        ]),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.dialog,
+          'onUpdate:modelValue': function (v) { self.dialog = v; },
+          title: self.editing ? '编辑 SSH 服务器' : '添加 SSH 服务器',
+          width: '680px'
+        }, {
+          default: function () {
+            return h('div', { class: 'form-grid', style: 'display:grid;gap:12px' }, [
+              h(ElementPlus.ElFormItem, { label: '名称' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.name,
+                  'onUpdate:modelValue': function (v) { self.form.name = v; },
+                  placeholder: '可选，默认用主机名'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'SSH 主机' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.host,
+                  'onUpdate:modelValue': function (v) { self.form.host = v; },
+                  placeholder: 'IP 或域名'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'SSH 端口' }, function () {
+                return h(ElementPlus.ElInputNumber, {
+                  modelValue: self.form.sshPort,
+                  'onUpdate:modelValue': function (v) { self.form.sshPort = v; },
+                  min: 1, max: 65535
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '用户名' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.username,
+                  'onUpdate:modelValue': function (v) { self.form.username = v; },
+                  placeholder: 'root'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '认证方式' }, function () {
+                return h(ElementPlus.ElRadioGroup, {
+                  modelValue: self.form.authType,
+                  'onUpdate:modelValue': function (v) { self.form.authType = v; }
+                }, function () {
+                  return [
+                    h(ElementPlus.ElRadio, { label: 'password' }, function () { return '密码'; }),
+                    h(ElementPlus.ElRadio, { label: 'key' }, function () { return '私钥'; })
+                  ];
+                });
+              }),
+              self.form.authType === 'password'
+                ? h(ElementPlus.ElFormItem, { label: 'SSH 密码' }, function () {
+                    return h(ElementPlus.ElInput, {
+                      modelValue: self.form.password,
+                      'onUpdate:modelValue': function (v) { self.form.password = v; },
+                      type: 'password', showPassword: true,
+                      placeholder: self.editing ? '留空则不修改' : '必填'
+                    });
+                  })
+                : h(ElementPlus.ElFormItem, { label: '私钥 PEM' }, function () {
+                    return h(ElementPlus.ElInput, {
+                      modelValue: self.form.privateKey,
+                      'onUpdate:modelValue': function (v) { self.form.privateKey = v; },
+                      type: 'textarea', rows: 4,
+                      placeholder: self.editing ? '留空则不修改' : '-----BEGIN OPENSSH PRIVATE KEY-----'
+                    });
+                  }),
+              h(ElementPlus.ElFormItem, { label: '对外访问主机' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.publicHost,
+                  'onUpdate:modelValue': function (v) { self.form.publicHost = v; },
+                  placeholder: '可选；Node 访问用，空则用 SSH 主机'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '浏览器端口' }, function () {
+                return h(ElementPlus.ElInputNumber, {
+                  modelValue: self.form.browserPort,
+                  'onUpdate:modelValue': function (v) { self.form.browserPort = v; },
+                  min: 1, max: 65535
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'API Base' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.apiBase,
+                  'onUpdate:modelValue': function (v) { self.form.apiBase = v; },
+                  placeholder: 'https://你的API域名/api（部署写入 linuxbrowse）'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'VNC 密码' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.vncPassword,
+                  'onUpdate:modelValue': function (v) { self.form.vncPassword = v; },
+                  type: 'password', showPassword: true,
+                  placeholder: self.editing ? '留空则不修改' : '有头扫码建议填写'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'Git 仓库' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.gitUrl,
+                  'onUpdate:modelValue': function (v) { self.form.gitUrl = v; }
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '分支' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.gitBranch,
+                  'onUpdate:modelValue': function (v) { self.form.gitBranch = v; }
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '备注' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.notes,
+                  'onUpdate:modelValue': function (v) { self.form.notes = v; },
+                  type: 'textarea', rows: 2
+                });
+              })
+            ]);
+          },
+          footer: function () {
+            return [
+              h(ElementPlus.ElButton, { onClick: function () { self.dialog = false; } }, function () { return '取消'; }),
+              h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.save(); } }, function () { return '保存'; })
+            ];
+          }
+        }),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.logDialog,
+          'onUpdate:modelValue': function (v) {
+            self.logDialog = v;
+            if (!v) self.stopPoll();
+          },
+          title: self.logRow ? ('部署日志 · ' + (self.logRow.name || self.logRow.host)) : '部署日志',
+          width: '760px'
+        }, {
+          default: function () {
+            return h('pre', {
+              style: 'max-height:420px;overflow:auto;background:#0b1220;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all'
+            }, self.logText || '（暂无日志）');
+          },
+          footer: function () {
+            return [
+              h(ElementPlus.ElButton, { onClick: function () { self.refreshLog(); } }, function () { return '刷新'; }),
+              h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.logDialog = false; self.stopPoll(); } }, function () { return '关闭'; })
+            ];
+          }
+        })
+      ]);
+    }
+  };
+
   global.AdminViews = {
     LoginView: LoginView,
     DashboardView: DashboardView,
@@ -2093,6 +2478,7 @@
     HelpDocsView: HelpDocsView,
     EnvInstallersView: EnvInstallersView,
     GithubConfigsView: GithubConfigsView,
+    SshServersView: SshServersView,
     TaskResetView: TaskResetView,
     TaskClearView: TaskClearView,
     QuickOpsView: QuickOpsView

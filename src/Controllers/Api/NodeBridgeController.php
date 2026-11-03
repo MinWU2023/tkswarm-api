@@ -18,6 +18,7 @@ use App\Services\PullCommentService;
 use App\Services\AutoFollowService;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\SecretStore;
+use App\Services\SshServer\SshServerService;
 use App\Services\WarmCommentService;
 
 /**
@@ -1394,6 +1395,33 @@ class NodeBridgeController extends Controller
     {
         $map = \App\Services\UserSettingsService::getForUser(null, false);
         return $this->success($map);
+    }
+
+    /** Node 基础设置：可选已健康检测成功的服务器浏览器列表 */
+    public function linuxBrowsers(Request $request): Response
+    {
+        $rows = SshServerService::listHealthyForNode();
+        $items = [];
+        foreach ($rows as $row) {
+            $url = SshServerService::browserUrlFromRow($row);
+            if ($url === '') {
+                continue;
+            }
+            $name = trim((string)($row['name'] ?? ''));
+            if ($name === '') {
+                $name = (string)($row['host'] ?? $url);
+            }
+            $items[] = [
+                'id' => (int)($row['id'] ?? 0),
+                'name' => $name,
+                'host' => (string)($row['host'] ?? ''),
+                'browserPort' => (int)($row['browser_port'] ?? 54345),
+                'browserApiUrl' => $url,
+                'label' => $name . '（' . $url . '）',
+                'lastHealthAt' => (string)($row['last_health_at'] ?? ''),
+            ];
+        }
+        return $this->success(['items' => $items]);
     }
 
     public function monitorConfig(Request $request): Response

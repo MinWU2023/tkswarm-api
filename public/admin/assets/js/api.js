@@ -115,6 +115,15 @@
     createGithubConfig: function (body) { return request('/admin/api/github-configs', { method: 'POST', body: body }); },
     updateGithubConfig: function (id, body) { return request('/admin/api/github-configs/' + id, { method: 'PUT', body: body }); },
     enableGithubConfig: function (id) { return request('/admin/api/github-configs/' + id + '/enable', { method: 'POST', body: {} }); },
-    deleteGithubConfig: function (id) { return request('/admin/api/github-configs/' + id, { method: 'DELETE' }); }
+    deleteGithubConfig: function (id) { return request('/admin/api/github-configs/' + id, { method: 'DELETE' }); },
+
+    sshServers: function () { return request('/admin/api/ssh-servers', { method: 'GET' }); },
+    createSshServer: function (body) { return request('/admin/api/ssh-servers', { method: 'POST', body: body }); },
+    updateSshServer: function (id, body) { return request('/admin/api/ssh-servers/' + id, { method: 'PUT', body: body }); },
+    deleteSshServer: function (id) { return request('/admin/api/ssh-servers/' + id, { method: 'DELETE' }); },
+    testSshServer: function (id) { return request('/admin/api/ssh-servers/' + id + '/test', { method: 'POST', body: {} }); },
+    healthSshServer: function (id) { return request('/admin/api/ssh-servers/' + id + '/health', { method: 'POST', body: {} }); },
+    deploySshServer: function (id, body) { return request('/admin/api/ssh-servers/' + id + '/deploy', { method: 'POST', body: body || {} }); },
+    sshServerDeployLog: function (id) { return request('/admin/api/ssh-servers/' + id + '/deploy-log', { method: 'GET' }); }
   };
 })(window);
