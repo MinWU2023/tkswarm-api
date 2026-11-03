@@ -22,6 +22,8 @@ class AccountWorkController extends Controller
         $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
         $status = trim((string)$request->get('status', ''));
         $batchScope = trim((string)$request->get('batchScope', $request->get('batch_scope', '')));
+        $forServerBrowser = (int)$request->get('forServerBrowser', $request->get('for_server_browser', 0)) === 1
+            || strtolower(trim((string)$request->get('forServerBrowser', $request->get('for_server_browser', '')))) === 'true';
         $keyword = trim((string)$request->get('keyword', $request->get('q', '')));
         $createdFrom = trim((string)$request->get('createdFrom', $request->get('created_from', '')));
         $createdTo = trim((string)$request->get('createdTo', $request->get('created_to', '')));
@@ -37,7 +39,30 @@ class AccountWorkController extends Controller
             $where[] = 'b.account_id=?';
             $params[] = $accountId;
         }
-        if ($batchScope !== '') {
+        // 服务器浏览器任务页：cs_seat/ai_lead，以及误入 general 的坐席类分任务（旧版入队兜底）
+        if ($forServerBrowser) {
+            $seatTypes = ['sync_fans', 'dm_sync', 'dm_reply', 'cs_login', 'cs_logout', 'cs_detect', 'ai_lead', 'ai_lead_dm'];
+            $ph = implode(',', array_fill(0, count($seatTypes), '?'));
+            $where[] = "(COALESCE(b.batch_scope,'general') IN ('cs_seat','ai_lead')
+                OR EXISTS (
+                    SELECT 1 FROM account_work_items i
+                    WHERE i.batch_id=b.id
+                      AND i.task_type IN ({$ph})
+                )
+                OR EXISTS (
+                    SELECT 1 FROM account_work_items i
+                    WHERE i.batch_id=b.id
+                      AND i.task_type='message'
+                      AND (
+                        i.payload_json LIKE '%\"seatAction\"%'
+                        OR i.payload_json LIKE '%\"browserBackend\":\"linux\"%'
+                        OR i.payload_json LIKE '%\"browser_backend\":\"linux\"%'
+                      )
+                ))";
+            foreach ($seatTypes as $tt) {
+                $params[] = $tt;
+            }
+        } elseif ($batchScope !== '') {
             $scopes = array_values(array_unique(array_filter(array_map(
                 static fn($s) => strtolower(trim((string)$s)),
                 explode(',', $batchScope)

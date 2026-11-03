@@ -1237,7 +1237,13 @@ class AccountWorkBatchService
             return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId, self::BATCH_SCOPE_CS_SEAT);
         }
         $wantBackend = strtolower(trim((string)($payload['browserBackend'] ?? $payload['browser_backend'] ?? '')));
-        if ($wantBackend === 'linux' && self::isCsSeatTaskType($taskType)) {
+        $seatAction = trim((string)($payload['seatAction'] ?? ''));
+        $source = strtolower(trim((string)($payload['source'] ?? '')));
+        $fromChatSeat = $seatAction !== '' || str_starts_with($source, 'chat.');
+        // 坐席来源（含拉粉丝）即使漏传 browserBackend，也强制 linux/cs_seat，避免误入 general 后列表被滤掉
+        if (self::isCsSeatTaskType($taskType) && ($wantBackend === 'linux' || $fromChatSeat)) {
+            $payload['browserBackend'] = 'linux';
+            $payload['browser_backend'] = 'linux';
             self::assertServerBrowserTask($taskType);
             return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId, self::BATCH_SCOPE_CS_SEAT);
         }
