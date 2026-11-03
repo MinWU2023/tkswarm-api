@@ -1297,13 +1297,292 @@
 
   var SupportView = {
     name: 'SupportView',
+    data: function () {
+      return {
+        loading: false,
+        accounts: [],
+        accountStats: { total: 0, online: 0, unread: 0 },
+        accountPage: 1,
+        accountPages: 1,
+        accountTotal: 0,
+        accountKeyword: '',
+        accountId: null,
+        friendTab: 'dm',
+        friends: [],
+        friendCounts: { dm: 0, follower: 0, following: 0 },
+        friendId: null,
+        friend: null,
+        messages: [],
+        msgLoading: false
+      };
+    },
+    mounted: function () {
+      this.loadAccounts();
+    },
+    methods: {
+      avatarLetter: function (name) {
+        var s = String(name || '?').trim();
+        return (s.charAt(0) || '?').toUpperCase();
+      },
+      loadAccounts: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.chatAccounts({
+            page: this.accountPage,
+            pageSize: 20,
+            keyword: this.accountKeyword || undefined,
+            includeId: this.accountId || undefined
+          });
+          this.accounts = d.items || [];
+          this.accountStats = d.stats || { total: 0, online: 0, unread: 0 };
+          this.accountPage = d.page || 1;
+          this.accountPages = d.pages || 1;
+          this.accountTotal = d.total || 0;
+          if (d.selected && d.selected.id) {
+            this.accountId = d.selected.id;
+          } else if (!this.accountId && this.accounts.length) {
+            var online = this.accounts.find(function (a) { return a.loginStatus === 'online'; });
+            this.accountId = online ? online.id : this.accounts[0].id;
+          }
+          if (this.accountId) {
+            await this.loadFriends();
+          } else {
+            this.friends = [];
+            this.friendId = null;
+            this.friend = null;
+            this.messages = [];
+          }
+        } catch (e) {
+          ElMessage.error(e.message || '加载客服账号失败');
+          this.accounts = [];
+        } finally {
+          this.loading = false;
+        }
+      },
+      selectAccount: async function (id) {
+        if (this.accountId === id) return;
+        this.accountId = id;
+        this.friendId = null;
+        this.friend = null;
+        this.messages = [];
+        await this.loadFriends();
+      },
+      setFriendTab: async function (tab) {
+        if (this.friendTab === tab) return;
+        this.friendTab = tab || 'dm';
+        this.friendId = null;
+        this.friend = null;
+        this.messages = [];
+        await this.loadFriends();
+      },
+      loadFriends: async function () {
+        if (!this.accountId) return;
+        try {
+          var d = await CompanyAPI.chatFriends({
+            accountId: this.accountId,
+            filter: this.friendTab || 'dm',
+            pageSize: 100
+          });
+          this.friends = d.items || [];
+          this.friendCounts = d.counts || { dm: 0, follower: 0, following: 0 };
+          if (this.friendId && !this.friends.some(function (f) { return f.id === this.friendId; }.bind(this))) {
+            this.friendId = null;
+            this.friend = null;
+            this.messages = [];
+          }
+          if (!this.friendId && this.friends[0]) {
+            await this.selectFriend(this.friends[0].id);
+          }
+        } catch (e) {
+          ElMessage.error(e.message || '加载联系人失败');
+          this.friends = [];
+        }
+      },
+      selectFriend: async function (id) {
+        this.friendId = id;
+        this.msgLoading = true;
+        try {
+          var d = await CompanyAPI.chatMessages({ friendId: id, pageSize: 100 });
+          this.friend = d.friend || null;
+          this.messages = d.items || [];
+          var self = this;
+          this.friends = (this.friends || []).map(function (f) {
+            if (f.id === id) return Object.assign({}, f, { unreadCount: 0 });
+            return f;
+          });
+          this.$nextTick(function () {
+            var el = self._threadEl;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        } catch (e) {
+          ElMessage.error(e.message || '加载消息失败');
+          this.messages = [];
+          this.friend = null;
+        } finally {
+          this.msgLoading = false;
+        }
+      },
+      searchAccounts: function () {
+        this.accountPage = 1;
+        this.loadAccounts();
+      },
+      changeAccountPage: function (p) {
+        this.accountPage = p;
+        this.loadAccounts();
+      }
+    },
     render: function () {
-      return h('div', { class: 'page-view' }, [
-        pageHead('客服消息', '企业账号私信与客服会话（即将开放）'),
-        h('div', { class: 'panel placeholder-panel' }, [
-          h('div', { class: 'placeholder-icon' }, '💬'),
-          h('h3', '客服消息功能筹备中'),
-          h('p', { class: 'muted' }, '后续将支持查看与回复企业关联账号的客服私信。')
+      var self = this;
+      var tabLabel = { dm: '私信', follower: '粉丝', following: '关注' };
+      var emptyFriend = '暂无' + (tabLabel[self.friendTab] || '联系人') + '（仅展示已入库数据，不可拉取）';
+      var currentAccount = (self.accounts || []).find(function (a) {
+        return Number(a.id) === Number(self.accountId);
+      }) || null;
+
+      return h('div', { class: 'page-view support-page' }, [
+        pageHead('客服坐席', '查看企业权限范围内账号的私信 / 粉丝 / 关注（只读，不可拉取、分析、搜索）'),
+        h('div', { class: 'cx-chat-shell' + (self.loading ? ' is-loading' : '') }, [
+          h('aside', { class: 'cx-chat-col cx-chat-accounts' }, [
+            h('div', { class: 'cx-chat-col-head' }, [h('h3', '账号')]),
+            h('div', { class: 'cx-chat-stats' }, [
+              h('span', ['总 ', h('b', String(self.accountStats.total || 0))]),
+              h('span', ['在线 ', h('b', String(self.accountStats.online || 0))]),
+              h('span', ['未读 ', h('b', String(self.accountStats.unread || 0))])
+            ]),
+            h('div', { class: 'cx-chat-search' }, [
+              h(ElementPlus.ElInput, {
+                modelValue: self.accountKeyword,
+                'onUpdate:modelValue': function (v) { self.accountKeyword = v; },
+                placeholder: '筛选本企业账号',
+                clearable: true,
+                size: 'small',
+                onKeyup: function (e) {
+                  if (e.key === 'Enter') self.searchAccounts();
+                }
+              }),
+              h(ElementPlus.ElButton, { size: 'small', onClick: function () { self.searchAccounts(); } }, function () { return '查询'; })
+            ]),
+            h('div', { class: 'cx-chat-list' },
+              self.accounts.length
+                ? self.accounts.map(function (a) {
+                  return h('button', {
+                    type: 'button',
+                    class: 'cx-chat-item' + (Number(a.id) === Number(self.accountId) ? ' is-active' : ''),
+                    onClick: function () { self.selectAccount(a.id); }
+                  }, [
+                    h('div', { class: 'cx-chat-avatar' }, self.avatarLetter(a.username || a.nickname)),
+                    h('div', { class: 'cx-chat-meta' }, [
+                      h('b', [
+                        a.username || ('#' + a.id),
+                        a.unreadCount
+                          ? h('span', { class: 'cx-chat-badge' }, String(a.unreadCount))
+                          : null
+                      ]),
+                      h('small', [
+                        h('i', { class: 'cx-dot' + (a.loginStatus === 'online' ? ' on' : '') }),
+                        (a.loginStatus === 'online' ? '已登录' : '未登录') + ' · 联系人 ' + (a.friendCount || 0)
+                      ])
+                    ])
+                  ]);
+                })
+                : [h('div', { class: 'cx-chat-empty' }, '暂无可见账号')]
+            ),
+            self.accountPages > 1
+              ? h('div', { class: 'cx-chat-pager' }, [
+                h(ElementPlus.ElPagination, {
+                  small: true,
+                  layout: 'prev, pager, next',
+                  currentPage: self.accountPage,
+                  pageSize: 20,
+                  total: self.accountTotal,
+                  'onUpdate:currentPage': function (p) { self.changeAccountPage(p); }
+                })
+              ])
+              : null
+          ]),
+          h('aside', { class: 'cx-chat-col cx-chat-friends' }, [
+            h('div', { class: 'cx-chat-tabs' }, [
+              h('button', {
+                type: 'button',
+                class: self.friendTab === 'dm' ? 'is-active' : '',
+                onClick: function () { self.setFriendTab('dm'); }
+              }, '私信' + (self.friendCounts.dm ? ' (' + self.friendCounts.dm + ')' : '')),
+              h('button', {
+                type: 'button',
+                class: self.friendTab === 'follower' ? 'is-active' : '',
+                onClick: function () { self.setFriendTab('follower'); }
+              }, '粉丝' + (self.friendCounts.follower ? ' (' + self.friendCounts.follower + ')' : '')),
+              h('button', {
+                type: 'button',
+                class: self.friendTab === 'following' ? 'is-active' : '',
+                onClick: function () { self.setFriendTab('following'); }
+              }, '关注' + (self.friendCounts.following ? ' (' + self.friendCounts.following + ')' : ''))
+            ]),
+            h('div', { class: 'cx-chat-tab-note' }, '仅可查看已同步入库的用户，不支持拉取私信 / 粉丝 / 关注 / 搜索'),
+            h('div', { class: 'cx-chat-list' },
+              !self.accountId
+                ? [h('div', { class: 'cx-chat-empty' }, '请先选择左侧账号')]
+                : (self.friends.length
+                  ? self.friends.map(function (f) {
+                    return h('button', {
+                      type: 'button',
+                      class: 'cx-chat-item' + (Number(f.id) === Number(self.friendId) ? ' is-active' : ''),
+                      onClick: function () { self.selectFriend(f.id); }
+                    }, [
+                      h('div', { class: 'cx-chat-avatar' }, self.avatarLetter(f.nickname || f.username || f.friendUid)),
+                      h('div', { class: 'cx-chat-meta' }, [
+                        h('b', [
+                          f.isPinned ? '📌 ' : '',
+                          f.nickname || f.username || f.friendUid || ('#' + f.id),
+                          f.unreadCount
+                            ? h('span', { class: 'cx-chat-badge' }, String(f.unreadCount))
+                            : null
+                        ]),
+                        h('small', f.lastMessage || (f.relation ? ('关系：' + f.relation) : '暂无消息'))
+                      ])
+                    ]);
+                  })
+                  : [h('div', { class: 'cx-chat-empty' }, emptyFriend)])
+            )
+          ]),
+          h('section', { class: 'cx-chat-col cx-chat-thread' }, [
+            h('div', { class: 'cx-chat-col-head' }, [
+              h('div', [
+                h('h3', self.friend
+                  ? (self.friend.nickname || self.friend.username || self.friend.friendUid || '会话')
+                  : '会话'),
+                h('div', { class: 'muted' }, self.friend
+                  ? ('关系：' + (self.friend.relation || '-') + ' · UID ' + (self.friend.friendUid || '-'))
+                  : (currentAccount
+                    ? ('账号：' + (currentAccount.username || '') + ' · 只读坐席')
+                    : '请选择联系人查看消息'))
+              ])
+            ]),
+            h('div', {
+              class: 'cx-chat-messages',
+              ref: function (el) { self._threadEl = el; }
+            }, self.msgLoading
+              ? [h('div', { class: 'cx-chat-empty' }, '加载中…')]
+              : (self.messages.length
+                ? self.messages.map(function (m) {
+                  var isOut = m.direction === 'out';
+                  var body = m.msgType === 'image'
+                    ? h('img', { src: m.content, alt: '图片', class: 'cx-chat-img' })
+                    : h('span', m.content || '');
+                  return h('div', { class: 'cx-bubble-wrap' + (isOut ? ' is-out' : '') }, [
+                    h('div', { class: 'cx-bubble' + (isOut ? ' is-out' : '') }, [
+                      body,
+                      h('span', { class: 'cx-bubble-time' },
+                        (m.createdAt || '') + ' · ' + (isOut ? '我' : '对方'))
+                    ])
+                  ]);
+                })
+                : [h('div', { class: 'cx-chat-empty' }, self.friend
+                  ? '该会话暂无本地消息'
+                  : '选择联系人后查看会话。企业坐席为只读，不支持发送、拉取与搜索。')])
+            ),
+            h('div', { class: 'cx-chat-readonly-bar' }, '只读模式 · 不可发送 / 拉取私信 / 分析 / 刷新关注 / 搜索用户')
+          ])
         ])
       ]);
     }

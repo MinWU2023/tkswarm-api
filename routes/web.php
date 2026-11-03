@@ -147,6 +147,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::post('/api/company/ops/pull-video-list/tasks', CompanyPortalApiController::class . '@createPullVideoListTask');
     Router::get('/api/company/ops/published-materials', CompanyPortalApiController::class . '@publishedMaterials');
     Router::post('/api/company/ops/pull-video-detail/tasks', CompanyPortalApiController::class . '@createPullCommentsTask');
+    Router::get('/api/company/chat/accounts', CompanyPortalApiController::class . '@chatAccounts');
+    Router::get('/api/company/chat/friends', CompanyPortalApiController::class . '@chatFriends');
+    Router::get('/api/company/chat/messages', CompanyPortalApiController::class . '@chatMessages');
 });
 
 // 需登录（authEnabled=false 时 AuthMiddleware 放行 guest 超管）

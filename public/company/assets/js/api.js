@@ -104,6 +104,16 @@
     },
     createPullCommentsTask: function (body) {
       return request('/api/company/ops/pull-video-detail/tasks', { method: 'POST', body: body });
+    },
+
+    chatAccounts: function (params) {
+      return request('/api/company/chat/accounts' + qs(params), { method: 'GET' });
+    },
+    chatFriends: function (params) {
+      return request('/api/company/chat/friends' + qs(params), { method: 'GET' });
+    },
+    chatMessages: function (params) {
+      return request('/api/company/chat/messages' + qs(params), { method: 'GET' });
     }
   };
 })(window);

@@ -1604,6 +1604,316 @@ class PortalApiController extends Controller
     }
 
     /**
+     * 企业客服坐席：账号列表（只读，企业权限范围）
+     */
+    public function chatAccounts(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
+        $keyword = trim((string)$request->get('keyword', ''));
+        $includeId = (int)$request->get('includeId', $request->get('accountId', 0));
+
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $filters = ['1=1'];
+        $params = [];
+        if ($keyword !== '') {
+            $filters[] = '(a.username LIKE ? OR a.nickname LIKE ? OR CAST(a.id AS CHAR) LIKE ?)';
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+        }
+        $where = 'WHERE ' . implode(' AND ', $filters) . $scopeSql;
+        $params = array_merge($params, $scopeParams);
+
+        $from = 'FROM accounts a
+             LEFT JOIN chat_connections c ON c.account_id=a.id';
+        $select = "SELECT a.id, a.username, a.nickname, a.login_status, a.chat_status, a.enabled,
+                COALESCE(c.status,'offline') AS connection_status,
+                (SELECT COUNT(*) FROM chat_users f WHERE f.account_id=a.id) AS friend_count,
+                (SELECT COALESCE(SUM(f.unread_count),0) FROM chat_users f WHERE f.account_id=a.id) AS unread_count";
+
+        $stats = DB::selectOne(
+            "SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN a.login_status='online' THEN 1 ELSE 0 END) AS online
+             {$from} {$where}",
+            $params
+        ) ?: ['total' => 0, 'online' => 0];
+        $unreadRow = DB::selectOne(
+            "SELECT COALESCE(SUM(f.unread_count),0) AS unread
+             FROM chat_users f
+             INNER JOIN accounts a ON a.id=f.account_id
+             {$where}",
+            $params
+        );
+        $total = (int)($stats['total'] ?? 0);
+        $pages = max(1, (int)ceil($total / max(1, $pageSize)));
+        $page = min($page, $pages);
+        $offset = ($page - 1) * $pageSize;
+        $rows = DB::select(
+            "{$select} {$from} {$where}
+             ORDER BY CASE a.login_status WHEN 'online' THEN 0 WHEN 'checking' THEN 1 ELSE 2 END, a.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+
+        $selected = null;
+        if ($includeId > 0) {
+            foreach ($rows as $x) {
+                if ((int)($x['id'] ?? 0) === $includeId) {
+                    $selected = $x;
+                    break;
+                }
+            }
+            if (!$selected) {
+                $selected = DB::selectOne(
+                    "{$select} {$from} WHERE a.id=?{$scopeSql} LIMIT 1",
+                    array_merge([$includeId], $scopeParams)
+                );
+            }
+        }
+
+        $mapAccount = static function (?array $r): ?array {
+            if (!$r) {
+                return null;
+            }
+            return [
+                'id' => (int)$r['id'],
+                'username' => (string)($r['username'] ?? ''),
+                'nickname' => (string)($r['nickname'] ?? ''),
+                'loginStatus' => (string)($r['login_status'] ?? ''),
+                'chatStatus' => (string)($r['chat_status'] ?? ''),
+                'enabled' => (int)($r['enabled'] ?? 1) === 1,
+                'connectionStatus' => (string)($r['connection_status'] ?? 'offline'),
+                'friendCount' => (int)($r['friend_count'] ?? 0),
+                'unreadCount' => (int)($r['unread_count'] ?? 0),
+            ];
+        };
+
+        return $this->success([
+            'items' => array_values(array_filter(array_map($mapAccount, $rows))),
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'pageSize' => $pageSize,
+            'keyword' => $keyword,
+            'selected' => $mapAccount($selected),
+            'stats' => [
+                'total' => $total,
+                'online' => (int)($stats['online'] ?? 0),
+                'unread' => (int)($unreadRow['unread'] ?? 0),
+            ],
+            'capabilities' => [
+                'pullDm' => false,
+                'analyze' => false,
+                'pullFollow' => false,
+                'searchUser' => false,
+                'send' => false,
+            ],
+        ]);
+    }
+
+    /**
+     * 企业客服坐席：好友/粉丝/关注列表（只读，可看类型用户，不可拉取）
+     */
+    public function chatFriends(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+
+        $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
+        if ($accountId < 1) {
+            return $this->error('请选择账号', 400);
+        }
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $account = DB::selectOne(
+            "SELECT a.id FROM accounts a WHERE a.id=?{$scopeSql} LIMIT 1",
+            array_merge([$accountId], $scopeParams)
+        );
+        if (!$account) {
+            return $this->error('账号不存在或无权访问', 403);
+        }
+
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(200, max(1, (int)$request->get('pageSize', 100)));
+        $offset = ($page - 1) * $pageSize;
+        $filter = (string)$request->get('filter', 'all');
+        $keyword = trim((string)$request->get('keyword', ''));
+
+        $filters = ['f.account_id=?'];
+        $params = [$accountId];
+        if ($filter === 'follower') {
+            $filters[] = "f.relation IN ('follower','mutual')";
+        } elseif ($filter === 'following') {
+            $filters[] = "f.relation IN ('following','mutual')";
+        } elseif ($filter === 'dm') {
+            // 私信会话：有过消息，或标记为 dm
+            $filters[] = "(f.user_type='dm' OR IFNULL(f.last_message,'')<>'')";
+        }
+        if ($keyword !== '') {
+            $filters[] = '(f.username LIKE ? OR f.nickname LIKE ? OR f.friend_uid LIKE ?)';
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+            $params[] = "%{$keyword}%";
+        }
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $from = 'FROM chat_users f JOIN accounts a ON a.id=f.account_id';
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$from} {$where}", $params)['c'] ?? 0);
+        $items = DB::select(
+            "SELECT f.*, a.username AS account_username
+             {$from} {$where}
+             ORDER BY f.is_pinned DESC, f.last_message_at DESC, f.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+
+        $counts = [
+            'dm' => (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM chat_users f JOIN accounts a ON a.id=f.account_id
+                 WHERE f.account_id=? AND (f.user_type='dm' OR IFNULL(f.last_message,'')<>''){$scopeSql}",
+                array_merge([$accountId], $scopeParams)
+            )['c'] ?? 0),
+            'follower' => (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM chat_users f JOIN accounts a ON a.id=f.account_id
+                 WHERE f.account_id=? AND f.relation IN ('follower','mutual'){$scopeSql}",
+                array_merge([$accountId], $scopeParams)
+            )['c'] ?? 0),
+            'following' => (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM chat_users f JOIN accounts a ON a.id=f.account_id
+                 WHERE f.account_id=? AND f.relation IN ('following','mutual'){$scopeSql}",
+                array_merge([$accountId], $scopeParams)
+            )['c'] ?? 0),
+        ];
+
+        return $this->success([
+            'items' => array_map([$this, 'mapCompanyChatFriend'], $items),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'counts' => $counts,
+            'capabilities' => [
+                'pullDm' => false,
+                'pullFans' => false,
+                'pullFollowing' => false,
+                'searchUser' => false,
+            ],
+        ]);
+    }
+
+    /**
+     * 企业客服坐席：会话消息（只读）
+     */
+    public function chatMessages(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+
+        $friendId = (int)$request->get('friendId', $request->get('friend_id', 0));
+        if ($friendId < 1) {
+            return $this->error('请选择会话', 400);
+        }
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $friend = DB::selectOne(
+            "SELECT f.*, a.username AS account_username, a.owner_id
+             FROM chat_users f
+             JOIN accounts a ON a.id=f.account_id
+             WHERE f.id=?{$scopeSql}
+             LIMIT 1",
+            array_merge([$friendId], $scopeParams)
+        );
+        if (!$friend) {
+            return $this->error('会话不存在或无权访问', 403);
+        }
+
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(200, max(1, (int)$request->get('pageSize', 100)));
+        $offset = ($page - 1) * $pageSize;
+        $total = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM chat_records WHERE user_id=?', [$friendId])['c'] ?? 0);
+        $items = DB::select(
+            "SELECT id, user_id, direction, msg_type, content, created_at
+             FROM chat_records WHERE user_id=?
+             ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}",
+            [$friendId]
+        ) ?: [];
+        $items = array_reverse($items);
+
+        // 打开会话时本地已读（不触发任何拉取）
+        if ((int)($friend['unread_count'] ?? 0) > 0) {
+            try {
+                DB::query('UPDATE chat_users SET unread_count=0, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$friendId]);
+                $friend['unread_count'] = 0;
+            } catch (\Throwable $e) {
+            }
+        }
+
+        return $this->success([
+            'friend' => $this->mapCompanyChatFriend($friend),
+            'items' => array_map(static function ($r) {
+                return [
+                    'id' => (int)$r['id'],
+                    'friendId' => (int)($r['user_id'] ?? 0),
+                    'direction' => (string)($r['direction'] ?? 'in'),
+                    'msgType' => (string)($r['msg_type'] ?? 'text'),
+                    'content' => (string)($r['content'] ?? ''),
+                    'createdAt' => (string)($r['created_at'] ?? ''),
+                ];
+            }, $items),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'capabilities' => [
+                'send' => false,
+                'pullDm' => false,
+                'analyze' => false,
+            ],
+        ]);
+    }
+
+    /** @param array<string,mixed> $row */
+    private function mapCompanyChatFriend(array $row): array
+    {
+        $relation = (string)($row['relation'] ?? '');
+        $userType = (string)($row['user_type'] ?? '');
+        if ($userType === '') {
+            $userType = match ($relation) {
+                'follower' => 'follower',
+                'following' => 'following',
+                'mutual' => 'mutual',
+                'blocked' => 'blocked',
+                default => 'dm',
+            };
+        }
+        $tags = array_values(array_filter(array_map('trim', explode(',', (string)($row['tags'] ?? '')))));
+        return [
+            'id' => (int)$row['id'],
+            'accountId' => (int)($row['account_id'] ?? 0),
+            'accountUsername' => (string)($row['account_username'] ?? ''),
+            'friendUid' => (string)($row['friend_uid'] ?? ''),
+            'username' => (string)($row['username'] ?? ''),
+            'nickname' => (string)($row['nickname'] ?? ''),
+            'avatarUrl' => (string)($row['avatar_url'] ?? ''),
+            'relation' => $relation,
+            'userType' => $userType,
+            'tags' => $tags,
+            'unreadCount' => (int)($row['unread_count'] ?? 0),
+            'isPinned' => !empty($row['is_pinned']),
+            'isNew' => !empty($row['is_new']),
+            'lastMessage' => (string)($row['last_message'] ?? ''),
+            'lastDirection' => (string)($row['last_direction'] ?? ''),
+            'lastMessageAt' => (string)($row['last_message_at'] ?? ''),
+        ];
+    }
+
+    /**
      * 近 28 天日历横轴：有数据填真实值，缺天补 0。
      *
      * @param array<string,array<string,mixed>> $dailyMap key=Y-m-d
