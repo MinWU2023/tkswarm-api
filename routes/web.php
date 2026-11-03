@@ -117,6 +117,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/company/support', CompanyPortalController::class . '@spa');
     Router::get('/company/ops', CompanyPortalController::class . '@spa');
     Router::get('/company/ops/publish', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops/comment-reply', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops/pull-video-list', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops/pull-video-detail', CompanyPortalController::class . '@spa');
 
     Router::get('/api/company/auth/captcha', CompanyAuthController::class . '@captcha');
     Router::get('/api/company/auth/status', CompanyAuthController::class . '@status');
@@ -137,6 +140,13 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/publish/accounts', CompanyPortalApiController::class . '@publishAccounts');
     Router::get('/api/company/publish/tasks', CompanyPortalApiController::class . '@publishTasks');
     Router::post('/api/company/publish/tasks', CompanyPortalApiController::class . '@createPublishTask');
+    Router::get('/api/company/ops/accounts', CompanyPortalApiController::class . '@publishAccounts');
+    Router::get('/api/company/ops/tasks', CompanyPortalApiController::class . '@entrustTasks');
+    Router::get('/api/company/ops/comment-reply/templates', CompanyPortalApiController::class . '@commentReplyTemplates');
+    Router::post('/api/company/ops/comment-reply/tasks', CompanyPortalApiController::class . '@createCommentReplyTask');
+    Router::post('/api/company/ops/pull-video-list/tasks', CompanyPortalApiController::class . '@createPullVideoListTask');
+    Router::get('/api/company/ops/published-materials', CompanyPortalApiController::class . '@publishedMaterials');
+    Router::post('/api/company/ops/pull-video-detail/tasks', CompanyPortalApiController::class . '@createPullCommentsTask');
 });
 
 // 需登录（authEnabled=false 时 AuthMiddleware 放行 guest 超管）

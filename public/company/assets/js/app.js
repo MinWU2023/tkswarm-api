@@ -20,7 +20,10 @@
       title: '视频运营',
       icon: 'Film',
       children: [
-        { path: '/ops/publish', title: '发布视频', icon: 'Upload' }
+        { path: '/ops/publish', title: '发布视频', icon: 'Upload' },
+        { path: '/ops/comment-reply', title: '回复评论', icon: 'ChatLineSquare' },
+        { path: '/ops/pull-video-list', title: '拉取视频列表', icon: 'List' },
+        { path: '/ops/pull-video-detail', title: '拉取视频详情', icon: 'Document' }
       ]
     }
   ];
@@ -349,7 +352,10 @@
         { path: 'analytics', component: CompanyViews.AnalyticsView, meta: { title: '数据看板' } },
         { path: 'support', component: CompanyViews.SupportView, meta: { title: '客服消息' } },
         { path: 'ops', redirect: '/ops/publish' },
-        { path: 'ops/publish', component: CompanyViews.PublishView, meta: { title: '发布视频' } }
+        { path: 'ops/publish', component: CompanyViews.PublishView, meta: { title: '发布视频' } },
+        { path: 'ops/comment-reply', component: CompanyViews.CommentReplyView, meta: { title: '回复评论' } },
+        { path: 'ops/pull-video-list', component: CompanyViews.PullVideoListView, meta: { title: '拉取视频列表' } },
+        { path: 'ops/pull-video-detail', component: CompanyViews.PullVideoDetailView, meta: { title: '拉取视频详情' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }

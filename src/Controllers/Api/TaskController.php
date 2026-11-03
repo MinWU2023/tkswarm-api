@@ -683,7 +683,7 @@ class TaskController extends Controller
                 if (!$task || !DataScope::ownsRow($task) || !in_array($task['status'], $allowed, true)) {
                     continue;
                 }
-                if ($action === 'start' && !in_array($task['type'], ['sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync'], true)) {
+                if ($action === 'start' && !in_array($task['type'], ['sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync', 'comment_reply', 'pull_video_list', 'pull_comments'], true)) {
                     continue;
                 }
                 DB::query('UPDATE tasks SET status=?, finished_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$to, $id]);
@@ -963,8 +963,11 @@ class TaskController extends Controller
         if (!in_array($task['status'], $allowed, true)) {
             return $this->error('��ǰ״̬���ɲ���', 409);
         }
-        if ($status === 'queued' && !in_array($task['type'], ['sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync'], true)) {
-            return $this->error('�����������ݲ�֧������', 422);
+        if ($status === 'queued' && !in_array($task['type'], [
+            'sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync',
+            'comment_reply', 'pull_video_list', 'pull_comments',
+        ], true)) {
+            return $this->error('该任务类型暂不支持启动', 422);
         }
         DB::query('UPDATE tasks SET status=?, finished_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$status, $id]);
         if ($status === 'queued') {

@@ -1262,9 +1262,405 @@ class PortalApiController extends Controller
         $row = DB::selectOne('SELECT * FROM tasks WHERE id=?', [$taskId]);
 
         return $this->success([
-            'task' => $this->mapCompanyPublishTask($row ?: ['id' => $taskId, 'payload' => json_encode($payload), 'status' => 'draft', 'name' => $taskName]),
+            'task' => $this->mapCompanyPublishTask($row ?: ['id' => $taskId, 'type' => 'publish', 'payload' => json_encode($payload), 'status' => 'draft', 'name' => $taskName]),
             'materialId' => $materialId,
             'accountId' => $accountId,
+        ], '委托任务已创建，等待运营处理');
+    }
+
+    /** 回复评论模板（固定/AI，含内置） */
+    public function commentReplyTemplates(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        $mode = strtolower(trim((string)$request->get('contentMode', $request->get('content_mode', ''))));
+        $filters = ["type='comment_reply'", 'enabled=1', '(owner_id=? OR owner_id IS NULL OR is_builtin=1)'];
+        $params = [$userId];
+        if (in_array($mode, ['fixed', 'ai'], true)) {
+            $filters[] = 'content_mode=?';
+            $params[] = $mode;
+        }
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $rows = [];
+        try {
+            $rows = DB::select(
+                "SELECT id, name, content_mode, content, fixed_text, ai_prompt, is_builtin
+                 FROM interaction_templates {$where}
+                 ORDER BY FIELD(content_mode,'fixed','ai'), sort_order ASC, id DESC
+                 LIMIT 200",
+                $params
+            ) ?: [];
+        } catch (\Throwable $e) {
+            $rows = [];
+        }
+        return $this->success([
+            'items' => array_map(static function ($r) {
+                $cm = (string)($r['content_mode'] ?? 'fixed');
+                $text = $cm === 'ai'
+                    ? (string)($r['ai_prompt'] ?? $r['content'] ?? '')
+                    : (string)($r['fixed_text'] ?? $r['content'] ?? '');
+                return [
+                    'id' => (int)($r['id'] ?? 0),
+                    'name' => (string)($r['name'] ?? ''),
+                    'contentMode' => $cm,
+                    'text' => $text,
+                    'isBuiltin' => !empty($r['is_builtin']),
+                ];
+            }, $rows),
+        ]);
+    }
+
+    /** 企业委托：回复评论 → draft */
+    public function createCommentReplyTask(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        $user = $GLOBALS['auth_user'] ?? [];
+        $userId = (int)($user['id'] ?? 0);
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        if ($accountId <= 0) {
+            return $this->error('请选择账号', 422);
+        }
+        $account = DB::selectOne('SELECT id, username, nickname FROM accounts WHERE id=?', [$accountId]);
+        if (!$account) {
+            return $this->error('账号不存在', 404);
+        }
+        if ($err = DataScope::assertAccountOwns($account)) {
+            return $err;
+        }
+
+        $replyMode = strtolower(trim((string)$request->input('replyMode', $request->input('reply_mode', 'fixed'))));
+        if (!in_array($replyMode, ['fixed', 'ai'], true)) {
+            $replyMode = 'fixed';
+        }
+        $templateIds = $request->input('replyTemplateIds', $request->input('reply_template_ids', []));
+        if (!is_array($templateIds)) {
+            $templateIds = preg_split('/[,\s]+/', (string)$templateIds) ?: [];
+        }
+        $templateIds = array_values(array_unique(array_filter(array_map('intval', $templateIds))));
+        $replyTexts = $request->input('replyTexts', $request->input('reply_texts', []));
+        if (!is_array($replyTexts)) {
+            $replyTexts = preg_split('/\r?\n/', (string)$replyTexts) ?: [];
+        }
+        $replyTexts = array_values(array_filter(array_map(static fn ($t) => trim((string)$t), $replyTexts)));
+        $aiTemplateId = (int)$request->input('replyAiTemplateId', $request->input('reply_ai_template_id', 0));
+        $aiPrompt = trim((string)$request->input('replyAiPrompt', $request->input('reply_ai_prompt', '')));
+        $maxReplies = max(1, min(50, (int)$request->input('maxReplies', $request->input('max_replies', 10))));
+
+        if ($replyMode === 'fixed' && !$templateIds && !$replyTexts) {
+            return $this->error('请至少选择一条固定回复模板或填写回复内容', 422);
+        }
+        if ($replyMode === 'ai' && $aiTemplateId < 1 && $aiPrompt === '') {
+            return $this->error('请选择 AI 回复模板或填写提示词', 422);
+        }
+
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($userId);
+        $accLabel = (string)(($account['nickname'] ?? '') !== '' ? $account['nickname'] : ($account['username'] ?? ''));
+        $taskName = trim((string)$request->input('name', ''));
+        if ($taskName === '') {
+            $taskName = '企业委托回复评论 · ' . ($accLabel !== '' ? $accLabel : ('#' . $accountId));
+        }
+        $payload = [
+            'source' => 'company_entrust',
+            'entrustKind' => 'comment_reply',
+            'accountIds' => [$accountId],
+            'accountId' => $accountId,
+            'replyMode' => $replyMode,
+            'replyTemplateIds' => $replyMode === 'fixed' ? $templateIds : [],
+            'replyTexts' => $replyMode === 'fixed' ? $replyTexts : [],
+            'replyAiTemplateId' => $replyMode === 'ai' ? $aiTemplateId : 0,
+            'replyAiPrompt' => $replyMode === 'ai' ? $aiPrompt : '',
+            'maxReplies' => $maxReplies,
+            'saveTraffic' => true,
+            'entrustCompanyIds' => $companyIds,
+            'entrustBy' => [
+                'userId' => $userId,
+                'username' => (string)($user['username'] ?? ''),
+                'nickname' => (string)($user['nickname'] ?? ''),
+            ],
+            'entrustAccount' => [
+                'id' => $accountId,
+                'username' => (string)($account['username'] ?? ''),
+                'nickname' => (string)($account['nickname'] ?? ''),
+            ],
+        ];
+        return $this->insertCompanyEntrustTask($taskName, 'comment_reply', $payload, $userId, 1);
+    }
+
+    /** 企业委托：拉取视频列表 → draft */
+    public function createPullVideoListTask(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        $user = $GLOBALS['auth_user'] ?? [];
+        $userId = (int)($user['id'] ?? 0);
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        $accountIds = $request->input('accountIds', $request->input('account_ids', []));
+        if (!is_array($accountIds)) {
+            $accountIds = [(int)$request->input('accountId', $request->input('account_id', 0))];
+        }
+        $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds))));
+        if (!$accountIds) {
+            return $this->error('请选择至少一个账号', 422);
+        }
+        $accounts = [];
+        foreach ($accountIds as $aid) {
+            $account = DB::selectOne('SELECT id, username, nickname FROM accounts WHERE id=?', [$aid]);
+            if (!$account) {
+                return $this->error('账号不存在: #' . $aid, 404);
+            }
+            if ($err = DataScope::assertAccountOwns($account)) {
+                return $err;
+            }
+            $accounts[] = $account;
+        }
+        $backend = strtolower(trim((string)$request->input('browserBackend', $request->input('browser_backend', 'tkswarm'))));
+        if (!in_array($backend, ['bit', 'tkswarm'], true)) {
+            $backend = 'tkswarm';
+        }
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($userId);
+        $first = $accounts[0];
+        $accLabel = (string)(($first['nickname'] ?? '') !== '' ? $first['nickname'] : ($first['username'] ?? ''));
+        $taskName = trim((string)$request->input('name', ''));
+        if ($taskName === '') {
+            $suffix = count($accounts) > 1 ? ($accLabel . ' 等' . count($accounts) . '个账号') : $accLabel;
+            $taskName = '企业委托拉取视频列表 · ' . ($suffix !== '' ? $suffix : ('#' . (int)$first['id']));
+        }
+        $payload = [
+            'source' => 'company_entrust',
+            'entrustKind' => 'pull_video_list',
+            'accountIds' => $accountIds,
+            'browserBackend' => $backend,
+            'entrustCompanyIds' => $companyIds,
+            'entrustBy' => [
+                'userId' => $userId,
+                'username' => (string)($user['username'] ?? ''),
+                'nickname' => (string)($user['nickname'] ?? ''),
+            ],
+            'entrustAccount' => [
+                'id' => (int)$first['id'],
+                'username' => (string)($first['username'] ?? ''),
+                'nickname' => (string)($first['nickname'] ?? ''),
+            ],
+            'entrustAccountCount' => count($accountIds),
+        ];
+        return $this->insertCompanyEntrustTask($taskName, 'pull_video_list', $payload, $userId, count($accountIds));
+    }
+
+    /** 已发布素材（拉取视频详情用） */
+    public function publishedMaterials(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        PullCommentService::ensureSchema();
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
+        $offset = ($page - 1) * $pageSize;
+        $filters = [
+            "m.publish_status='published'",
+            'm.publish_account_id>0',
+            "(m.platform_video_url<>'' OR m.platform_video_id<>'')",
+        ];
+        $params = [];
+        [$matSql, $matParams] = DataScope::materialListSql('m');
+        $params = array_merge($params, $matParams);
+        $keyword = trim((string)$request->get('keyword', ''));
+        if ($keyword !== '') {
+            $filters[] = '(m.name LIKE ? OR m.file_name LIKE ? OR m.platform_video_id LIKE ? OR m.share_title LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($params, $like, $like, $like, $like);
+        }
+        $where = 'WHERE ' . implode(' AND ', $filters) . $matSql;
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM materials m {$where}", $params)['c'] ?? 0);
+        $rows = DB::select(
+            "SELECT m.id, m.name, m.file_name, m.platform_video_id, m.platform_video_url, m.publish_account_id, m.publish_account, m.origin
+             FROM materials m
+             {$where}
+             ORDER BY m.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+        return $this->success([
+            'items' => array_map(static function ($r) {
+                return [
+                    'id' => (int)$r['id'],
+                    'name' => (string)($r['name'] ?? ''),
+                    'fileName' => (string)($r['file_name'] ?? ''),
+                    'platformVideoId' => (string)($r['platform_video_id'] ?? ''),
+                    'platformVideoUrl' => (string)($r['platform_video_url'] ?? ''),
+                    'publishAccountId' => (int)($r['publish_account_id'] ?? 0),
+                    'publishAccount' => (string)($r['publish_account'] ?? ''),
+                    'origin' => (string)($r['origin'] ?? ''),
+                    'label' => trim((string)($r['name'] ?? '')) !== ''
+                        ? (string)$r['name']
+                        : ((string)($r['file_name'] ?? '') ?: ('#' . (int)$r['id'])),
+                ];
+            }, $rows),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => max(1, (int)ceil($total / max(1, $pageSize))),
+        ]);
+    }
+
+    /** 企业委托：拉取视频详情 → draft */
+    public function createPullCommentsTask(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureMaterialsPublishColumns();
+        $user = $GLOBALS['auth_user'] ?? [];
+        $userId = (int)($user['id'] ?? 0);
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        $materialIds = $request->input('materialIds', $request->input('material_ids', []));
+        if (!is_array($materialIds)) {
+            $materialIds = preg_split('/[,\s]+/', (string)$materialIds) ?: [];
+        }
+        $materialIds = array_values(array_unique(array_filter(array_map('intval', $materialIds))));
+        if (!$materialIds) {
+            return $this->error('请至少选择一个已发布视频', 422);
+        }
+        $ph = implode(',', array_fill(0, count($materialIds), '?'));
+        [$matSql, $matParams] = DataScope::materialListSql('m');
+        $rows = DB::select(
+            "SELECT m.id, m.name, m.publish_account_id, m.publish_account, m.platform_video_id, m.platform_video_url
+             FROM materials m
+             WHERE m.id IN ({$ph}) AND m.publish_status='published' AND m.publish_account_id>0
+               AND (m.platform_video_url<>'' OR m.platform_video_id<>''){$matSql}",
+            array_merge($materialIds, $matParams)
+        ) ?: [];
+        if (!$rows) {
+            return $this->error('未找到可见的已发布视频素材', 422);
+        }
+        $okIds = array_map(static fn ($r) => (int)$r['id'], $rows);
+        $first = $rows[0];
+        $accountId = (int)($first['publish_account_id'] ?? 0);
+        $account = $accountId > 0
+            ? DB::selectOne('SELECT id, username, nickname FROM accounts WHERE id=?', [$accountId])
+            : null;
+        $backend = strtolower(trim((string)$request->input('browserBackend', $request->input('browser_backend', 'tkswarm'))));
+        if (!in_array($backend, ['bit', 'tkswarm'], true)) {
+            $backend = 'tkswarm';
+        }
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($userId);
+        $taskName = trim((string)$request->input('name', ''));
+        if ($taskName === '') {
+            $taskName = '企业委托拉取视频详情 · ' . count($okIds) . ' 个视频';
+        }
+        $payload = [
+            'source' => 'company_entrust',
+            'entrustKind' => 'pull_comments',
+            'materialIds' => $okIds,
+            'accountIds' => $accountId > 0 ? [$accountId] : [],
+            'browserBackend' => $backend,
+            'entrustCompanyIds' => $companyIds,
+            'entrustBy' => [
+                'userId' => $userId,
+                'username' => (string)($user['username'] ?? ''),
+                'nickname' => (string)($user['nickname'] ?? ''),
+            ],
+            'entrustAccount' => [
+                'id' => $accountId,
+                'username' => (string)($account['username'] ?? $first['publish_account'] ?? ''),
+                'nickname' => (string)($account['nickname'] ?? ''),
+            ],
+            'entrustMaterial' => [
+                'id' => (int)$first['id'],
+                'name' => (string)($first['name'] ?? ''),
+                'count' => count($okIds),
+            ],
+        ];
+        return $this->insertCompanyEntrustTask($taskName, 'pull_comments', $payload, $userId, count($okIds));
+    }
+
+    /** 本企业客户委托任务列表（按 type 过滤） */
+    public function entrustTasks(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->success(['items' => [], 'total' => 0, 'page' => 1, 'pageSize' => 20, 'pages' => 1]);
+        }
+        $type = trim((string)$request->get('type', 'publish'));
+        $allowed = ['publish', 'comment_reply', 'pull_video_list', 'pull_comments'];
+        if (!in_array($type, $allowed, true)) {
+            $type = 'publish';
+        }
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = min(50, max(1, (int)$request->get('pageSize', 20)));
+        $offset = ($page - 1) * $pageSize;
+        $filters = [
+            't.owner_id=?',
+            't.type=?',
+            "JSON_UNQUOTE(JSON_EXTRACT(t.payload, '$.source'))='company_entrust'",
+        ];
+        $params = [$userId, $type];
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM tasks t {$where}", $params)['c'] ?? 0);
+        $rows = DB::select(
+            "SELECT t.* FROM tasks t {$where} ORDER BY t.id DESC LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+        return $this->success([
+            'items' => array_map([$this, 'mapCompanyPublishTask'], $rows),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => max(1, (int)ceil($total / max(1, $pageSize))),
+        ]);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function insertCompanyEntrustTask(string $taskName, string $type, array $payload, int $userId, int $totalCount): Response
+    {
+        DB::query(
+            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+            [
+                mb_substr($taskName, 0, 120),
+                $type,
+                null,
+                max(1, $totalCount),
+                null,
+                json_encode($payload, JSON_UNESCAPED_UNICODE),
+                $userId,
+            ]
+        );
+        $taskId = (int)DB::getPdo()->lastInsertId();
+        $row = DB::selectOne('SELECT * FROM tasks WHERE id=?', [$taskId]);
+        return $this->success([
+            'task' => $this->mapCompanyPublishTask($row ?: [
+                'id' => $taskId,
+                'type' => $type,
+                'payload' => json_encode($payload),
+                'status' => 'draft',
+                'name' => $taskName,
+                'total_count' => $totalCount,
+            ]),
         ], '委托任务已创建，等待运营处理');
     }
 
@@ -1276,15 +1672,28 @@ class PortalApiController extends Controller
         $materialIds = $payload['materialIds'] ?? [];
         $accountId = (int)($payload['entrustAccount']['id'] ?? (is_array($accountIds) ? ($accountIds[0] ?? 0) : 0));
         $materialId = (int)($payload['entrustMaterial']['id'] ?? (is_array($materialIds) ? ($materialIds[0] ?? 0) : 0));
+        $type = (string)($row['type'] ?? '');
+        $kindLabels = [
+            'publish' => '发布视频',
+            'comment_reply' => '回复评论',
+            'pull_video_list' => '拉取视频列表',
+            'pull_comments' => '拉取视频详情',
+        ];
         return [
             'id' => (int)($row['id'] ?? 0),
             'name' => (string)($row['name'] ?? ''),
+            'type' => $type,
+            'typeLabel' => $kindLabels[$type] ?? $type,
             'status' => (string)($row['status'] ?? ''),
             'accountId' => $accountId,
             'accountUsername' => (string)($payload['entrustAccount']['username'] ?? ''),
             'accountNickname' => (string)($payload['entrustAccount']['nickname'] ?? ''),
             'materialId' => $materialId,
             'materialName' => (string)($payload['entrustMaterial']['name'] ?? ''),
+            'materialCount' => (int)($payload['entrustMaterial']['count'] ?? (is_array($materialIds) ? count($materialIds) : 0)),
+            'accountCount' => (int)($payload['entrustAccountCount'] ?? (is_array($accountIds) ? count($accountIds) : ($accountId > 0 ? 1 : 0))),
+            'replyMode' => (string)($payload['replyMode'] ?? ''),
+            'maxReplies' => (int)($payload['maxReplies'] ?? 0),
             'publishTitle' => (string)($payload['publishTitle'] ?? ''),
             'publishCaption' => (string)($payload['publishCaption'] ?? ''),
             'successCount' => (int)($row['success_count'] ?? 0),

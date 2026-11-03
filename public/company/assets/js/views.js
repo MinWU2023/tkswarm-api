@@ -1460,6 +1460,540 @@
     }
   };
 
+  function entrustStatusLabel(s) {
+    var map = {
+      draft: '待处理', queued: '排队中', running: '执行中', paused: '已暂停',
+      completed: '已完成', failed: '失败', cancelled: '已取消'
+    };
+    return map[s] || s || '-';
+  }
+
+  function entrustTaskTable(self, extraCols) {
+    var cols = [
+      h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
+      h(ElementPlus.ElTableColumn, { prop: 'name', label: '任务', minWidth: 180, showOverflowTooltip: true }),
+      h(ElementPlus.ElTableColumn, { label: '账号', minWidth: 140 }, {
+        default: function (scope) {
+          var r = scope.row;
+          var base = (r.accountNickname || r.accountUsername || '') + (r.accountId ? (' #' + r.accountId) : '');
+          if (r.accountCount > 1) base += ' 等' + r.accountCount + '个';
+          return base || '-';
+        }
+      })
+    ];
+    (extraCols || []).forEach(function (c) { cols.push(c); });
+    cols.push(
+      h(ElementPlus.ElTableColumn, { label: '状态', width: 100 }, {
+        default: function (scope) { return entrustStatusLabel(scope.row.status); }
+      }),
+      h(ElementPlus.ElTableColumn, { prop: 'createdAt', label: '创建时间', width: 170 })
+    );
+    return h(ElementPlus.ElTable, { data: self.items, stripe: true, vLoading: self.loading, style: 'width:100%' }, function () {
+      return cols;
+    });
+  }
+
+  function entrustPager(self) {
+    return h('div', { class: 'pager-row' }, [
+      h(ElementPlus.ElPagination, {
+        currentPage: self.page,
+        'onUpdate:currentPage': function (v) { self.page = v; self.loadTasks(); },
+        pageSize: self.pageSize,
+        total: self.total,
+        layout: 'total, prev, pager, next',
+        background: true
+      })
+    ]);
+  }
+
+  var CommentReplyView = {
+    name: 'CommentReplyView',
+    data: function () {
+      return {
+        loading: false,
+        submitting: false,
+        accounts: [],
+        fixedTemplates: [],
+        aiTemplates: [],
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        form: {
+          accountId: null,
+          replyMode: 'fixed',
+          replyTemplateIds: [],
+          replyAiTemplateId: null,
+          maxReplies: 10
+        }
+      };
+    },
+    mounted: function () {
+      this.loadAccounts();
+      this.loadTemplates();
+      this.loadTasks();
+    },
+    methods: {
+      loadAccounts: async function () {
+        try {
+          var d = await CompanyAPI.opsAccounts();
+          this.accounts = d.items || [];
+        } catch (e) {
+          ElMessage.error(e.message || '加载账号失败');
+        }
+      },
+      loadTemplates: async function () {
+        try {
+          var d = await CompanyAPI.commentReplyTemplates();
+          var items = d.items || [];
+          this.fixedTemplates = items.filter(function (x) { return x.contentMode === 'fixed'; });
+          this.aiTemplates = items.filter(function (x) { return x.contentMode === 'ai'; });
+        } catch (e) {
+          ElMessage.error(e.message || '加载回复模板失败');
+        }
+      },
+      loadTasks: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.opsTasks({ type: 'comment_reply', page: this.page, pageSize: this.pageSize });
+          this.items = d.items || [];
+          this.total = d.total || 0;
+        } catch (e) {
+          ElMessage.error(e.message || '加载委托任务失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      submit: async function () {
+        if (!this.form.accountId) {
+          ElMessage.warning('请选择账号');
+          return;
+        }
+        if (this.form.replyMode === 'fixed' && !(this.form.replyTemplateIds || []).length) {
+          ElMessage.warning('请至少勾选一条固定回复模板');
+          return;
+        }
+        if (this.form.replyMode === 'ai' && !this.form.replyAiTemplateId) {
+          ElMessage.warning('请选择一条 AI 回复模板');
+          return;
+        }
+        this.submitting = true;
+        try {
+          await CompanyAPI.createCommentReplyTask({
+            accountId: this.form.accountId,
+            replyMode: this.form.replyMode,
+            replyTemplateIds: this.form.replyMode === 'fixed' ? this.form.replyTemplateIds : [],
+            replyAiTemplateId: this.form.replyMode === 'ai' ? this.form.replyAiTemplateId : 0,
+            maxReplies: this.form.maxReplies
+          });
+          ElMessage.success('委托任务已创建，等待运营处理');
+          this.page = 1;
+          this.loadTasks();
+        } catch (e) {
+          ElMessage.error(e.message || '提交失败');
+        } finally {
+          this.submitting = false;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page-view' }, [
+        pageHead('回复评论', '选择账号与回复模板，生成委托任务供关联运营专员在 Node 端启动执行'),
+        h('div', { class: 'panel publish-form-panel' }, [
+          panelHead('新建委托'),
+          h('div', { class: 'publish-form-grid' }, [
+            h('div', { class: 'field' }, [
+              h('label', '执行账号'),
+              h(ElementPlus.ElSelect, {
+                modelValue: self.form.accountId,
+                'onUpdate:modelValue': function (v) { self.form.accountId = v; },
+                placeholder: '选择账号',
+                filterable: true,
+                style: 'width:100%'
+              }, function () {
+                return self.accounts.map(function (a) {
+                  return h(ElementPlus.ElOption, {
+                    key: a.id,
+                    label: (a.label || a.username) + ' (#' + a.id + ')',
+                    value: a.id
+                  });
+                });
+              })
+            ]),
+            h('div', { class: 'field' }, [
+              h('label', '每账号最多回复条数'),
+              h(ElementPlus.ElInputNumber, {
+                modelValue: self.form.maxReplies,
+                'onUpdate:modelValue': function (v) { self.form.maxReplies = v; },
+                min: 1,
+                max: 50,
+                style: 'width:100%'
+              })
+            ]),
+            h('div', { class: 'field full' }, [
+              h('label', '回复模式'),
+              h(ElementPlus.ElRadioGroup, {
+                modelValue: self.form.replyMode,
+                'onUpdate:modelValue': function (v) { self.form.replyMode = v; }
+              }, function () {
+                return [
+                  h(ElementPlus.ElRadioButton, { label: 'fixed' }, function () { return '固定模板'; }),
+                  h(ElementPlus.ElRadioButton, { label: 'ai' }, function () { return 'AI 模板'; })
+                ];
+              })
+            ]),
+            self.form.replyMode === 'fixed'
+              ? h('div', { class: 'field full' }, [
+                  h('label', '固定回复模板'),
+                  h(ElementPlus.ElSelect, {
+                    modelValue: self.form.replyTemplateIds,
+                    'onUpdate:modelValue': function (v) { self.form.replyTemplateIds = v; },
+                    multiple: true,
+                    filterable: true,
+                    placeholder: self.fixedTemplates.length ? '可多选模板' : '暂无固定模板',
+                    style: 'width:100%'
+                  }, function () {
+                    return self.fixedTemplates.map(function (t) {
+                      return h(ElementPlus.ElOption, {
+                        key: t.id,
+                        label: t.name + (t.text ? (' · ' + String(t.text).slice(0, 40)) : ''),
+                        value: t.id
+                      });
+                    });
+                  })
+                ])
+              : h('div', { class: 'field full' }, [
+                  h('label', 'AI 回复模板'),
+                  h(ElementPlus.ElSelect, {
+                    modelValue: self.form.replyAiTemplateId,
+                    'onUpdate:modelValue': function (v) { self.form.replyAiTemplateId = v; },
+                    filterable: true,
+                    clearable: true,
+                    placeholder: self.aiTemplates.length ? '选择一条 AI 模板' : '暂无 AI 模板',
+                    style: 'width:100%'
+                  }, function () {
+                    return self.aiTemplates.map(function (t) {
+                      return h(ElementPlus.ElOption, {
+                        key: t.id,
+                        label: t.name + (t.text ? (' · ' + String(t.text).slice(0, 40)) : ''),
+                        value: t.id
+                      });
+                    });
+                  })
+                ])
+          ]),
+          h('div', { class: 'publish-form-actions' }, [
+            h(ElementPlus.ElButton, {
+              type: 'primary',
+              loading: self.submitting,
+              onClick: function () { self.submit(); }
+            }, function () { return '提交委托'; })
+          ])
+        ]),
+        h('div', { class: 'panel' }, [
+          panelHead('委托任务列表'),
+          entrustTaskTable(self, [
+            h(ElementPlus.ElTableColumn, { label: '模式', width: 100 }, {
+              default: function (scope) {
+                return scope.row.replyMode === 'ai' ? 'AI' : (scope.row.replyMode === 'fixed' ? '固定' : '-');
+              }
+            }),
+            h(ElementPlus.ElTableColumn, { label: '上限', width: 80 }, {
+              default: function (scope) { return scope.row.maxReplies || '-'; }
+            })
+          ]),
+          entrustPager(self)
+        ])
+      ]);
+    }
+  };
+
+  var PullVideoListView = {
+    name: 'PullVideoListView',
+    data: function () {
+      return {
+        loading: false,
+        submitting: false,
+        accounts: [],
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        form: { accountIds: [], browserBackend: 'tkswarm' }
+      };
+    },
+    mounted: function () {
+      this.loadAccounts();
+      this.loadTasks();
+    },
+    methods: {
+      loadAccounts: async function () {
+        try {
+          var d = await CompanyAPI.opsAccounts();
+          this.accounts = d.items || [];
+        } catch (e) {
+          ElMessage.error(e.message || '加载账号失败');
+        }
+      },
+      loadTasks: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.opsTasks({ type: 'pull_video_list', page: this.page, pageSize: this.pageSize });
+          this.items = d.items || [];
+          this.total = d.total || 0;
+        } catch (e) {
+          ElMessage.error(e.message || '加载委托任务失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      submit: async function () {
+        if (!(this.form.accountIds || []).length) {
+          ElMessage.warning('请选择至少一个账号');
+          return;
+        }
+        this.submitting = true;
+        try {
+          await CompanyAPI.createPullVideoListTask({
+            accountIds: this.form.accountIds,
+            browserBackend: this.form.browserBackend || 'tkswarm'
+          });
+          ElMessage.success('委托任务已创建，等待运营处理');
+          this.page = 1;
+          this.loadTasks();
+        } catch (e) {
+          ElMessage.error(e.message || '提交失败');
+        } finally {
+          this.submitting = false;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page-view' }, [
+        pageHead('拉取视频列表', '从 TikTok Studio 同步账号线上视频到素材库；任务由关联运营专员在 Node 启动'),
+        h('div', { class: 'panel publish-form-panel' }, [
+          panelHead('新建委托'),
+          h('div', { class: 'publish-form-grid' }, [
+            h('div', { class: 'field full' }, [
+              h('label', '账号（可多选）'),
+              h(ElementPlus.ElSelect, {
+                modelValue: self.form.accountIds,
+                'onUpdate:modelValue': function (v) { self.form.accountIds = v; },
+                multiple: true,
+                filterable: true,
+                collapseTags: true,
+                collapseTagsTooltip: true,
+                placeholder: '选择账号',
+                style: 'width:100%'
+              }, function () {
+                return self.accounts.map(function (a) {
+                  return h(ElementPlus.ElOption, {
+                    key: a.id,
+                    label: (a.label || a.username) + ' (#' + a.id + ')',
+                    value: a.id
+                  });
+                });
+              })
+            ]),
+            h('div', { class: 'field' }, [
+              h('label', '浏览器后端'),
+              h(ElementPlus.ElSelect, {
+                modelValue: self.form.browserBackend,
+                'onUpdate:modelValue': function (v) { self.form.browserBackend = v; },
+                style: 'width:100%'
+              }, function () {
+                return [
+                  h(ElementPlus.ElOption, { label: 'TkSwarm 自研', value: 'tkswarm' }),
+                  h(ElementPlus.ElOption, { label: '比特浏览器', value: 'bit' })
+                ];
+              })
+            ])
+          ]),
+          h('div', { class: 'publish-form-actions' }, [
+            h(ElementPlus.ElButton, {
+              type: 'primary',
+              loading: self.submitting,
+              onClick: function () { self.submit(); }
+            }, function () { return '提交委托'; })
+          ])
+        ]),
+        h('div', { class: 'panel' }, [
+          panelHead('委托任务列表'),
+          entrustTaskTable(self, [
+            h(ElementPlus.ElTableColumn, { label: '账号数', width: 90 }, {
+              default: function (scope) { return scope.row.accountCount || 1; }
+            })
+          ]),
+          entrustPager(self)
+        ])
+      ]);
+    }
+  };
+
+  var PullVideoDetailView = {
+    name: 'PullVideoDetailView',
+    data: function () {
+      return {
+        loading: false,
+        matLoading: false,
+        submitting: false,
+        materials: [],
+        matTotal: 0,
+        matPage: 1,
+        matPageSize: 20,
+        matKeyword: '',
+        selectedIds: [],
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        form: { browserBackend: 'tkswarm' }
+      };
+    },
+    mounted: function () {
+      this.loadMaterials();
+      this.loadTasks();
+    },
+    methods: {
+      loadMaterials: async function () {
+        this.matLoading = true;
+        try {
+          var d = await CompanyAPI.publishedMaterials({
+            page: this.matPage,
+            pageSize: this.matPageSize,
+            keyword: this.matKeyword || undefined
+          });
+          this.materials = d.items || [];
+          this.matTotal = d.total || 0;
+        } catch (e) {
+          ElMessage.error(e.message || '加载已发布视频失败');
+        } finally {
+          this.matLoading = false;
+        }
+      },
+      loadTasks: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.opsTasks({ type: 'pull_comments', page: this.page, pageSize: this.pageSize });
+          this.items = d.items || [];
+          this.total = d.total || 0;
+        } catch (e) {
+          ElMessage.error(e.message || '加载委托任务失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      onMatSelect: function (rows) {
+        this.selectedIds = (rows || []).map(function (r) { return r.id; });
+      },
+      submit: async function () {
+        if (!(this.selectedIds || []).length) {
+          ElMessage.warning('请至少选择一个已发布视频');
+          return;
+        }
+        this.submitting = true;
+        try {
+          await CompanyAPI.createPullCommentsTask({
+            materialIds: this.selectedIds,
+            browserBackend: this.form.browserBackend || 'tkswarm'
+          });
+          ElMessage.success('委托任务已创建，等待运营处理');
+          this.page = 1;
+          this.loadTasks();
+        } catch (e) {
+          ElMessage.error(e.message || '提交失败');
+        } finally {
+          this.submitting = false;
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page-view' }, [
+        pageHead('拉取视频详情', '选择已发布视频拉取评论与详情数据；由关联运营专员在 Node 客户任务中启动'),
+        h('div', { class: 'panel publish-form-panel' }, [
+          panelHead('选择已发布视频'),
+          h('div', { class: 'publish-form-grid', style: 'margin-bottom:12px' }, [
+            h('div', { class: 'field', style: 'grid-column: span 2' }, [
+              h('label', '搜索'),
+              h(ElementPlus.ElInput, {
+                modelValue: self.matKeyword,
+                'onUpdate:modelValue': function (v) { self.matKeyword = v; },
+                placeholder: '标题 / 文件名 / 视频 ID',
+                clearable: true,
+                onKeyup: function (e) {
+                  if (e.key === 'Enter') { self.matPage = 1; self.loadMaterials(); }
+                }
+              })
+            ]),
+            h('div', { class: 'field' }, [
+              h('label', '浏览器后端'),
+              h(ElementPlus.ElSelect, {
+                modelValue: self.form.browserBackend,
+                'onUpdate:modelValue': function (v) { self.form.browserBackend = v; },
+                style: 'width:100%'
+              }, function () {
+                return [
+                  h(ElementPlus.ElOption, { label: 'TkSwarm 自研', value: 'tkswarm' }),
+                  h(ElementPlus.ElOption, { label: '比特浏览器', value: 'bit' })
+                ];
+              })
+            ]),
+            h('div', { class: 'field', style: 'display:flex;align-items:flex-end' }, [
+              h(ElementPlus.ElButton, {
+                onClick: function () { self.matPage = 1; self.loadMaterials(); }
+              }, function () { return '搜索'; })
+            ])
+          ]),
+          h(ElementPlus.ElTable, {
+            data: self.materials,
+            stripe: true,
+            vLoading: self.matLoading,
+            style: 'width:100%',
+            onSelectionChange: function (rows) { self.onMatSelect(rows); }
+          }, function () {
+            return [
+              h(ElementPlus.ElTableColumn, { type: 'selection', width: 48 }),
+              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
+              h(ElementPlus.ElTableColumn, { prop: 'label', label: '视频', minWidth: 180, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { prop: 'publishAccount', label: '发布账号', minWidth: 120, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { prop: 'platformVideoId', label: '平台 ID', minWidth: 140, showOverflowTooltip: true })
+            ];
+          }),
+          h('div', { class: 'pager-row' }, [
+            h(ElementPlus.ElPagination, {
+              currentPage: self.matPage,
+              'onUpdate:currentPage': function (v) { self.matPage = v; self.loadMaterials(); },
+              pageSize: self.matPageSize,
+              total: self.matTotal,
+              layout: 'total, prev, pager, next',
+              background: true
+            })
+          ]),
+          h('div', { class: 'publish-form-actions' }, [
+            h('span', { class: 'muted', style: 'margin-right:12px' }, '已选 ' + (self.selectedIds.length || 0) + ' 个'),
+            h(ElementPlus.ElButton, {
+              type: 'primary',
+              loading: self.submitting,
+              onClick: function () { self.submit(); }
+            }, function () { return '提交委托'; })
+          ])
+        ]),
+        h('div', { class: 'panel' }, [
+          panelHead('委托任务列表'),
+          entrustTaskTable(self, [
+            h(ElementPlus.ElTableColumn, { label: '视频数', width: 90 }, {
+              default: function (scope) { return scope.row.materialCount || scope.row.totalCount || '-'; }
+            })
+          ]),
+          entrustPager(self)
+        ])
+      ]);
+    }
+  };
+
   global.CompanyViews = {
     LoginView: LoginView,
     DashboardView: DashboardView,
@@ -1470,6 +2004,9 @@
     CluesView: CluesView,
     AnalyticsView: AnalyticsView,
     SupportView: SupportView,
-    PublishView: PublishView
+    PublishView: PublishView,
+    CommentReplyView: CommentReplyView,
+    PullVideoListView: PullVideoListView,
+    PullVideoDetailView: PullVideoDetailView
   };
 })(window);

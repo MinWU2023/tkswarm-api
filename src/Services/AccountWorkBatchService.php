@@ -998,6 +998,11 @@ class AccountWorkBatchService
             return ['batches' => 0, 'items' => 0, 'deferred' => true];
         }
 
+        // 拉取视频详情：需先建 pull_comment_tasks 再入队（含企业委托 draft）
+        if ($type === 'pull_comments') {
+            return self::attachPullCommentsFromTask($task);
+        }
+
         // 避免重复挂载未完成项
         $existing = DB::selectOne(
             "SELECT COUNT(*) AS c FROM account_work_items
@@ -1109,6 +1114,87 @@ class AccountWorkBatchService
             'batches' => $batches,
             'items' => $items,
             'deferred_higher' => $deferredHigher,
+        ];
+    }
+
+    /**
+     * tasks.type=pull_comments 启动时：按素材创建 pull_comment_tasks 并入队。
+     * @param array<string,mixed> $task
+     * @return array{batches:int,items:int,pullTasks?:int}
+     */
+    private static function attachPullCommentsFromTask(array $task): array
+    {
+        $taskId = (int)($task['id'] ?? 0);
+        $payload = json_decode((string)($task['payload'] ?? '{}'), true) ?: [];
+        $materialIds = array_values(array_filter(array_map('intval', $payload['materialIds'] ?? [])));
+        if (!$materialIds) {
+            return ['batches' => 0, 'items' => 0];
+        }
+        // 避免重复：父 tasks.id 已有 pending/running 的 pull_comments（少见）或 payload 已挂过 pullTaskIds
+        $existingPullIds = array_values(array_filter(array_map('intval', $payload['pullTaskIds'] ?? [])));
+        if ($existingPullIds) {
+            $ph = implode(',', array_fill(0, count($existingPullIds), '?'));
+            $pending = DB::selectOne(
+                "SELECT COUNT(*) AS c FROM account_work_items
+                 WHERE task_type='pull_comments' AND task_ref_id IN ({$ph}) AND status IN ('pending','running')",
+                $existingPullIds
+            );
+            if ((int)($pending['c'] ?? 0) > 0) {
+                return ['batches' => 0, 'items' => 0];
+            }
+        }
+
+        $backend = strtolower(trim((string)($payload['browserBackend'] ?? $payload['browser_backend'] ?? 'tkswarm')));
+        if (!in_array($backend, ['bit', 'tkswarm'], true)) {
+            $backend = 'tkswarm';
+        }
+        $ownerId = (int)($task['owner_id'] ?? 0);
+        $name = trim((string)($task['name'] ?? ''));
+        try {
+            $out = PullCommentService::createFromMaterials(
+                $materialIds,
+                $ownerId,
+                $backend,
+                $name,
+                false
+            );
+        } catch (\Throwable $e) {
+            if ($taskId > 0) {
+                DB::query(
+                    'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
+                    [$taskId, 'error', '拉取视频详情入队失败：' . mb_substr($e->getMessage(), 0, 400)]
+                );
+            }
+            throw $e;
+        }
+
+        $pullIds = [];
+        foreach (($out['tasks'] ?? []) as $t) {
+            if (is_array($t) && !empty($t['id'])) {
+                $pullIds[] = (int)$t['id'];
+            }
+        }
+        if ($taskId > 0 && $pullIds) {
+            $payload['pullTaskIds'] = $pullIds;
+            $payload['entrustActivatedAt'] = date('Y-m-d H:i:s');
+            DB::query(
+                "UPDATE tasks SET payload=?, status='running', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [json_encode($payload, JSON_UNESCAPED_UNICODE), $taskId]
+            );
+            DB::query(
+                'INSERT INTO task_events(task_id, level, message) VALUES (?,?,?)',
+                [
+                    $taskId,
+                    'info',
+                    '已拆分为拉取视频详情子任务 ' . count($pullIds) . ' 个并入队',
+                ]
+            );
+        }
+
+        return [
+            'batches' => (int)($out['created'] ?? 0),
+            'items' => (int)($out['enqueued'] ?? 0),
+            'pullTasks' => count($pullIds),
         ];
     }
 

@@ -84,6 +84,26 @@
     },
     createPublishTask: function (formData) {
       return request('/api/company/publish/tasks', { method: 'POST', body: formData });
+    },
+
+    opsAccounts: function () { return request('/api/company/ops/accounts', { method: 'GET' }); },
+    opsTasks: function (params) {
+      return request('/api/company/ops/tasks' + qs(params), { method: 'GET' });
+    },
+    commentReplyTemplates: function (params) {
+      return request('/api/company/ops/comment-reply/templates' + qs(params), { method: 'GET' });
+    },
+    createCommentReplyTask: function (body) {
+      return request('/api/company/ops/comment-reply/tasks', { method: 'POST', body: body });
+    },
+    createPullVideoListTask: function (body) {
+      return request('/api/company/ops/pull-video-list/tasks', { method: 'POST', body: body });
+    },
+    publishedMaterials: function (params) {
+      return request('/api/company/ops/published-materials' + qs(params), { method: 'GET' });
+    },
+    createPullCommentsTask: function (body) {
+      return request('/api/company/ops/pull-video-detail/tasks', { method: 'POST', body: body });
     }
   };
 })(window);
