@@ -209,8 +209,10 @@ class AuthController extends Controller
     {
         $roleId = (int)($user['role_id'] ?? 0);
         $isSuper = $roleId === 1;
+        $uid = (int)$user['id'];
+        $quotaSnap = \App\Services\BrowserEnvQuotaService::snapshot($uid);
         return [
-            'id' => (int)$user['id'],
+            'id' => $uid,
             'username' => (string)$user['username'],
             'nickname' => (string)($user['nickname'] ?? ''),
             'role' => $this->roleName($user),
@@ -218,6 +220,9 @@ class AuthController extends Controller
             'role_id' => $roleId > 0 ? $roleId : null,
             'permissions' => $this->permissionsForUser($user),
             'isSuper' => $isSuper,
+            'browserEnvQuota' => $quotaSnap['quota'],
+            'browserEnvUsed' => $quotaSnap['used'],
+            'browserEnvRemaining' => $quotaSnap['remaining'],
         ];
     }
 

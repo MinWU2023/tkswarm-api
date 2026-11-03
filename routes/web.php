@@ -503,6 +503,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/admin-users', PermissionController::class . '@saveUser');
     Router::post('/api/admin-users/delete', PermissionController::class . '@deleteUser');
     Router::delete('/api/admin-users', PermissionController::class . '@deleteUser');
+    Router::put('/api/admin-users/{id}/browser-env-quota', PermissionController::class . '@setBrowserEnvQuota');
+    Router::post('/api/admin-users/{id}/browser-env-quota', PermissionController::class . '@setBrowserEnvQuota');
 
     Router::get('/api/admin-logs', PermissionController::class . '@logs');
     Router::post('/api/admin-logs/clear', PermissionController::class . '@clearLogs');
@@ -560,6 +562,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     // 客服端 Node 无 MySQL：自动化读写中心库
     Router::get('/api/node/settings', NodeBridgeController::class . '@settingsForNode');
     Router::get('/api/node/linux-browsers', NodeBridgeController::class . '@linuxBrowsers');
+    Router::get('/api/node/browser-env-quota/{userId}', NodeBridgeController::class . '@browserEnvQuota');
     Router::get('/api/node/monitor/config', NodeBridgeController::class . '@monitorConfig');
     Router::get('/api/node/materials/{id}', NodeBridgeController::class . '@materialForNode');
     Router::post('/api/node/materials/{id}/mark-published', NodeBridgeController::class . '@markMaterialPublished');

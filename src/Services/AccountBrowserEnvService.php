@@ -397,6 +397,9 @@ class AccountBrowserEnvService
             return DB::selectOne('SELECT * FROM account_browser_envs WHERE id=?', [(int)$taken['id']]) ?: $taken;
         }
 
+        // 新建绑定：自研/Linux 计入管理用户环境额度
+        BrowserEnvQuotaService::assertCanAllocate($ownerUserId, $backend);
+
         $count = (int)(DB::selectOne(
             'SELECT COUNT(*) AS c FROM account_browser_envs WHERE account_id=?',
             [$accountId]

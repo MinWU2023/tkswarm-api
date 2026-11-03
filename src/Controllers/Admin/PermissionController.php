@@ -8,6 +8,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
 use App\Core\Auth\RBAC;
+use App\Services\BrowserEnvQuotaService;
 use App\Services\DataScope;
 use App\Services\CompanyService;
 
@@ -295,6 +296,7 @@ class PermissionController extends Controller
         }
         DataScope::ensureChildrenTable();
         CompanyService::ensureSchema();
+        BrowserEnvQuotaService::ensureSchema();
         \App\Services\PlanTask\PlanTaskRecipientResolver::ensureAdminEmailColumn();
         $page = (int)$request->get('page', 1);
         $pageSize = (int)$request->get('pageSize', 20);
@@ -302,7 +304,7 @@ class PermissionController extends Controller
         $status = $request->get('status', null);
 
         $query = DB::table('admin_users')
-            ->select(['id', 'username', 'nickname', 'email', 'role_id', 'company_id', 'status', 'created_at', 'updated_at'])
+            ->select(['id', 'username', 'nickname', 'email', 'role_id', 'company_id', 'status', 'browser_env_quota', 'created_at', 'updated_at'])
             ->orderBy('id', 'ASC');
 
         if ($status !== null && $status !== '') {
@@ -325,6 +327,7 @@ class PermissionController extends Controller
         if (!empty($res['items'])) {
             $userIds = array_map(static fn($row) => (int)($row['id'] ?? 0), $res['items']);
             $userCompanyMap = CompanyService::companyIdsMapForUsers($userIds);
+            $quotaMap = BrowserEnvQuotaService::mapForUsers($userIds);
             $allCompanyIds = [];
             foreach ($userCompanyMap as $ids) {
                 foreach ($ids as $cid) {
@@ -357,11 +360,54 @@ class PermissionController extends Controller
                 $primaryId = $cids[0] ?? 0;
                 $item['company_id'] = $primaryId > 0 ? $primaryId : null;
                 $item['company'] = $primaryId > 0 ? ($companyMap[$primaryId] ?? null) : null;
+                $quotaInfo = $quotaMap[$uid] ?? [
+                    'quota' => BrowserEnvQuotaService::DEFAULT_QUOTA,
+                    'used' => 0,
+                    'remaining' => BrowserEnvQuotaService::DEFAULT_QUOTA,
+                ];
+                $item['browserEnvQuota'] = (int)$quotaInfo['quota'];
+                $item['browser_env_quota'] = (int)$quotaInfo['quota'];
+                $item['browserEnvUsed'] = (int)$quotaInfo['used'];
+                $item['browser_env_used'] = (int)$quotaInfo['used'];
+                $item['browserEnvRemaining'] = (int)$quotaInfo['remaining'];
             }
             unset($item);
         }
 
         return $this->success($res);
+    }
+
+    /** 超管：设置管理用户自研浏览器环境额度 */
+    public function setBrowserEnvQuota(Request $request, string $id = ''): Response
+    {
+        if ($deny = $this->assertAnyPermission(['rbac.users.browser_quota'])) {
+            return $deny;
+        }
+        $authUser = $GLOBALS['auth_user'] ?? null;
+        $authIsSuper = $authUser && (int)($authUser['role_id'] ?? 0) === 1;
+        if (!$authIsSuper) {
+            return $this->error('仅超级管理员可设置自研浏览器环境额度', 403);
+        }
+        $uid = (int)($id !== '' ? $id : $request->input('id', 0));
+        $quota = (int)$request->input('quota', $request->input('browserEnvQuota', $request->input('browser_env_quota', -1)));
+        if ($uid <= 0) {
+            return $this->error('用户无效', 422);
+        }
+        if ($quota < 0) {
+            return $this->error('请填写有效额度（≥0）', 422);
+        }
+        try {
+            BrowserEnvQuotaService::setQuota($uid, $quota);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $snap = BrowserEnvQuotaService::snapshot($uid);
+        return $this->success([
+            'id' => $uid,
+            'browserEnvQuota' => $snap['quota'],
+            'browserEnvUsed' => $snap['used'],
+            'browserEnvRemaining' => $snap['remaining'],
+        ], '浏览器环境额度已更新');
     }
 
     // 保存管理用户（新增 / 编辑）

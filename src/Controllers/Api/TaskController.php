@@ -36,8 +36,26 @@ class TaskController extends Controller
             }
         }
         if ($status = trim((string)$request->get('status', ''))) {
-            $filters[] = 't.status=?';
-            $params[] = $status;
+            // 支持多状态：queued,draft,paused 或 pending（待执行别名）
+            $statuses = array_values(array_filter(array_map('trim', explode(',', $status))));
+            if (count($statuses) === 1 && strtolower($statuses[0]) === 'pending') {
+                $statuses = ['draft', 'queued', 'paused', 'running'];
+            }
+            $statuses = array_values(array_unique(array_filter($statuses)));
+            if (count($statuses) > 1) {
+                $ph = implode(',', array_fill(0, count($statuses), '?'));
+                $filters[] = "t.status IN ({$ph})";
+                foreach ($statuses as $st) {
+                    $params[] = $st;
+                }
+            } elseif ($statuses) {
+                $filters[] = 't.status=?';
+                $params[] = $statuses[0];
+            }
+        }
+        if ($name = trim((string)$request->get('name', $request->get('keyword', '')))) {
+            $filters[] = 't.name LIKE ?';
+            $params[] = '%' . $name . '%';
         }
         $source = trim((string)$request->get('source', ''));
         if ($source === 'company_entrust') {

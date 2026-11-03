@@ -18,6 +18,7 @@ use App\Services\PullCommentService;
 use App\Services\AutoFollowService;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\SecretStore;
+use App\Services\BrowserEnvQuotaService;
 use App\Services\SshServer\SshServerService;
 use App\Services\WarmCommentService;
 
@@ -1422,6 +1423,25 @@ class NodeBridgeController extends Controller
             ];
         }
         return $this->success(['items' => $items]);
+    }
+
+    /** 自研/Linux 创建环境前查询管理用户额度 */
+    public function browserEnvQuota(Request $request, string $userId): Response
+    {
+        $uid = (int)$userId;
+        if ($uid <= 0) {
+            return $this->error('用户无效', 422);
+        }
+        $snap = BrowserEnvQuotaService::snapshot($uid);
+        return $this->success([
+            'userId' => $snap['userId'],
+            'quota' => $snap['quota'],
+            'used' => $snap['used'],
+            'remaining' => $snap['remaining'],
+            'browserEnvQuota' => $snap['quota'],
+            'browserEnvUsed' => $snap['used'],
+            'browserEnvRemaining' => $snap['remaining'],
+        ]);
     }
 
     public function monitorConfig(Request $request): Response

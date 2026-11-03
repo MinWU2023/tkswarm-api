@@ -59,6 +59,8 @@ class PermissionCatalog
             [111, 'rbac', 'rbac.users.create', '添加管理用户', 111],
             [112, 'rbac', 'rbac.users.update', '编辑管理用户', 112],
             [113, 'rbac', 'rbac.users.delete', '删除管理用户', 113],
+            // 仅建议授予超级管理员（勿挂到 rbac.manage 自动展开）
+            [175, 'rbac', 'rbac.users.browser_quota', '设置自研浏览器环境额度', 113],
 
             // —— 权限：角色 ——
             [114, 'rbac', 'rbac.roles.view', '查看用户角色', 114],
@@ -200,6 +202,8 @@ class PermissionCatalog
             'rbac.users.create' => ['rbac.manage'],
             'rbac.users.update' => ['rbac.manage'],
             'rbac.users.delete' => ['rbac.manage'],
+            // 浏览器额度：不别名到 rbac.manage，仅 * / 显式授权（通常仅超管）
+            'rbac.users.browser_quota' => [],
             'rbac.roles.view' => ['rbac.manage', 'rbac.roles.create', 'rbac.roles.update'],
             'rbac.roles.create' => ['rbac.manage'],
             'rbac.roles.update' => ['rbac.manage'],

@@ -71,6 +71,8 @@ class RoutePermissionMap
             ['method' => 'POST', 'pattern' => '#^/api/roles#', 'codes' => ['rbac.roles.create', 'rbac.roles.update', 'rbac.manage']],
 
             // —— 管理用户 ——
+            ['method' => 'PUT', 'pattern' => '#^/api/admin-users/\d+/browser-env-quota#', 'codes' => ['rbac.users.browser_quota']],
+            ['method' => 'POST', 'pattern' => '#^/api/admin-users/\d+/browser-env-quota#', 'codes' => ['rbac.users.browser_quota']],
             ['method' => 'GET', 'pattern' => '#^/api/admin-users#', 'codes' => ['rbac.users.view', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/admin-users/delete#', 'codes' => ['rbac.users.delete', 'rbac.manage']],
             ['method' => 'DELETE', 'pattern' => '#^/api/admin-users#', 'codes' => ['rbac.users.delete', 'rbac.manage']],

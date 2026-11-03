@@ -21,6 +21,7 @@ class AccountWorkController extends Controller
         DataScope::ensureColumns();
         $accountId = (int)$request->get('accountId', $request->get('account_id', 0));
         $status = trim((string)$request->get('status', ''));
+        $batchScope = trim((string)$request->get('batchScope', $request->get('batch_scope', '')));
         $keyword = trim((string)$request->get('keyword', $request->get('q', '')));
         $createdFrom = trim((string)$request->get('createdFrom', $request->get('created_from', '')));
         $createdTo = trim((string)$request->get('createdTo', $request->get('created_to', '')));
@@ -36,12 +37,42 @@ class AccountWorkController extends Controller
             $where[] = 'b.account_id=?';
             $params[] = $accountId;
         }
+        if ($batchScope !== '') {
+            $scopes = array_values(array_unique(array_filter(array_map(
+                static fn($s) => strtolower(trim((string)$s)),
+                explode(',', $batchScope)
+            ))));
+            if (count($scopes) > 1) {
+                $ph = implode(',', array_fill(0, count($scopes), '?'));
+                $where[] = "COALESCE(b.batch_scope,'general') IN ({$ph})";
+                foreach ($scopes as $sc) {
+                    $params[] = $sc;
+                }
+            } elseif ($scopes) {
+                $where[] = "COALESCE(b.batch_scope,'general')=?";
+                $params[] = $scopes[0];
+            }
+        }
         $includeDeleted = (int)$request->get('includeDeleted', $request->get('include_deleted', 0)) === 1;
         if ($status === 'deleted') {
             $where[] = "(b.status='deleted' OR b.deleted_at IS NOT NULL)";
         } elseif ($status !== '') {
-            $where[] = 'b.status=?';
-            $params[] = $status;
+            // 支持多状态：pending,running 或 pending 别名（待执行）
+            $statuses = array_values(array_filter(array_map('trim', explode(',', $status))));
+            if (count($statuses) === 1 && strtolower($statuses[0]) === 'pending') {
+                $statuses = ['pending', 'running', 'paused'];
+            }
+            $statuses = array_values(array_unique(array_filter($statuses)));
+            if (count($statuses) > 1) {
+                $ph = implode(',', array_fill(0, count($statuses), '?'));
+                $where[] = "b.status IN ({$ph})";
+                foreach ($statuses as $st) {
+                    $params[] = $st;
+                }
+            } elseif ($statuses) {
+                $where[] = 'b.status=?';
+                $params[] = $statuses[0];
+            }
             if (!$includeDeleted) {
                 $where[] = 'b.deleted_at IS NULL';
             }
