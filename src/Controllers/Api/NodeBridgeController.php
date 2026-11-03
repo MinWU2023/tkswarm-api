@@ -1546,6 +1546,21 @@ class NodeBridgeController extends Controller
             if ($videoId === '' && preg_match('#/video/(\d{8,})#', $videoUrl, $vm)) {
                 $videoId = $vm[1];
             }
+            // 归属校验：URL / 显式作者句柄必须是本账号，避免推荐视频被改写成 @本号
+            $authorHint = strtolower(ltrim(trim((string)($row['authorUsername'] ?? $row['author_username'] ?? '')), '@'));
+            $urlHandle = '';
+            if (preg_match('#tiktok\.com/@([^/?#]+)#i', $videoUrl, $hm)) {
+                $urlHandle = strtolower(rawurldecode($hm[1]));
+            }
+            $accKey = strtolower(ltrim($accName, '@'));
+            if ($authorHint !== '' && $accKey !== '' && $authorHint !== $accKey) {
+                $skipped += 1;
+                continue;
+            }
+            if ($urlHandle !== '' && $accKey !== '' && $urlHandle !== $accKey) {
+                $skipped += 1;
+                continue;
+            }
             if ($videoId !== '' && $accName !== '') {
                 // 一律存 @user/video/id；裸 /video/{id} 在拉评论直开时常跳到 /404?fromUrl=
                 $videoUrl = 'https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId;

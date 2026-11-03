@@ -1270,6 +1270,18 @@
             ]
           },
           {
+            group: '拉取视频列表',
+            items: [
+              {
+                title: '清除拉取列表线上视频',
+                desc: '删除 materials.origin=online、关联评论、tiktok_videos、详情截图。用于清理误拉的非本账号视频；可按 accountId 过滤。本地上传素材不受影响。',
+                url: '/clear-pulled-online-videos.php',
+                danger: true,
+                confirm: false
+              }
+            ]
+          },
+          {
             group: '浏览器环境',
             items: [
               {
