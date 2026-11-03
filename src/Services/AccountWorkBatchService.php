@@ -1505,6 +1505,7 @@ class AccountWorkBatchService
 
             // 常规总任务优先；同账号有 general 未完成时不领 ai_lead
             // pending 分项须已到 scheduled_at（无任务行 / 无定时 视为可领）
+            // cs_seat / linux 拓客不依赖 account_browser_envs 空闲行（leaseOrServerEnv 合成 linux 环境）
             $batch = DB::selectOne(
                 "SELECT b.* FROM account_work_batches b
                  WHERE b.status='pending'
@@ -1515,9 +1516,23 @@ class AccountWorkBatchService
                      WHERE i.batch_id=b.id AND i.status='pending'
                        AND (t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
                    )
-                   AND EXISTS (
-                     SELECT 1 FROM account_browser_envs e
-                     WHERE e.account_id=b.account_id AND e.saturation='idle'
+                   AND (
+                     COALESCE(b.batch_scope,'general') = 'cs_seat'
+                     OR (
+                       COALESCE(b.batch_scope,'general') = 'ai_lead'
+                       AND EXISTS (
+                         SELECT 1 FROM account_work_items li
+                         WHERE li.batch_id=b.id AND li.status IN ('pending','running')
+                           AND (
+                             li.payload_json LIKE '%\"browserBackend\":\"linux\"%'
+                             OR li.payload_json LIKE '%\"browser_backend\":\"linux\"%'
+                           )
+                       )
+                     )
+                     OR EXISTS (
+                       SELECT 1 FROM account_browser_envs e
+                       WHERE e.account_id=b.account_id AND e.saturation='idle'
+                     )
                    )
                    AND (
                      COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
@@ -3508,6 +3523,11 @@ class AccountWorkBatchService
             : strtolower(trim((string)($env['browser_backend'] ?? $account['browser_backend'] ?? 'bit')));
         if (!in_array($backend, ['bit', 'tkswarm', 'linux'], true)) {
             $backend = 'bit';
+        }
+        $scope = strtolower(trim((string)($batch['batch_scope'] ?? self::BATCH_SCOPE_GENERAL)));
+        // 客服坐席总任务一律服务器浏览器，避免账号默认 bit 覆盖
+        if ($scope === self::BATCH_SCOPE_CS_SEAT) {
+            $backend = 'linux';
         }
         if ($backend === 'linux') {
             // 服务器与桌面自研共用环境包：优先 linux 绑定，其次 tkswarm 同 ID；仍空则 node 拉包/补建
