@@ -47,6 +47,7 @@ use App\Controllers\Admin\ContactManageController;
 use App\Controllers\Admin\VersionManageController;
 use App\Controllers\Admin\HelpManageController;
 use App\Controllers\Admin\EnvInstallerManageController;
+use App\Controllers\Admin\ScheduleManageController;
 use App\Controllers\Company\PortalController as CompanyPortalController;
 use App\Controllers\Company\AuthController as CompanyAuthController;
 use App\Controllers\Company\PortalApiController as CompanyPortalApiController;
@@ -99,6 +100,8 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/admin/site-settings', ConsoleController::class . '@spa');
     Router::get('/admin/task-reset', ConsoleController::class . '@spa');
     Router::get('/admin/task-clear', ConsoleController::class . '@spa');
+    Router::get('/admin/quick-ops', ConsoleController::class . '@spa');
+    Router::get('/admin/scheduled-jobs', ConsoleController::class . '@spa');
 
     // 企业客户门户 SPA（独立于 /admin；仅企业客户角色可登录）
     Router::get('/company', CompanyPortalController::class . '@spa');
@@ -660,4 +663,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/admin/api/env-installers/{id}/publish', EnvInstallerManageController::class . '@publish');
     Router::post('/admin/api/env-installers/{id}/recommended', EnvInstallerManageController::class . '@setRecommended');
     Router::delete('/admin/api/env-installers/{id}', EnvInstallerManageController::class . '@delete');
+
+    Router::get('/admin/api/scheduled-jobs', ScheduleManageController::class . '@list');
+    Router::put('/admin/api/scheduled-jobs/{key}', ScheduleManageController::class . '@update');
+    Router::post('/admin/api/scheduled-jobs/{key}/run', ScheduleManageController::class . '@run');
 });

@@ -91,6 +91,14 @@
     updateDocument: function (id, body) { return request('/admin/api/help/documents/' + id, { method: 'PUT', body: body }); },
     deleteDocument: function (id) { return request('/admin/api/help/documents/' + id, { method: 'DELETE' }); },
 
+    scheduledJobs: function () { return request('/admin/api/scheduled-jobs', { method: 'GET' }); },
+    updateScheduledJob: function (key, body) {
+      return request('/admin/api/scheduled-jobs/' + encodeURIComponent(key), { method: 'PUT', body: body });
+    },
+    runScheduledJob: function (key) {
+      return request('/admin/api/scheduled-jobs/' + encodeURIComponent(key) + '/run', { method: 'POST', body: {} });
+    },
+
     envInstallers: function (q) { return request('/admin/api/env-installers' + (q || ''), { method: 'GET' }); },
     createEnvInstaller: function (body) { return request('/admin/api/env-installers', { method: 'POST', body: body }); },
     updateEnvInstaller: function (id, body) { return request('/admin/api/env-installers/' + id, { method: 'PUT', body: body }); },

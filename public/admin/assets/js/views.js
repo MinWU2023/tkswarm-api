@@ -1573,6 +1573,188 @@
     }
   };
 
+  var ScheduledJobsView = {
+    name: 'ScheduledJobsView',
+    data: function () {
+      return {
+        loading: false,
+        jobs: [],
+        mountHint: '',
+        note: '',
+        toggling: {},
+        running: {}
+      };
+    },
+    mounted: function () { this.load(); },
+    methods: {
+      load: async function () {
+        this.loading = true;
+        try {
+          var data = await AdminAPI.scheduledJobs();
+          this.jobs = data.jobs || [];
+          this.mountHint = data.mountHint || '';
+          this.note = data.note || '';
+        } catch (e) {
+          ElMessage.error(e.message || '加载失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      applyJobs: function (data) {
+        if (data && data.jobs) this.jobs = data.jobs;
+      },
+      onToggle: async function (row, val) {
+        var key = row.key;
+        this.toggling[key] = true;
+        try {
+          var data = await AdminAPI.updateScheduledJob(key, { enabled: !!val });
+          this.applyJobs(data);
+          ElMessage.success((row.title || key) + (val ? ' 已开启' : ' 已关闭'));
+        } catch (e) {
+          row.enabled = !val;
+          ElMessage.error(e.message || '更新失败');
+        } finally {
+          this.toggling[key] = false;
+        }
+      },
+      runNow: async function (row) {
+        var key = row.key;
+        try {
+          await ElMessageBox.confirm(
+            '立即执行「' + (row.title || key) + '」？（不受开关与 cron 限制）',
+            '手动触发',
+            { type: 'warning', confirmButtonText: '执行', cancelButtonText: '取消' }
+          );
+        } catch (e) {
+          return;
+        }
+        this.running[key] = true;
+        try {
+          var data = await AdminAPI.runScheduledJob(key);
+          this.applyJobs(data);
+          var r = data.result || {};
+          if (r.ok) ElMessage.success('执行完成：' + (r.message || r.status));
+          else ElMessage.error('执行失败：' + (r.message || r.status));
+        } catch (e) {
+          ElMessage.error(e.message || '执行失败');
+        } finally {
+          this.running[key] = false;
+        }
+      },
+      copyMount: async function () {
+        var text = this.mountHint || '';
+        if (!text) return;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          ElMessage.success('已复制 crontab 语句');
+        } catch (e) {
+          ElMessage.warning('复制失败，请手动选择文本');
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', { class: 'page' }, [
+        pageHead(
+          '计划任务',
+          '统一调度入口：服务器 crontab 只挂 schedule.php；下方开关控制各任务是否执行。',
+          h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
+        ),
+        h(ElementPlus.ElAlert, {
+          type: 'info',
+          showIcon: true,
+          closable: false,
+          style: 'margin-bottom:16px',
+          title: self.note || '开启后才会被 schedule.php 调度执行'
+        }, function () {
+          return h('div', { class: 'mt-2' }, [
+            h('div', { class: 'text-xs text-slate-500 mb-1' }, '推荐挂载（每分钟）：'),
+            h('code', { style: 'display:block;white-space:pre-wrap;word-break:break-all;font-size:12px' }, self.mountHint || ''),
+            h(ElementPlus.ElButton, {
+              size: 'small',
+              style: 'margin-top:8px',
+              onClick: function () { self.copyMount(); }
+            }, function () { return '复制语句'; })
+          ]);
+        }),
+        h(ElementPlus.ElCard, { shadow: 'never', vLoading: self.loading }, {
+          default: function () {
+            return h(ElementPlus.ElTable, { data: self.jobs, stripe: true, style: 'width:100%' }, {
+              default: function () {
+                return [
+                  h(ElementPlus.ElTableColumn, { prop: 'title', label: '任务', minWidth: 140 }, {
+                    default: function (scope) {
+                      return h('div', [
+                        h('div', { class: 'font-medium' }, scope.row.title),
+                        h('div', { class: 'text-xs text-slate-400' }, scope.row.key)
+                      ]);
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { prop: 'command', label: '命令', minWidth: 180 }, {
+                    default: function (scope) {
+                      var args = (scope.row.args || []).join(' ');
+                      return h('code', { class: 'text-xs' }, scope.row.command + (args ? ' ' + args : ''));
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { prop: 'cron', label: 'Cron', width: 120 }, {
+                    default: function (scope) {
+                      return h('code', { class: 'text-xs' }, scope.row.cron);
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { prop: 'description', label: '说明', minWidth: 220 }),
+                  h(ElementPlus.ElTableColumn, { label: '开启', width: 90 }, {
+                    default: function (scope) {
+                      return h(ElementPlus.ElSwitch, {
+                        modelValue: !!scope.row.enabled,
+                        'onUpdate:modelValue': function (v) {
+                          scope.row.enabled = v;
+                          self.onToggle(scope.row, v);
+                        },
+                        disabled: !!self.toggling[scope.row.key],
+                        loading: !!self.toggling[scope.row.key]
+                      });
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { label: '最近执行', minWidth: 180 }, {
+                    default: function (scope) {
+                      var st = scope.row.lastStatus || '-';
+                      var tip = (scope.row.lastRunAt || '-') + ' · ' + st;
+                      if (scope.row.lastDurationMs != null) tip += ' · ' + scope.row.lastDurationMs + 'ms';
+                      return h('div', [
+                        h('div', { class: 'text-xs' }, tip),
+                        scope.row.lastMessage
+                          ? h('div', { class: 'text-xs text-slate-400', title: scope.row.lastMessage }, String(scope.row.lastMessage).slice(0, 60))
+                          : null
+                      ]);
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { label: '操作', width: 110, fixed: 'right' }, {
+                    default: function (scope) {
+                      return h(ElementPlus.ElButton, {
+                        size: 'small',
+                        loading: !!self.running[scope.row.key],
+                        onClick: function () { self.runNow(scope.row); }
+                      }, function () { return '立即执行'; });
+                    }
+                  })
+                ];
+              }
+            });
+          }
+        })
+      ]);
+    }
+  };
+
   var SiteSettingsView = {
     name: 'SiteSettingsView',
     data: function () {
@@ -1656,6 +1838,7 @@
     TicketsView: TicketsView,
     ContactInquiriesView: ContactInquiriesView,
     SiteSettingsView: SiteSettingsView,
+    ScheduledJobsView: ScheduledJobsView,
     VersionsView: VersionsView,
     HelpCategoriesView: HelpCategoriesView,
     HelpDocsView: HelpDocsView,

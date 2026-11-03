@@ -3,23 +3,11 @@ declare(strict_types=1);
 
 define('APP_PATH', __DIR__);
 require APP_PATH . '/autoload.php';
+require APP_PATH . '/src/Core/Schedule/bootstrap_commands.php';
 
 $app = new App\Core\App(APP_PATH);
 
-$scheduler = new App\Core\Schedule\Scheduler();
-
-// 注册系统计划任务与命令行工具
-$scheduler->register(new App\Commands\TaskRunnerCommand());
-$scheduler->register(new App\Commands\ProxyProbeCommand());
-$scheduler->register(new App\Commands\DmSyncCommand());
-$scheduler->register(new App\Commands\WarmRecurringCommand());
-$scheduler->register(new App\Commands\AutoFollowDispatchCommand());
-$scheduler->register(new App\Commands\AiLeadDailyQuotaCommand());
-$scheduler->register(new App\Commands\AiLeadDmDispatchCommand());
-$scheduler->register(new App\Commands\AiLeadBackfillCommand());
-$scheduler->register(new App\Commands\AiLeadSyncStatsCommand());
-$scheduler->register(new App\Commands\PullDataAnalysisCommand());
-$scheduler->register(new App\Commands\EnvPackHealCommand());
+$scheduler = tkswarm_register_commands(new App\Core\Schedule\Scheduler());
 
 $exitCode = $scheduler->run($argv);
 exit($exitCode);

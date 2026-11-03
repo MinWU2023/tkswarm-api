@@ -1,17 +1,44 @@
-php artisan warm:recurring
+# ============================================================
+# TKSwarm 计划任务（推荐：只挂一条统一入口）
+# ============================================================
+# 服务器 crontab 只需：
+* * * * * cd /path/to/tkswarm-api && php schedule.php >> /var/log/tkswarm-schedule.log 2>&1
+#
+# 等价：php artisan schedule:run
+# 各子任务启停：运营控制台 /admin →「计划任务」
+# （仅 enabled=1 的任务会按下方 cron 表达式执行）
+#
+# ------------------------------------------------------------
+# 下列为历史「逐条挂载」语句（改用 schedule.php 后可全部删除）
+# ------------------------------------------------------------
+
+# 私信同步入队 → Node 执行 dm_sync
+* * * * * cd /path/to/tkswarm-api && php artisan dm:sync >> /var/log/tkswarm-dm-sync.log 2>&1
+
+# 增粉到期入队
+* * * * * cd /path/to/tkswarm-api && php artisan auto-follow:dispatch >> /var/log/tkswarm-auto-follow.log 2>&1
+
+# 拉取数据 AI 分析
+* * * * * cd /path/to/tkswarm-api && php artisan plan-task:pull-analysis >> /var/log/tkswarm-pull-analysis.log 2>&1
+
+# 常态化养号（每小时）
 0 * * * * cd /path/to/tkswarm-api && php artisan warm:recurring >> /var/log/tkswarm-warm-recurring.log 2>&1
 
-php artisan env-pack:heal
+# 环境包缺文件自愈（每 10 分钟）
 */10 * * * * cd /path/to/tkswarm-api && php artisan env-pack:heal >> /var/log/tkswarm-env-pack-heal.log 2>&1
 
-php artisan ai-lead:daily-quota
+# AI 拓客日额度（每日 0:05）
 5 0 * * * cd /path/to/tkswarm-api && php artisan ai-lead:daily-quota >> /var/log/tkswarm-ai-lead-quota.log 2>&1
 
-php artisan ai-lead:dm-dispatch
-* * * * * cd /path/to/tkswarm-api && php artisan ai-lead:dm-dispatch >> /var/log/tkswarm-ai-lead-dm.log 2>&1
+# AI 拓客私信入队（每 5 分钟）
+*/5 * * * * cd /path/to/tkswarm-api && php artisan ai-lead:dm-dispatch >> /var/log/tkswarm-ai-lead-dm.log 2>&1
 
-php artisan ai-lead:backfill-video-activation
+# ------------------------------------------------------------
+# 一次性 / 手工命令（不要挂 crontab）
+# ------------------------------------------------------------
 php artisan ai-lead:backfill-video-activation --limit=2000
-
-php artisan ai-lead:sync-stats
 php artisan ai-lead:sync-stats --limit=500
+php artisan proxy:probe
+php artisan task:run
+php artisan list
+php artisan schedule:run --job=auto_follow_dispatch --force

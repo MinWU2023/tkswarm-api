@@ -74,44 +74,19 @@ php migrate.php
 > **注意**：以 `migrations/` + `php migrate.php` 为准。根目录 `install.sql` 可能滞后，新环境请走安装向导或 migrate，勿单独依赖旧 `install.sql`。迁移 `011–014` 已改为幂等；旧聊天表结构由 `019_chat_schema_parity.sql` 升级到 `friend_uid` / `direction`。
 
 ### 3. CLI 计划任务调度 (Artisan & Commands)
-- 查看可用任务：
-  ```bash
-  php artisan list
-  ```
-- 扫描并执行排队任务（Task Runner）：
-  ```bash
-  php artisan task:run
-  ```
-- 全量代理连通性诊断与探测（Proxy Probe）：
-  ```bash
-  php artisan proxy:probe
-  ```
-- API 模式私信同步入队（按消息设置间隔，需本机 Node 执行 `dm_sync`）：
-  ```bash
-  php artisan dm:sync
-  ```
-  建议 cron 每分钟：`* * * * * cd /path/to/tkswarm-api && php artisan dm:sync`
-- 常态化自动养号（已成功/失败且到期则重新入队并挂账号总任务）：
-  ```bash
-  php artisan warm:recurring
-  ```
-  建议 cron 每小时：`0 * * * * cd /path/to/tkswarm-api && php artisan warm:recurring >> /var/log/tkswarm-warm-recurring.log 2>&1`
-- 环境包缺文件自愈（库中有绑定、服务器无 `.tgz`，且有关联用户、创建超过 10 分钟 → 推送关联用户静默上传/重建）：
-  ```bash
-  php artisan env-pack:heal
-  ```
-  建议 cron 每 10 分钟：`*/10 * * * * cd /path/to/tkswarm-api && php artisan env-pack:heal >> /var/log/tkswarm-env-pack-heal.log 2>&1`
-- AI 拓客私信调度（按账号视频激活权重与间隔独立推送，需 Node 执行 `ai_lead_dm`）：
-  ```bash
-  php artisan ai-lead:daily-quota      # 每日刷新日额度
-  php artisan ai-lead:dm-dispatch      # 每分钟扫描并入队待发私信
-  php artisan ai-lead:backfill-video-activation  # 存量：回填首次发视频时间
-  php artisan ai-lead:sync-stats       # 刷新任务列表中的待发/已发统计
-  ```
-  建议 cron：
-  - `5 0 * * *` → `ai-lead:daily-quota`
-  - `* * * * *` → `ai-lead:dm-dispatch`
-  详见 [`docs/ai-lead-optimization-checklist.md`](../docs/ai-lead-optimization-checklist.md)
+
+**推荐：crontab 只挂统一入口**（后台「计划任务」开关控制是否执行）：
+
+```bash
+* * * * * cd /path/to/tkswarm-api && php schedule.php >> /var/log/tkswarm-schedule.log 2>&1
+```
+
+等价：`php artisan schedule:run`。子任务清单、启停与「立即执行」见运营控制台 `/admin` → **计划任务**。完整旧版逐条 crontab 见根目录 `command.txt`。
+
+- 查看可用任务：`php artisan list`
+- 手动跑某个子任务：`php artisan schedule:run --job=auto_follow_dispatch --force`
+- 其它手工命令：`task:run` / `proxy:probe` / `ai-lead:backfill-video-activation` / `ai-lead:sync-stats`
+- AI 拓客说明见 [`docs/ai-lead-optimization-checklist.md`](../docs/ai-lead-optimization-checklist.md)
 
 ### 4. 翻译接口
 - `GET /api/translate/config` — 模式/配额（Key 脱敏）

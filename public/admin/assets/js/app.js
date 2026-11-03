@@ -15,6 +15,7 @@
     { path: '/env-installers', title: '环境安装包', icon: 'Download' },
     { path: '/help-categories', title: '帮助分类', icon: 'FolderOpened' },
     { path: '/help-docs', title: '帮助文档', icon: 'Document' },
+    { path: '/scheduled-jobs', title: '计划任务', icon: 'Timer' },
     { path: '/quick-ops', title: '快捷操作', icon: 'Operation' }
   ];
 
@@ -117,6 +118,7 @@
         { path: 'env-installers', component: AdminViews.EnvInstallersView, meta: { title: '环境安装包' } },
         { path: 'help-categories', component: AdminViews.HelpCategoriesView, meta: { title: '帮助分类' } },
         { path: 'help-docs', component: AdminViews.HelpDocsView, meta: { title: '帮助文档' } },
+        { path: 'scheduled-jobs', component: AdminViews.ScheduledJobsView, meta: { title: '计划任务' } },
         { path: 'quick-ops', component: AdminViews.QuickOpsView, meta: { title: '快捷操作' } },
         // 兼容旧书签
         { path: 'task-reset', redirect: '/quick-ops' },
