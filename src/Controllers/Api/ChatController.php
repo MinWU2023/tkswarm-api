@@ -7,6 +7,7 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
+use App\Services\AccountWorkBatchService;
 use App\Services\AgentChatService;
 use App\Services\DataScope;
 use App\Services\Translator;
@@ -835,49 +836,49 @@ class ChatController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        $account = DB::selectOne('SELECT id, username, browser_profile_id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        $account = DB::selectOne(
+            'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id FROM accounts WHERE id=?',
+            [(int)$id]
+        );
         if ($err = $this->assertAccountOwns($account)) {
             return $err;
         }
-        if (empty($account['browser_profile_id'])) {
-            return $this->error('账号尚未绑定浏览器环境', 422);
-        }
-        $existing = $this->findTaskByAccountId('sync_fans', (int)$id, ['queued', 'running'], 'chat.refresh-fans');
-        if ($existing) {
-            return $this->success([
-                'taskId' => (int)$existing['id'],
-                'status' => $existing['status'],
-                'accountId' => (int)$id,
-            ], '粉丝同步任务已在进行中');
+        $hasEnv = trim((string)($account['browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['tkswarm_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['linux_browser_profile_id'] ?? '')) !== '';
+        if (!$hasEnv) {
+            return $this->error('账号尚未绑定自研/服务器环境包', 422);
         }
         $maxPerRun = max(50, min(2000, (int)Translator::setting('fansSyncMaxPerRun', 500)));
-        $payload = json_encode([
-            'accountIds' => [(int)$id],
-            'maxPerRun' => $maxPerRun,
-            'listKind' => 'followers',
-            'source' => 'chat.refresh-fans',
-        ], JSON_UNESCAPED_UNICODE);
-        $name = '同步粉丝 #' . $id . ' ' . ($account['username'] ?? '');
+        // 坐席粉丝同步：直接入队服务器浏览器 cs_seat 分任务
         try {
-            DB::query(
-                "INSERT INTO tasks(name, type, status, total_count, payload, owner_id, created_at, updated_at)
-                 VALUES (?,?, 'queued', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                [$name, 'sync_fans', $payload, $this->writeOwnerId()]
+            $out = AccountWorkBatchService::enqueueItem(
+                (int)$id,
+                'sync_fans',
+                [
+                    'browserBackend' => 'linux',
+                    'browser_backend' => 'linux',
+                    'accountIds' => [(int)$id],
+                    'maxPerRun' => $maxPerRun,
+                    'listKind' => 'followers',
+                    'source' => 'chat.refresh-fans',
+                    'seatAction' => 'sync_fans',
+                ],
+                0,
+                $this->writeOwnerId()
             );
+            return $this->success([
+                'taskId' => (int)($out['item_id'] ?? 0),
+                'batchId' => (int)($out['batch_id'] ?? 0),
+                'itemId' => (int)($out['item_id'] ?? 0),
+                'status' => 'queued',
+                'accountId' => (int)$id,
+                'maxPerRun' => $maxPerRun,
+                'browserBackend' => 'linux',
+            ], '已推送粉丝同步到服务器浏览器，请保持 Node + Linux EL 在线');
         } catch (\Throwable $e) {
-            DB::query(
-                "INSERT INTO tasks(name, type, status, total_count, payload, created_at, updated_at)
-                 VALUES (?,?, 'queued', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                [$name, 'sync_fans', $payload]
-            );
+            return $this->error($e->getMessage(), 422);
         }
-        $taskId = (int)DB::getPdo()->lastInsertId();
-        return $this->success([
-            'taskId' => $taskId,
-            'status' => 'queued',
-            'accountId' => (int)$id,
-            'maxPerRun' => $maxPerRun,
-        ], '已创建粉丝列表同步任务，请保持本机 Node/自研浏览器在线');
     }
 
     public function refreshFansStatus(Request $request, string $id): Response
@@ -889,24 +890,40 @@ class ChatController extends Controller
             return $err;
         }
         $taskId = (int)$request->get('taskId', 0);
+        $localFollowers = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM chat_users WHERE account_id=? AND relation IN ('follower','mutual')",
+            [(int)$id]
+        )['c'] ?? 0);
+        // 优先查坐席 work item
         if ($taskId > 0) {
-            $task = DB::selectOne('SELECT * FROM tasks WHERE id=? AND type=?', [$taskId, 'sync_fans']);
-        } else {
-            $task = $this->findTaskByAccountId('sync_fans', (int)$id, null, 'chat.refresh-fans');
+            $item = AccountWorkBatchService::getWorkItem($taskId);
+            if ($item && (int)($item['account_id'] ?? 0) === (int)$id && ($item['task_type'] ?? '') === 'sync_fans') {
+                $result = json_decode((string)($item['result_json'] ?? '{}'), true) ?: [];
+                return $this->success([
+                    'accountId' => (int)$id,
+                    'taskId' => $taskId,
+                    'itemId' => $taskId,
+                    'batchId' => (int)($item['batch_id'] ?? 0),
+                    'status' => (string)($item['status'] ?? 'pending'),
+                    'progress' => $result['progress'] ?? null,
+                    'localFollowerFriends' => $localFollowers,
+                    'error' => (string)($item['error_message'] ?? ''),
+                ]);
+            }
         }
+        $task = $taskId > 0
+            ? DB::selectOne('SELECT * FROM tasks WHERE id=? AND type=?', [$taskId, 'sync_fans'])
+            : $this->findTaskByAccountId('sync_fans', (int)$id, null, 'chat.refresh-fans');
         if (!$task) {
             return $this->success([
                 'accountId' => (int)$id,
                 'status' => 'idle',
                 'progress' => null,
+                'localFollowerFriends' => $localFollowers,
             ]);
         }
         $payload = json_decode((string)($task['payload'] ?? '{}'), true) ?: [];
         $progress = $payload['fansProgress'] ?? null;
-        $localFollowers = (int)(DB::selectOne(
-            "SELECT COUNT(*) AS c FROM chat_users WHERE account_id=? AND relation IN ('follower','mutual')",
-            [(int)$id]
-        )['c'] ?? 0);
         return $this->success([
             'accountId' => (int)$id,
             'taskId' => (int)$task['id'],
@@ -923,49 +940,48 @@ class ChatController extends Controller
     {
         $this->ensureSchema();
         DataScope::ensureColumns();
-        $account = DB::selectOne('SELECT id, username, browser_profile_id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        $account = DB::selectOne(
+            'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id FROM accounts WHERE id=?',
+            [(int)$id]
+        );
         if ($err = $this->assertAccountOwns($account)) {
             return $err;
         }
-        if (empty($account['browser_profile_id'])) {
-            return $this->error('账号尚未绑定浏览器环境', 422);
-        }
-        $existing = $this->findTaskByAccountId('sync_fans', (int)$id, ['queued', 'running'], 'chat.refresh-following');
-        if ($existing) {
-            return $this->success([
-                'taskId' => (int)$existing['id'],
-                'status' => $existing['status'],
-                'accountId' => (int)$id,
-            ], '关注同步任务已在进行中');
+        $hasEnv = trim((string)($account['browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['tkswarm_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['linux_browser_profile_id'] ?? '')) !== '';
+        if (!$hasEnv) {
+            return $this->error('账号尚未绑定自研/服务器环境包', 422);
         }
         $maxPerRun = max(50, min(2000, (int)Translator::setting('fansSyncMaxPerRun', 500)));
-        $payload = json_encode([
-            'accountIds' => [(int)$id],
-            'maxPerRun' => $maxPerRun,
-            'listKind' => 'following',
-            'source' => 'chat.refresh-following',
-        ], JSON_UNESCAPED_UNICODE);
-        $name = '同步关注 #' . $id . ' ' . ($account['username'] ?? '');
         try {
-            DB::query(
-                "INSERT INTO tasks(name, type, status, total_count, payload, owner_id, created_at, updated_at)
-                 VALUES (?,?, 'queued', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                [$name, 'sync_fans', $payload, $this->writeOwnerId()]
+            $out = AccountWorkBatchService::enqueueItem(
+                (int)$id,
+                'sync_fans',
+                [
+                    'browserBackend' => 'linux',
+                    'browser_backend' => 'linux',
+                    'accountIds' => [(int)$id],
+                    'maxPerRun' => $maxPerRun,
+                    'listKind' => 'following',
+                    'source' => 'chat.refresh-following',
+                    'seatAction' => 'sync_following',
+                ],
+                0,
+                $this->writeOwnerId()
             );
+            return $this->success([
+                'taskId' => (int)($out['item_id'] ?? 0),
+                'batchId' => (int)($out['batch_id'] ?? 0),
+                'itemId' => (int)($out['item_id'] ?? 0),
+                'status' => 'queued',
+                'accountId' => (int)$id,
+                'maxPerRun' => $maxPerRun,
+                'browserBackend' => 'linux',
+            ], '已推送关注同步到服务器浏览器，请保持 Node + Linux EL 在线');
         } catch (\Throwable $e) {
-            DB::query(
-                "INSERT INTO tasks(name, type, status, total_count, payload, created_at, updated_at)
-                 VALUES (?,?, 'queued', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                [$name, 'sync_fans', $payload]
-            );
+            return $this->error($e->getMessage(), 422);
         }
-        $taskId = (int)DB::getPdo()->lastInsertId();
-        return $this->success([
-            'taskId' => $taskId,
-            'status' => 'queued',
-            'accountId' => (int)$id,
-            'maxPerRun' => $maxPerRun,
-        ], '已创建关注列表同步任务，请保持本机 Node/自研浏览器在线');
     }
 
     public function refreshFollowingStatus(Request $request, string $id): Response
@@ -977,24 +993,39 @@ class ChatController extends Controller
             return $err;
         }
         $taskId = (int)$request->get('taskId', 0);
+        $localFollowing = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM chat_users WHERE account_id=? AND relation IN ('following','mutual')",
+            [(int)$id]
+        )['c'] ?? 0);
         if ($taskId > 0) {
-            $task = DB::selectOne('SELECT * FROM tasks WHERE id=? AND type=?', [$taskId, 'sync_fans']);
-        } else {
-            $task = $this->findTaskByAccountId('sync_fans', (int)$id, null, 'chat.refresh-following');
+            $item = AccountWorkBatchService::getWorkItem($taskId);
+            if ($item && (int)($item['account_id'] ?? 0) === (int)$id && ($item['task_type'] ?? '') === 'sync_fans') {
+                $result = json_decode((string)($item['result_json'] ?? '{}'), true) ?: [];
+                return $this->success([
+                    'accountId' => (int)$id,
+                    'taskId' => $taskId,
+                    'itemId' => $taskId,
+                    'batchId' => (int)($item['batch_id'] ?? 0),
+                    'status' => (string)($item['status'] ?? 'pending'),
+                    'progress' => $result['progress'] ?? null,
+                    'localFollowingFriends' => $localFollowing,
+                    'error' => (string)($item['error_message'] ?? ''),
+                ]);
+            }
         }
+        $task = $taskId > 0
+            ? DB::selectOne('SELECT * FROM tasks WHERE id=? AND type=?', [$taskId, 'sync_fans'])
+            : $this->findTaskByAccountId('sync_fans', (int)$id, null, 'chat.refresh-following');
         if (!$task) {
             return $this->success([
                 'accountId' => (int)$id,
                 'status' => 'idle',
                 'progress' => null,
+                'localFollowingFriends' => $localFollowing,
             ]);
         }
         $payload = json_decode((string)($task['payload'] ?? '{}'), true) ?: [];
         $progress = $payload['followingProgress'] ?? $payload['fansProgress'] ?? null;
-        $localFollowing = (int)(DB::selectOne(
-            "SELECT COUNT(*) AS c FROM chat_users WHERE account_id=? AND relation IN ('following','mutual')",
-            [(int)$id]
-        )['c'] ?? 0);
         return $this->success([
             'accountId' => (int)$id,
             'taskId' => (int)$task['id'],
@@ -1220,6 +1251,138 @@ class ChatController extends Controller
             return $taskSource === '' || $taskSource === 'chat.refresh-fans';
         }
         return $taskSource === $source;
+    }
+
+    /**
+     * 客服坐席：入队服务器浏览器（linux / cs_seat）任务。
+     * action: login|logout|detect|send|dm_sync|sync_fans|sync_following
+     */
+    public function enqueueSeatTask(Request $request): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $action = strtolower(trim((string)$request->input('action', '')));
+        $account = DB::selectOne(
+            'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id, login_status FROM accounts WHERE id=? AND enabled=1',
+            [$accountId]
+        );
+        if ($err = $this->assertAccountOwns($account)) {
+            return $err;
+        }
+        $hasEnv = trim((string)($account['tkswarm_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['linux_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['browser_profile_id'] ?? '')) !== '';
+        if (!$hasEnv && !in_array($action, ['logout'], true)) {
+            return $this->error('账号尚未绑定自研/服务器环境包，请先在桌面自研创建并上传环境包', 422);
+        }
+
+        $map = [
+            'login' => 'cs_login',
+            'logout' => 'cs_logout',
+            'detect' => 'cs_detect',
+            'send' => 'dm_reply',
+            'dm_sync' => 'dm_sync',
+            'sync_fans' => 'sync_fans',
+            'sync_following' => 'sync_fans',
+            'refresh_fans' => 'sync_fans',
+            'refresh_following' => 'sync_fans',
+        ];
+        if (!isset($map[$action])) {
+            return $this->error('不支持的坐席动作：' . $action, 422);
+        }
+        $taskType = $map[$action];
+        $payload = [
+            'browserBackend' => 'linux',
+            'browser_backend' => 'linux',
+            'source' => 'chat.seat',
+            'seatAction' => $action,
+            'autoSend' => true,
+        ];
+        if ($taskType === 'dm_reply') {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            $content = trim((string)$request->input('content', ''));
+            if ($friendId < 1 || $content === '') {
+                return $this->error('发送私信需要 friendId 与 content', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            $payload['friendId'] = $friendId;
+            $payload['content'] = $content;
+            $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');
+            $payload['toUser'] = $payload['recipient'];
+            $payload['translated'] = trim((string)$request->input('translated', ''));
+        }
+        if ($taskType === 'sync_fans') {
+            $listKind = in_array($action, ['sync_following', 'refresh_following'], true) ? 'following' : 'followers';
+            $payload['listKind'] = $listKind;
+            $payload['maxPerRun'] = max(50, min(2000, (int)$request->input('maxPerRun', 500)));
+            $payload['accountIds'] = [$accountId];
+        }
+
+        try {
+            $out = AccountWorkBatchService::enqueueItem(
+                $accountId,
+                $taskType,
+                $payload,
+                0,
+                $this->writeOwnerId()
+            );
+            return $this->success([
+                'accountId' => $accountId,
+                'action' => $action,
+                'taskType' => $taskType,
+                'batchId' => (int)($out['batch_id'] ?? 0),
+                'itemId' => (int)($out['item_id'] ?? 0),
+                'browserBackend' => 'linux',
+                'batchScope' => 'cs_seat',
+            ], '已推送坐席任务到服务器浏览器队列');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /** 客服坐席：轮询分任务状态 */
+    public function seatItemStatus(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        $itemId = (int)$id;
+        $row = AccountWorkBatchService::getWorkItem($itemId);
+        if (!$row) {
+            return $this->error('坐席任务不存在', 404);
+        }
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)($row['account_id'] ?? 0)]);
+        if ($err = $this->assertAccountOwns($account)) {
+            return $err;
+        }
+        $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $result = json_decode((string)($row['result_json'] ?? '{}'), true);
+        if (!is_array($result)) {
+            $result = [];
+        }
+        return $this->success([
+            'itemId' => $itemId,
+            'batchId' => (int)($row['batch_id'] ?? 0),
+            'accountId' => (int)($row['account_id'] ?? 0),
+            'taskType' => (string)($row['task_type'] ?? ''),
+            'status' => (string)($row['status'] ?? ''),
+            'batchStatus' => (string)($row['batch_status'] ?? ''),
+            'errorMessage' => (string)($row['error_message'] ?? $row['batch_last_error'] ?? ''),
+            'loginStatus' => (string)($row['login_status'] ?? ''),
+            'result' => $result,
+            'payload' => [
+                'seatAction' => $payload['seatAction'] ?? '',
+                'listKind' => $payload['listKind'] ?? '',
+            ],
+        ]);
     }
 
     private function mapFriend(?array $row): ?array

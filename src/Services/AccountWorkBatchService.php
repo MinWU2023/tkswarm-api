@@ -34,9 +34,16 @@ class AccountWorkBatchService
     /**
      * 允许使用服务器浏览器（Linux 常驻 EL 核）的分任务类型：AI 拓客 + 客服坐席。
      */
-    public const SERVER_BROWSER_TASK_TYPES = ['ai_lead', 'ai_lead_dm', 'dm_sync', 'message', 'dm_reply'];
+    public const SERVER_BROWSER_TASK_TYPES = [
+        'ai_lead', 'ai_lead_dm',
+        'dm_sync', 'message', 'dm_reply', 'sync_fans',
+        'cs_login', 'cs_logout', 'cs_detect',
+    ];
     /** @var array<string,int> 越小越先执行 */
     public const TYPE_PRIORITY = [
+        'cs_login' => 2,        // 客服坐席：登录（会话前置）
+        'cs_detect' => 3,       // 客服坐席：检测登录
+        'cs_logout' => 4,       // 客服坐席：退出
         'modify_profile' => 5,  // 修改资料（紧接登录后）
         'publish' => 10,        // 发布视频
         'delete_video' => 20,   // 删除视频
@@ -60,6 +67,7 @@ class AccountWorkBatchService
 
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
+        'cs_login', 'cs_logout', 'cs_detect',
         'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'warm',
         'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile', 'env_pack_upload',
     ];
@@ -1217,9 +1225,16 @@ class AccountWorkBatchService
         if (!self::isBrowserType($taskType)) {
             throw new \InvalidArgumentException("不支持的任务类型: {$taskType}");
         }
-        // AI 拓客必须走独立总任务；坐席若指定 linux 也走独立 cs_seat
+        // AI 拓客必须走独立总任务
         if (in_array($taskType, ['ai_lead', 'ai_lead_dm'], true)) {
             return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId);
+        }
+        // 客服坐席动作默认走服务器浏览器（linux）+ cs_seat 独立总任务
+        if (in_array($taskType, ['cs_login', 'cs_logout', 'cs_detect'], true)) {
+            $payload['browserBackend'] = 'linux';
+            $payload['browser_backend'] = 'linux';
+            self::assertServerBrowserTask($taskType);
+            return self::enqueueDedicatedItem($accountId, $taskType, $payload, $taskRefId, $ownerId, self::BATCH_SCOPE_CS_SEAT);
         }
         $wantBackend = strtolower(trim((string)($payload['browserBackend'] ?? $payload['browser_backend'] ?? '')));
         if ($wantBackend === 'linux' && self::isCsSeatTaskType($taskType)) {
@@ -3256,6 +3271,9 @@ class AccountWorkBatchService
         $labels = [
             'ai_lead' => 'AI拓客',
             'ai_lead_dm' => 'AI拓客私信测试',
+            'cs_login' => '客服坐席登录',
+            'cs_logout' => '客服坐席退出',
+            'cs_detect' => '客服坐席检测登录',
             'warm' => '养号',
             'publish' => '发布视频',
             'comment_reply' => '回复评论',
@@ -3263,6 +3281,9 @@ class AccountWorkBatchService
             'pull_video_list' => '拉取视频列表',
             'auto_follow' => '自动增粉',
             'dm_reply' => '回复私信',
+            'dm_sync' => '同步私信',
+            'sync_fans' => '同步粉丝/关注',
+            'message' => '私信群发',
             'env_pack_upload' => '环境包补齐',
         ];
         $base = $labels[$type] ?? $type;
@@ -3352,7 +3373,32 @@ class AccountWorkBatchService
 
     public static function isCsSeatTaskType(string $taskType): bool
     {
-        return in_array(strtolower(trim($taskType)), ['dm_sync', 'message', 'dm_reply'], true);
+        return in_array(strtolower(trim($taskType)), [
+            'dm_sync', 'message', 'dm_reply', 'sync_fans',
+            'cs_login', 'cs_logout', 'cs_detect',
+        ], true);
+    }
+
+    /**
+     * 查询分任务状态（客服坐席轮询）。
+     * @return array<string,mixed>|null
+     */
+    public static function getWorkItem(int $itemId): ?array
+    {
+        self::ensureSchema();
+        if ($itemId < 1) {
+            return null;
+        }
+        $row = DB::selectOne(
+            "SELECT i.*, b.status AS batch_status, b.batch_scope, b.last_error AS batch_last_error,
+                    a.username, a.login_status
+             FROM account_work_items i
+             INNER JOIN account_work_batches b ON b.id=i.batch_id
+             LEFT JOIN accounts a ON a.id=i.account_id
+             WHERE i.id=?",
+            [$itemId]
+        );
+        return $row ?: null;
     }
 
     public static function isDedicatedBatchScope(string $scope): bool
