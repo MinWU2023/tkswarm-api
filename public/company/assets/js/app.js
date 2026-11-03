@@ -9,12 +9,18 @@
   var ElMessageBox = ElementPlus.ElMessageBox;
 
   var menuItems = [
-    { path: '/dashboard', title: '控制面板', icon: 'Odometer' },
+    {
+      path: '/panel',
+      title: '控制面板',
+      icon: 'Odometer',
+      children: [
+        { path: '/dashboard', title: '账号趋势', icon: 'TrendCharts' },
+        { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' }
+      ]
+    },
     { path: '/accounts', title: '账号列表', icon: 'User' },
     { path: '/videos', title: '视频数据', icon: 'VideoCamera' },
     { path: '/clues', title: '拓客线索', icon: 'Opportunity' },
-    { path: '/analytics', title: '数据看板', icon: 'DataAnalysis' },
-    { path: '/support', title: '客服消息', icon: 'ChatDotRound' },
     {
       path: '/ops',
       title: '视频运营',
@@ -23,7 +29,8 @@
         { path: '/ops/publish', title: '发布视频', icon: 'Upload' },
         { path: '/ops/comment-reply', title: '回复评论', icon: 'ChatLineSquare' },
         { path: '/ops/pull-video-list', title: '拉取视频列表', icon: 'List' },
-        { path: '/ops/pull-video-detail', title: '拉取视频详情', icon: 'Document' }
+        { path: '/ops/pull-video-detail', title: '拉取视频详情', icon: 'Document' },
+        { path: '/support', title: '客服消息', icon: 'ChatDotRound' }
       ]
     }
   ];
@@ -49,7 +56,8 @@
       },
       openMenus: function () {
         var p = this.$route.path || '';
-        if (p.indexOf('/ops') === 0) return ['/ops'];
+        if (p === '/dashboard' || p.indexOf('/analytics') === 0) return ['/panel'];
+        if (p.indexOf('/ops') === 0 || p === '/support') return ['/ops'];
         return [];
       }
     },
@@ -343,7 +351,7 @@
       component: AppLayout,
       redirect: '/dashboard',
       children: [
-        { path: 'dashboard', component: CompanyViews.DashboardView, meta: { title: '控制面板' } },
+        { path: 'dashboard', component: CompanyViews.DashboardView, meta: { title: '账号趋势' } },
         { path: 'accounts', component: CompanyViews.AccountsView, meta: { title: '账号列表' } },
         { path: 'accounts/:id', component: CompanyViews.AccountDetailView, meta: { title: '账号详情' } },
         { path: 'videos', component: CompanyViews.VideosView, meta: { title: '视频数据' } },

@@ -103,7 +103,8 @@
       var val = maxV - (span * g) / 4;
       children.push(h('line', {
         x1: padL, y1: y, x2: W - padR, y2: y,
-        class: 'cx-chart-grid', stroke: '#e8eef4', 'stroke-width': 1
+        class: 'cx-chart-grid', stroke: '#e8eef4', 'stroke-width': 1,
+        'vector-effect': 'non-scaling-stroke'
       }));
       children.push(h('text', {
         x: padL - 8, y: y + 4, 'text-anchor': 'end', class: 'cx-chart-axis',
@@ -120,15 +121,28 @@
     }
     active.forEach(function (s) {
       var pts = (s.values || []).map(function (v, idx) {
-        return (idx === 0 ? 'M' : 'L') + xAt(idx).toFixed(1) + ',' + yAt(v).toFixed(1);
+        return (idx === 0 ? 'M' : 'L') + xAt(idx).toFixed(2) + ',' + yAt(v).toFixed(2);
       }).join(' ');
       children.push(h('path', {
-        d: pts, fill: 'none', stroke: s.color, 'stroke-width': 2,
-        'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+        d: pts,
+        fill: 'none',
+        stroke: s.color,
+        'stroke-width': 1.25,
+        'stroke-linejoin': 'round',
+        'stroke-linecap': 'round',
+        'vector-effect': 'non-scaling-stroke',
+        class: 'cx-chart-line'
       }));
       (s.values || []).forEach(function (v, idx) {
         children.push(h('circle', {
-          cx: xAt(idx).toFixed(1), cy: yAt(v).toFixed(1), r: 2.5, fill: s.color
+          cx: xAt(idx).toFixed(2),
+          cy: yAt(v).toFixed(2),
+          r: 1.75,
+          fill: '#fff',
+          stroke: s.color,
+          'stroke-width': 1.25,
+          'vector-effect': 'non-scaling-stroke',
+          class: 'cx-chart-dot'
         }, [h('title', s.name + ' ' + labels[idx] + ': ' + v)]));
       });
     });
@@ -137,6 +151,7 @@
       h('svg', {
         class: 'cx-chart-svg',
         viewBox: '0 0 ' + W + ' ' + H,
+        preserveAspectRatio: 'xMidYMid meet',
         role: 'img'
       }, children),
       h('div', { class: 'cx-chart-legend' }, series.map(function (s) {

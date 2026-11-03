@@ -858,7 +858,15 @@ html { color-scheme: light; }
 .cx-chart-svg {
   width: 100%;
   height: auto;
+  max-height: 280px;
   display: block;
+  overflow: visible;
+  shape-rendering: geometricPrecision;
+}
+.cx-chart-svg .cx-chart-line,
+.cx-chart-svg .cx-chart-dot,
+.cx-chart-svg .cx-chart-grid {
+  vector-effect: non-scaling-stroke;
 }
 .cx-chart-legend {
   display: flex;
