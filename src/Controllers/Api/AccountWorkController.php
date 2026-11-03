@@ -113,7 +113,12 @@ class AccountWorkController extends Controller
             "SELECT b.*, a.username,
                     (SELECT COUNT(*) FROM account_work_items i WHERE i.batch_id=b.id) AS item_count,
                     (SELECT COUNT(*) FROM account_work_items i WHERE i.batch_id=b.id AND i.status='pending') AS pending_count,
-                    (SELECT COUNT(*) FROM account_work_items i WHERE i.batch_id=b.id AND i.status='paused') AS paused_count
+                    (SELECT COUNT(*) FROM account_work_items i WHERE i.batch_id=b.id AND i.status='paused') AS paused_count,
+                    (SELECT i.task_type FROM account_work_items i WHERE i.batch_id=b.id ORDER BY i.id ASC LIMIT 1) AS primary_task_type,
+                    (SELECT i.status FROM account_work_items i WHERE i.batch_id=b.id ORDER BY i.id DESC LIMIT 1) AS last_item_status,
+                    (SELECT i.id FROM account_work_items i WHERE i.batch_id=b.id ORDER BY i.id DESC LIMIT 1) AS last_item_id,
+                    (SELECT JSON_UNQUOTE(JSON_EXTRACT(i.payload_json, '$.seatAction'))
+                       FROM account_work_items i WHERE i.batch_id=b.id ORDER BY i.id ASC LIMIT 1) AS seat_action
              FROM account_work_batches b
              LEFT JOIN accounts a ON a.id=b.account_id
              WHERE {$sqlWhere}

@@ -867,14 +867,28 @@ class ChatController extends Controller
                 0,
                 $this->writeOwnerId()
             );
+            $batchId = (int)($out['batch_id'] ?? 0);
+            $itemId = (int)($out['item_id'] ?? 0);
+            if ($batchId > 0) {
+                AccountWorkBatchService::appendLog(
+                    $batchId,
+                    $itemId,
+                    "客服坐席：账号#{$id} 粉丝同步已入队服务器浏览器（linux / cs_seat）",
+                    'info',
+                    (int)$id,
+                    0,
+                    ['seatAction' => 'sync_fans', 'source' => 'chat.refresh-fans']
+                );
+            }
             return $this->success([
-                'taskId' => (int)($out['item_id'] ?? 0),
-                'batchId' => (int)($out['batch_id'] ?? 0),
-                'itemId' => (int)($out['item_id'] ?? 0),
+                'taskId' => $itemId,
+                'batchId' => $batchId,
+                'itemId' => $itemId,
                 'status' => 'queued',
                 'accountId' => (int)$id,
                 'maxPerRun' => $maxPerRun,
                 'browserBackend' => 'linux',
+                'batchScope' => 'cs_seat',
             ], '已推送粉丝同步到服务器浏览器，请保持 Node + Linux EL 在线');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);
@@ -970,10 +984,23 @@ class ChatController extends Controller
                 0,
                 $this->writeOwnerId()
             );
+            $batchId = (int)($out['batch_id'] ?? 0);
+            $itemId = (int)($out['item_id'] ?? 0);
+            if ($batchId > 0) {
+                AccountWorkBatchService::appendLog(
+                    $batchId,
+                    $itemId,
+                    "客服坐席：账号#{$id} 关注同步已入队服务器浏览器（linux / cs_seat）",
+                    'info',
+                    (int)$id,
+                    0,
+                    ['seatAction' => 'sync_following', 'source' => 'chat.refresh-following']
+                );
+            }
             return $this->success([
-                'taskId' => (int)($out['item_id'] ?? 0),
-                'batchId' => (int)($out['batch_id'] ?? 0),
-                'itemId' => (int)($out['item_id'] ?? 0),
+                'taskId' => $itemId,
+                'batchId' => $batchId,
+                'itemId' => $itemId,
                 'status' => 'queued',
                 'accountId' => (int)$id,
                 'maxPerRun' => $maxPerRun,
@@ -1331,12 +1358,25 @@ class ChatController extends Controller
                 0,
                 $this->writeOwnerId()
             );
+            $batchId = (int)($out['batch_id'] ?? 0);
+            $itemId = (int)($out['item_id'] ?? 0);
+            if ($batchId > 0) {
+                AccountWorkBatchService::appendLog(
+                    $batchId,
+                    $itemId,
+                    "客服坐席：账号#{$accountId} 动作={$action}/{$taskType} 已入队（linux / cs_seat）",
+                    'info',
+                    $accountId,
+                    0,
+                    ['seatAction' => $action, 'taskType' => $taskType]
+                );
+            }
             return $this->success([
                 'accountId' => $accountId,
                 'action' => $action,
                 'taskType' => $taskType,
-                'batchId' => (int)($out['batch_id'] ?? 0),
-                'itemId' => (int)($out['item_id'] ?? 0),
+                'batchId' => $batchId,
+                'itemId' => $itemId,
                 'browserBackend' => 'linux',
                 'batchScope' => 'cs_seat',
             ], '已推送坐席任务到服务器浏览器队列');
