@@ -16,6 +16,7 @@ use App\Services\DataScope;
 use App\Services\HumanVerifyService;
 use App\Services\PullCommentService;
 use App\Services\AutoFollowService;
+use App\Services\Github\GithubReleaseCdnService;
 use App\Services\SecretStore;
 use App\Services\WarmCommentService;
 
@@ -1459,9 +1460,253 @@ class NodeBridgeController extends Controller
             'cover_base64' => (string)($row['cover_base64'] ?? ''),
             'coverBase64' => (string)($row['cover_base64'] ?? ''),
             'localExists' => $existsOnPhp,
+            'cdn_url' => (string)($row['cdn_url'] ?? ''),
+            'cdnUrl' => (string)($row['cdn_url'] ?? ''),
+            'github_asset_url' => (string)($row['github_asset_url'] ?? ''),
+            'githubAssetUrl' => (string)($row['github_asset_url'] ?? ''),
+            'github_config_id' => (int)($row['github_config_id'] ?? 0),
             'downloadUrl' => '/api/local-materials/' . (int)$id . '/stream',
             'download_url' => '/api/local-materials/' . (int)$id . '/stream',
         ]);
+    }
+
+    /**
+     * 客户委托任务：供 Node 下载视频的元信息。
+     */
+    public function taskVideoCdnMeta(Request $request, string $id): Response
+    {
+        GithubReleaseCdnService::ensureSchema();
+        DataScope::ensureColumns();
+        $task = DB::selectOne('SELECT * FROM tasks WHERE id=?', [(int)$id]);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        $payload = json_decode((string)($task['payload'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        if (($payload['source'] ?? '') !== 'company_entrust' || (string)($task['type'] ?? '') !== 'publish') {
+            return $this->error('仅支持企业委托发布任务', 422);
+        }
+        $matId = (int)($payload['entrustMaterial']['id'] ?? (($payload['materialIds'][0] ?? 0)));
+        $mat = $matId > 0 ? DB::selectOne('SELECT * FROM materials WHERE id=?', [$matId]) : null;
+        $cdnUrl = (string)($payload['entrustMaterial']['cdnUrl'] ?? $payload['cdnUrl'] ?? '');
+        $githubAssetUrl = (string)($payload['entrustMaterial']['githubAssetUrl'] ?? $payload['githubAssetUrl'] ?? '');
+        if ($mat) {
+            if ($cdnUrl === '') {
+                $cdnUrl = (string)($mat['cdn_url'] ?? '');
+            }
+            if ($githubAssetUrl === '') {
+                $githubAssetUrl = (string)($mat['github_asset_url'] ?? '');
+            }
+        }
+        $fileName = (string)($payload['entrustMaterial']['fileName'] ?? ($mat['file_name'] ?? ''));
+        if ($fileName === '') {
+            $fileName = 'video-' . ($matId ?: (int)$id) . '.mp4';
+        }
+        $coverCdnUrl = (string)($payload['entrustMaterial']['coverCdnUrl'] ?? $payload['coverCdnUrl'] ?? '');
+        $coverGithubUrl = (string)($payload['entrustMaterial']['coverGithubAssetUrl'] ?? $payload['coverGithubAssetUrl'] ?? '');
+        $coverFileName = (string)($payload['entrustMaterial']['coverFileName'] ?? '');
+        if ($mat) {
+            if ($coverCdnUrl === '') {
+                $coverCdnUrl = (string)($mat['cover_cdn_url'] ?? '');
+            }
+            if ($coverGithubUrl === '') {
+                $coverGithubUrl = (string)($mat['cover_github_asset_url'] ?? '');
+            }
+            if ($coverFileName === '') {
+                $coverFileName = (string)($mat['cover_file_name'] ?? '');
+            }
+        }
+        if ($coverFileName === '') {
+            $coverFileName = 'cover-' . ($matId ?: (int)$id) . '.jpg';
+        }
+        $coverRemoteUrl = $coverCdnUrl !== '' ? $coverCdnUrl : $coverGithubUrl;
+        $remoteUrl = $cdnUrl !== '' ? $cdnUrl : $githubAssetUrl;
+        if ($remoteUrl === '') {
+            // 回退：若 PHP 本机仍有文件，让 Node 走中心库流
+            $localPhp = (string)($mat['file_path'] ?? '');
+            if ($localPhp !== '' && is_file($localPhp)) {
+                $remoteUrl = '';
+            } else {
+                return $this->error('任务没有可下载的 CDN/GitHub 链接，请确认企业上传时已启用 GitHub 配置', 422);
+            }
+        }
+        return $this->success([
+            'taskId' => (int)$id,
+            'materialId' => $matId,
+            'fileName' => $fileName,
+            'cdnUrl' => $cdnUrl,
+            'githubAssetUrl' => $githubAssetUrl,
+            'remoteUrl' => $remoteUrl,
+            'coverFileName' => $coverFileName,
+            'coverCdnUrl' => $coverCdnUrl,
+            'coverGithubAssetUrl' => $coverGithubUrl,
+            'coverRemoteUrl' => $coverRemoteUrl,
+            'githubConfigId' => (int)($mat['github_config_id'] ?? 0),
+            'localVideoPath' => (string)($payload['localVideoPath'] ?? ''),
+            'localCoverPath' => (string)($payload['localCoverPath'] ?? ''),
+            'videoPulled' => !empty($payload['videoPulled']),
+            'streamPath' => '/api/node/tasks/' . (int)$id . '/cdn-stream',
+            'coverStreamPath' => '/api/node/tasks/' . (int)$id . '/cdn-stream?asset=cover',
+            'hasPhpLocalFile' => $mat && is_file((string)($mat['file_path'] ?? '')),
+            'hasPhpCoverFile' => $mat && is_file((string)($mat['cover_file_path'] ?? '')),
+        ]);
+    }
+
+    /**
+     * 代理拉取 CDN/GitHub 视频/封面流（带 Token），供 Node 落盘。
+     * ?asset=cover 时拉封面，否则拉视频。
+     */
+    public function taskVideoCdnStream(Request $request, string $id): Response
+    {
+        GithubReleaseCdnService::ensureSchema();
+        $metaResp = $this->taskVideoCdnMeta($request, $id);
+        $metaJson = json_decode((string)$metaResp->getContent(), true);
+        if (!is_array($metaJson) || !($metaJson['success'] ?? false)) {
+            return $metaResp;
+        }
+        $data = is_array($metaJson['data'] ?? null) ? $metaJson['data'] : [];
+        $asset = strtolower(trim((string)$request->input('asset', 'video')));
+        $isCover = in_array($asset, ['cover', 'thumb', 'poster'], true);
+        $matId = (int)($data['materialId'] ?? 0);
+        $configId = (int)($data['githubConfigId'] ?? 0);
+
+        if ($isCover) {
+            $remoteUrl = (string)($data['coverRemoteUrl'] ?? '');
+            $fileName = (string)($data['coverFileName'] ?? 'cover.jpg');
+            $safeName = str_replace(['"', "\r", "\n"], '', $fileName);
+            if ($remoteUrl === '') {
+                $mat = $matId > 0 ? DB::selectOne('SELECT cover_file_path, cover_file_name FROM materials WHERE id=?', [$matId]) : null;
+                $path = (string)($mat['cover_file_path'] ?? '');
+                if ($path === '' || !is_file($path)) {
+                    return $this->error('没有可流出的封面文件', 404);
+                }
+                $name = str_replace(['"', "\r", "\n"], '', (string)($mat['cover_file_name'] ?? basename($path)));
+                $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+                $mime = match ($ext) {
+                    'png' => 'image/png',
+                    'webp' => 'image/webp',
+                    default => 'image/jpeg',
+                };
+                return Response::file($path, 200, [
+                    'Content-Type' => $mime,
+                    'Content-Length' => (string)filesize($path),
+                    'Content-Disposition' => 'attachment; filename="' . $name . '"',
+                    'X-TkSwarm-Source' => 'php-local-cover',
+                ]);
+            }
+            $tmp = GithubReleaseCdnService::downloadToTemp($remoteUrl, $configId);
+            if (empty($tmp['ok']) || empty($tmp['path']) || !is_file((string)$tmp['path'])) {
+                return $this->error((string)($tmp['error'] ?? '封面 CDN 下载失败'), 502);
+            }
+            return Response::file((string)$tmp['path'], 200, [
+                'Content-Type' => 'application/octet-stream',
+                'Content-Length' => (string)filesize((string)$tmp['path']),
+                'Content-Disposition' => 'attachment; filename="' . $safeName . '"',
+                'X-TkSwarm-Source' => 'github-cdn-cover',
+            ]);
+        }
+
+        $remoteUrl = (string)($data['remoteUrl'] ?? '');
+        $fileName = (string)($data['fileName'] ?? 'video.mp4');
+        $safeName = str_replace(['"', "\r", "\n"], '', $fileName);
+
+        // 无远程链时回退 PHP 本机素材文件
+        if ($remoteUrl === '') {
+            $mat = $matId > 0 ? DB::selectOne('SELECT file_path, file_name, mime_type FROM materials WHERE id=?', [$matId]) : null;
+            $path = (string)($mat['file_path'] ?? '');
+            if ($path === '' || !is_file($path)) {
+                return $this->error('没有可流出的视频文件', 404);
+            }
+            $mime = (string)($mat['mime_type'] ?? 'video/mp4');
+            $name = str_replace(['"', "\r", "\n"], '', (string)($mat['file_name'] ?? basename($path)));
+            return Response::file($path, 200, [
+                'Content-Type' => $mime,
+                'Content-Length' => (string)filesize($path),
+                'Content-Disposition' => 'attachment; filename="' . $name . '"',
+                'X-TkSwarm-Source' => 'php-local',
+            ]);
+        }
+
+        $tmp = GithubReleaseCdnService::downloadToTemp($remoteUrl, $configId);
+        if (empty($tmp['ok']) || empty($tmp['path']) || !is_file((string)$tmp['path'])) {
+            return $this->error((string)($tmp['error'] ?? 'CDN 下载失败'), 502);
+        }
+        // Response::file 发送后进程 exit；临时文件交 OS 回收（或下次清理）
+        return Response::file((string)$tmp['path'], 200, [
+            'Content-Type' => 'application/octet-stream',
+            'Content-Length' => (string)filesize((string)$tmp['path']),
+            'Content-Disposition' => 'attachment; filename="' . $safeName . '"',
+            'X-TkSwarm-Source' => 'github-cdn',
+        ]);
+    }
+
+    /**
+     * Node 下载完成后回写本机视频/封面路径到任务 payload + materials。
+     */
+    public function markTaskVideoDownloaded(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        GithubReleaseCdnService::ensureSchema();
+        $task = DB::selectOne('SELECT * FROM tasks WHERE id=?', [(int)$id]);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        $localPath = trim((string)$request->input('localVideoPath', $request->input('local_video_path', '')));
+        $localCoverPath = trim((string)$request->input('localCoverPath', $request->input('local_cover_path', '')));
+        $skipped = filter_var($request->input('skipped', false), FILTER_VALIDATE_BOOLEAN);
+        $coverSkipped = filter_var($request->input('coverSkipped', $request->input('cover_skipped', false)), FILTER_VALIDATE_BOOLEAN);
+        if ($localPath === '') {
+            return $this->error('缺少 localVideoPath', 422);
+        }
+        $payload = json_decode((string)($task['payload'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $payload['localVideoPath'] = $localPath;
+        $payload['videoPulled'] = true;
+        $payload['videoDownloadedAt'] = date('Y-m-d H:i:s');
+        $payload['videoDownloadSkipped'] = $skipped;
+        if ($localCoverPath !== '') {
+            $payload['localCoverPath'] = $localCoverPath;
+            $payload['coverDownloadedAt'] = date('Y-m-d H:i:s');
+            $payload['coverDownloadSkipped'] = $coverSkipped;
+        }
+        if (!isset($payload['entrustMaterial']) || !is_array($payload['entrustMaterial'])) {
+            $payload['entrustMaterial'] = [];
+        }
+        $payload['entrustMaterial']['localVideoPath'] = $localPath;
+        if ($localCoverPath !== '') {
+            $payload['entrustMaterial']['localCoverPath'] = $localCoverPath;
+        }
+        DB::query(
+            'UPDATE tasks SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [json_encode($payload, JSON_UNESCAPED_UNICODE), (int)$id]
+        );
+        $matId = (int)($payload['entrustMaterial']['id'] ?? (($payload['materialIds'][0] ?? 0)));
+        if ($matId > 0) {
+            if ($localCoverPath !== '') {
+                DB::query(
+                    'UPDATE materials SET file_path=?, cover_file_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$localPath, $localCoverPath, $matId]
+                );
+            } else {
+                DB::query(
+                    'UPDATE materials SET file_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$localPath, $matId]
+                );
+            }
+        }
+        return $this->success([
+            'taskId' => (int)$id,
+            'materialId' => $matId,
+            'localVideoPath' => $localPath,
+            'localCoverPath' => $localCoverPath,
+            'skipped' => $skipped,
+            'coverSkipped' => $coverSkipped,
+            'videoPulled' => true,
+        ], $skipped ? '本地已存在，已跳过下载并回写路径' : '已回写本机视频/封面路径');
     }
 
     /** 发布成功后由 Node 回调：标记素材已发布并关联账号（测试/正式路径均可） */

@@ -1386,6 +1386,63 @@ html { color-scheme: light; }
   align-items: center;
   gap: 10px;
 }
+.publish-hint {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f0f7ff;
+  border: 1px solid #d6e8ff;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.publish-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #e8f1ff;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.publish-cover-box { margin-top: 4px; }
+.publish-cover-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+.publish-scrub {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+}
+.publish-cover-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.publish-cover-preview img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  display: block;
+}
+.publish-cover-empty {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  color: #94a3b8;
+  background: #f8fafc;
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .publish-cover-grid { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 1280px) {
   .stat-grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }

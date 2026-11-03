@@ -85,6 +85,8 @@ class UserSettingsService
             'messageSyncInterval' => 10,
             /** 本机自研浏览器任务并发（每登录用户独立；Node 执行器读取） */
             'taskConcurrency' => 6,
+            /** Node 运营专员：客户委托视频本地下载目录（绝对路径） */
+            'video_download_dir' => '',
             'privateMessageSync' => true,
             /** 系统级：关闭后 cron dm:sync 不再为任何账号入队 */
             'dmSyncDispatchEnabled' => true,

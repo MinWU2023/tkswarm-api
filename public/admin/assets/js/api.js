@@ -109,6 +109,12 @@
     },
     publishEnvInstaller: function (id) { return request('/admin/api/env-installers/' + id + '/publish', { method: 'POST', body: {} }); },
     recommendEnvInstaller: function (id) { return request('/admin/api/env-installers/' + id + '/recommended', { method: 'POST', body: {} }); },
-    deleteEnvInstaller: function (id) { return request('/admin/api/env-installers/' + id, { method: 'DELETE' }); }
+    deleteEnvInstaller: function (id) { return request('/admin/api/env-installers/' + id, { method: 'DELETE' }); },
+
+    githubConfigs: function () { return request('/admin/api/github-configs', { method: 'GET' }); },
+    createGithubConfig: function (body) { return request('/admin/api/github-configs', { method: 'POST', body: body }); },
+    updateGithubConfig: function (id, body) { return request('/admin/api/github-configs/' + id, { method: 'PUT', body: body }); },
+    enableGithubConfig: function (id) { return request('/admin/api/github-configs/' + id + '/enable', { method: 'POST', body: {} }); },
+    deleteGithubConfig: function (id) { return request('/admin/api/github-configs/' + id, { method: 'DELETE' }); }
   };
 })(window);

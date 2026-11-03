@@ -48,6 +48,7 @@ use App\Controllers\Admin\VersionManageController;
 use App\Controllers\Admin\HelpManageController;
 use App\Controllers\Admin\EnvInstallerManageController;
 use App\Controllers\Admin\ScheduleManageController;
+use App\Controllers\Admin\GithubConfigManageController;
 use App\Controllers\Company\PortalController as CompanyPortalController;
 use App\Controllers\Company\AuthController as CompanyAuthController;
 use App\Controllers\Company\PortalApiController as CompanyPortalApiController;
@@ -558,6 +559,9 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/node/monitor/config', NodeBridgeController::class . '@monitorConfig');
     Router::get('/api/node/materials/{id}', NodeBridgeController::class . '@materialForNode');
     Router::post('/api/node/materials/{id}/mark-published', NodeBridgeController::class . '@markMaterialPublished');
+    Router::get('/api/node/tasks/{id}/cdn-meta', NodeBridgeController::class . '@taskVideoCdnMeta');
+    Router::get('/api/node/tasks/{id}/cdn-stream', NodeBridgeController::class . '@taskVideoCdnStream');
+    Router::post('/api/node/tasks/{id}/mark-video-downloaded', NodeBridgeController::class . '@markTaskVideoDownloaded');
     Router::get('/api/node/accounts/bindings', NodeBridgeController::class . '@accountBindings');
     Router::get('/api/node/accounts/by-profile/{profileId}', NodeBridgeController::class . '@accountByProfile');
     Router::get('/api/node/browser-profiles/{profileId}/proxy-bundle', NodeBridgeController::class . '@profileProxyBundle');
@@ -680,4 +684,10 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/admin/api/scheduled-jobs', ScheduleManageController::class . '@list');
     Router::put('/admin/api/scheduled-jobs/{key}', ScheduleManageController::class . '@update');
     Router::post('/admin/api/scheduled-jobs/{key}/run', ScheduleManageController::class . '@run');
+
+    Router::get('/admin/api/github-configs', GithubConfigManageController::class . '@list');
+    Router::post('/admin/api/github-configs', GithubConfigManageController::class . '@create');
+    Router::put('/admin/api/github-configs/{id}', GithubConfigManageController::class . '@update');
+    Router::post('/admin/api/github-configs/{id}/enable', GithubConfigManageController::class . '@enable');
+    Router::delete('/admin/api/github-configs/{id}', GithubConfigManageController::class . '@delete');
 });

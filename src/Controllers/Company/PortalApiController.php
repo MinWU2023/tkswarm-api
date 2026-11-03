@@ -11,6 +11,7 @@ use App\Services\AccountWorkBatchService;
 use App\Services\AiLeadExecutionService;
 use App\Services\CompanyService;
 use App\Services\DataScope;
+use App\Services\Github\GithubReleaseCdnService;
 use App\Services\PullCommentService;
 use App\Services\TikTokVideoScreenshotService;
 
@@ -1166,7 +1167,7 @@ class PortalApiController extends Controller
         }
 
         if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            return $this->error('请上传视频文件', 422);
+            return $this->error('请上传视频文件（仅支持 MP4 / MOV / WebM，最大 60MB）', 422);
         }
 
         $title = trim((string)$request->input('title', $request->input('publishTitle', '')));
@@ -1186,6 +1187,58 @@ class PortalApiController extends Controller
             return $this->error('素材入库失败', 500);
         }
 
+        $coverInfo = $this->storeCompanyCover($_FILES['cover'] ?? null, $materialId, $userId);
+        if ($coverInfo instanceof Response) {
+            return $coverInfo;
+        }
+
+        $cdnUrl = '';
+        $githubAssetUrl = '';
+        $coverCdnUrl = (string)($coverInfo['cover_cdn_url'] ?? '');
+        $coverGithubUrl = (string)($coverInfo['cover_github_asset_url'] ?? '');
+        $cdnNote = '';
+        try {
+            GithubReleaseCdnService::ensureSchema();
+            $uploaded = GithubReleaseCdnService::uploadMaterialFile(
+                (string)($mat['file_path'] ?? ''),
+                (string)($mat['file_name'] ?? ''),
+                $materialId
+            );
+            if ($uploaded) {
+                $cdnUrl = (string)($uploaded['cdnUrl'] ?? '');
+                $githubAssetUrl = (string)($uploaded['githubAssetUrl'] ?? '');
+                DB::query(
+                    'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$cdnUrl, $githubAssetUrl, (int)($uploaded['configId'] ?? 0), $materialId]
+                );
+                $mat['cdn_url'] = $cdnUrl;
+                $mat['github_asset_url'] = $githubAssetUrl;
+            } else {
+                $cdnNote = '未配置启用的 GitHub CDN，视频仅保存在服务器本地';
+            }
+
+            $coverPath = (string)($coverInfo['cover_file_path'] ?? '');
+            if ($coverPath !== '' && is_file($coverPath)) {
+                $coverUp = GithubReleaseCdnService::uploadMaterialFile(
+                    $coverPath,
+                    (string)($coverInfo['cover_file_name'] ?? ('cover-' . $materialId . '.jpg')),
+                    $materialId
+                );
+                if ($coverUp) {
+                    $coverCdnUrl = (string)($coverUp['cdnUrl'] ?? '');
+                    $coverGithubUrl = (string)($coverUp['githubAssetUrl'] ?? '');
+                    DB::query(
+                        'UPDATE materials SET cover_cdn_url=?, cover_github_asset_url=?, github_config_id=COALESCE(NULLIF(github_config_id,0),?), updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                        [$coverCdnUrl, $coverGithubUrl, (int)($coverUp['configId'] ?? 0), $materialId]
+                    );
+                } elseif ($cdnNote === '') {
+                    $cdnNote = '未配置启用的 GitHub CDN，封面仅保存在服务器本地';
+                }
+            }
+        } catch (\Throwable $e) {
+            $cdnNote = 'GitHub 上传失败：' . $e->getMessage();
+        }
+
         CompanyService::ensureSchema();
         $companyIds = CompanyService::companyIdsOfUser($userId);
         $payload = [
@@ -1198,6 +1251,9 @@ class PortalApiController extends Controller
             'publishCaption' => $caption,
             'pushChannel' => 'tkswarm',
             'hashtags' => '',
+            'videoPulled' => false,
+            'localVideoPath' => '',
+            'localCoverPath' => '',
             'entrustCompanyIds' => $companyIds,
             'entrustBy' => [
                 'userId' => $userId,
@@ -1213,6 +1269,11 @@ class PortalApiController extends Controller
                 'id' => $materialId,
                 'name' => (string)($mat['name'] ?? ''),
                 'fileName' => (string)($mat['file_name'] ?? ''),
+                'cdnUrl' => $cdnUrl,
+                'githubAssetUrl' => $githubAssetUrl,
+                'coverFileName' => (string)($coverInfo['cover_file_name'] ?? ''),
+                'coverCdnUrl' => $coverCdnUrl,
+                'coverGithubAssetUrl' => $coverGithubUrl,
             ],
         ];
 
@@ -1231,11 +1292,23 @@ class PortalApiController extends Controller
         $taskId = (int)DB::getPdo()->lastInsertId();
         $row = DB::selectOne('SELECT * FROM tasks WHERE id=?', [$taskId]);
 
+        $msg = '委托任务已创建，等待运营处理';
+        if ($cdnUrl !== '') {
+            $msg .= '（已上传 GitHub CDN）';
+        } elseif ($cdnNote !== '') {
+            $msg .= '（' . $cdnNote . '）';
+        }
+
         return $this->success([
             'task' => $this->mapCompanyPublishTask($row ?: ['id' => $taskId, 'type' => 'publish', 'payload' => json_encode($payload), 'status' => 'draft', 'name' => $taskName]),
             'materialId' => $materialId,
             'accountId' => $accountId,
-        ], '委托任务已创建，等待运营处理');
+            'cdnUrl' => $cdnUrl,
+            'githubAssetUrl' => $githubAssetUrl,
+            'coverCdnUrl' => $coverCdnUrl,
+            'coverGithubAssetUrl' => $coverGithubUrl,
+            'cdnNote' => $cdnNote,
+        ], $msg);
     }
 
     /** 回复评论模板（固定/AI，含内置） */
@@ -2017,22 +2090,38 @@ class PortalApiController extends Controller
         ];
     }
 
+    /** TikTok / YouTube 共同支持的视频格式 */
+    private const COMPANY_VIDEO_EXTS = ['mp4', 'mov', 'webm'];
+    private const COMPANY_VIDEO_MAX_BYTES = 60 * 1024 * 1024;
+    private const COMPANY_COVER_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
+    private const COMPANY_COVER_MAX_BYTES = 5 * 1024 * 1024;
+
     /**
      * @param array<string,mixed> $file
      * @return array<string,mixed>|Response
      */
     private function storeCompanyMaterial(array $file, string $name, int $ownerId)
     {
+        GithubReleaseCdnService::ensureSchema();
         $origName = (string)($file['name'] ?? 'video.mp4');
         if (!mb_check_encoding($origName, 'UTF-8')) {
             $origName = mb_convert_encoding($origName, 'UTF-8', 'ISO-8859-1');
         }
-        $mime = (string)($file['type'] ?? '');
+        $mime = strtolower((string)($file['type'] ?? ''));
         $ext = strtolower(ltrim((string)pathinfo($origName, PATHINFO_EXTENSION), '.'));
-        if ($mime !== '' && !str_starts_with($mime, 'video/') && !in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true)) {
-            return $this->error('只能上传视频文件', 415);
+        if ($ext === 'm4v') {
+            $ext = 'mp4';
+        }
+        if (!in_array($ext, self::COMPANY_VIDEO_EXTS, true)) {
+            return $this->error('视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM（最大 60MB）', 415);
         }
         $size = (int)($file['size'] ?? 0);
+        if ($size <= 0) {
+            return $this->error('视频文件无效', 422);
+        }
+        if ($size > self::COMPANY_VIDEO_MAX_BYTES) {
+            return $this->error('视频过大：单文件最大 60MB（当前约 ' . round($size / 1048576, 1) . 'MB）', 413);
+        }
         $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
         $dir = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . 'materials';
         if (!is_dir($dir)) {
@@ -2048,8 +2137,6 @@ class PortalApiController extends Controller
         $mimeFinal = $mime !== '' ? $mime : match ($ext) {
             'webm' => 'video/webm',
             'mov' => 'video/quicktime',
-            'avi' => 'video/x-msvideo',
-            'mkv' => 'video/x-matroska',
             default => 'video/mp4',
         };
         DB::query(
@@ -2062,5 +2149,68 @@ class PortalApiController extends Controller
         );
         $id = (int)DB::getPdo()->lastInsertId();
         return DB::selectOne('SELECT * FROM materials WHERE id=?', [$id]) ?: ['id' => $id, 'name' => $display, 'file_name' => $origName];
+    }
+
+    /**
+     * 封面：必填（逐帧截取或本地上传），入库后供 GitHub 上传与 Node 下载。
+     *
+     * @param array<string,mixed>|null $file
+     * @return array<string,mixed>|Response
+     */
+    private function storeCompanyCover(?array $file, int $materialId, int $ownerId)
+    {
+        GithubReleaseCdnService::ensureSchema();
+        if ($file === null || empty($file['tmp_name']) || (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK)) {
+            return $this->error('请设置封面：可拖动进度条截取当前帧，或上传 JPG/PNG/WebP 图片', 422);
+        }
+        $origName = (string)($file['name'] ?? 'cover.jpg');
+        if (!mb_check_encoding($origName, 'UTF-8')) {
+            $origName = mb_convert_encoding($origName, 'UTF-8', 'ISO-8859-1');
+        }
+        $ext = strtolower(ltrim((string)pathinfo($origName, PATHINFO_EXTENSION), '.'));
+        if ($ext === 'jpeg') {
+            $ext = 'jpg';
+        }
+        if (!in_array($ext, self::COMPANY_COVER_EXTS, true)) {
+            return $this->error('封面仅支持 JPG / PNG / WebP', 415);
+        }
+        $size = (int)($file['size'] ?? 0);
+        if ($size <= 0 || $size > self::COMPANY_COVER_MAX_BYTES) {
+            return $this->error('封面过大或无效（最大 5MB）', 413);
+        }
+        $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
+        $dir = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . 'materials' . DIRECTORY_SEPARATOR . 'covers';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+        $destName = 'cover-m' . $materialId . '-' . time() . '-' . bin2hex(random_bytes(3)) . '.' . $ext;
+        $dest = $dir . DIRECTORY_SEPARATOR . $destName;
+        if (!move_uploaded_file((string)$file['tmp_name'], $dest)) {
+            return $this->error('封面保存失败');
+        }
+        $mime = match ($ext) {
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            default => 'image/jpeg',
+        };
+        $b64 = '';
+        try {
+            $raw = file_get_contents($dest);
+            if ($raw !== false && strlen($raw) < 900000) {
+                $b64 = 'data:' . $mime . ';base64,' . base64_encode($raw);
+            }
+        } catch (\Throwable $e) {
+        }
+        DB::query(
+            'UPDATE materials SET cover_file_path=?, cover_file_name=?, cover_base64=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$dest, $origName !== '' ? $origName : $destName, $b64, $materialId]
+        );
+        return [
+            'cover_file_path' => $dest,
+            'cover_file_name' => $origName !== '' ? $origName : $destName,
+            'cover_cdn_url' => '',
+            'cover_github_asset_url' => '',
+            'owner_id' => $ownerId,
+        ];
     }
 }

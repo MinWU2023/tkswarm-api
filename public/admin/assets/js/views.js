@@ -1851,6 +1851,236 @@
     }
   };
 
+  var GithubConfigsView = {
+    name: 'GithubConfigsView',
+    data: function () {
+      return {
+        loading: false,
+        rows: [],
+        dialog: false,
+        editing: null,
+        form: {
+          name: '', owner: '', repo: '', token: '', tagPrefix: 'videos',
+          urlTemplate: 'https://github.com/{owner}/{repo}/releases/download/{tag}/{name}',
+          cdnPrefix: '', notes: '', enableNow: false
+        }
+      };
+    },
+    mounted: function () { this.load(); },
+    methods: {
+      load: async function () {
+        this.loading = true;
+        try {
+          var data = await AdminAPI.githubConfigs();
+          this.rows = (data && data.items) || [];
+        } catch (e) { ElMessage.error(e.message); }
+        finally { this.loading = false; }
+      },
+      openCreate: function () {
+        this.editing = null;
+        this.form = {
+          name: '', owner: '', repo: '', token: '', tagPrefix: 'videos',
+          urlTemplate: 'https://github.com/{owner}/{repo}/releases/download/{tag}/{name}',
+          cdnPrefix: '', notes: '', enableNow: true
+        };
+        this.dialog = true;
+      },
+      openEdit: function (row) {
+        this.editing = row;
+        this.form = {
+          name: row.name || '',
+          owner: row.owner || '',
+          repo: row.repo || '',
+          token: '',
+          tagPrefix: row.tagPrefix || 'videos',
+          urlTemplate: row.urlTemplate || 'https://github.com/{owner}/{repo}/releases/download/{tag}/{name}',
+          cdnPrefix: row.cdnPrefix || '',
+          notes: row.notes || '',
+          enableNow: false
+        };
+        this.dialog = true;
+      },
+      save: async function () {
+        try {
+          if (!this.form.owner || !this.form.repo) {
+            ElMessage.warning('请填写 owner 与 repo');
+            return;
+          }
+          if (!this.editing && !this.form.token) {
+            ElMessage.warning('请填写 GitHub Token');
+            return;
+          }
+          var body = {
+            name: this.form.name,
+            owner: this.form.owner,
+            repo: this.form.repo,
+            token: this.form.token,
+            tagPrefix: this.form.tagPrefix,
+            urlTemplate: this.form.urlTemplate,
+            cdnPrefix: this.form.cdnPrefix,
+            notes: this.form.notes,
+            enableNow: !!this.form.enableNow
+          };
+          if (this.editing) await AdminAPI.updateGithubConfig(this.editing.id, body);
+          else await AdminAPI.createGithubConfig(body);
+          ElMessage.success('已保存');
+          this.dialog = false;
+          this.load();
+        } catch (e) { ElMessage.error(e.message); }
+      },
+      enable: async function (row) {
+        try {
+          await AdminAPI.enableGithubConfig(row.id);
+          ElMessage.success('已设为当前上传启用项');
+          this.load();
+        } catch (e) { ElMessage.error(e.message); }
+      },
+      remove: async function (row) {
+        try {
+          await ElMessageBox.confirm('确定删除「' + (row.name || (row.owner + '/' + row.repo)) + '」吗？', '确认', { type: 'warning' });
+          await AdminAPI.deleteGithubConfig(row.id);
+          ElMessage.success('已删除');
+          this.load();
+        } catch (e) { if (e !== 'cancel') ElMessage.error(e.message || String(e)); }
+      }
+    },
+    render: function () {
+      var self = this;
+      return h('div', [
+        pageHead('GitHub配置', '配置多个 GitHub Release 仓库；企业上传视频时使用「启用」项自动上传并生成分发链接', [
+          h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openCreate(); } }, function () { return '新建配置'; })
+        ]),
+        h('div', { class: 'panel' }, [
+          h(ElementPlus.ElTable, { data: self.rows, stripe: true, vLoading: self.loading, style: 'width:100%' }, function () {
+            return [
+              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 60 }),
+              h(ElementPlus.ElTableColumn, { prop: 'name', label: '名称', minWidth: 120 }),
+              h(ElementPlus.ElTableColumn, { label: '仓库', minWidth: 160 }, {
+                default: function (scope) {
+                  return (scope.row.owner || '') + '/' + (scope.row.repo || '');
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'tagPrefix', label: 'Tag前缀', width: 110 }),
+              h(ElementPlus.ElTableColumn, { label: 'CDN前缀', minWidth: 140 }, {
+                default: function (scope) {
+                  return scope.row.cdnPrefix || h('span', { class: 'text-slate-400' }, '直链');
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { label: '启用', width: 90 }, {
+                default: function (scope) {
+                  return scope.row.isEnabled
+                    ? h(ElementPlus.ElTag, { type: 'success', size: 'small' }, function () { return '当前'; })
+                    : h('span', { class: 'text-slate-300' }, '-');
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { label: 'Token', width: 80 }, {
+                default: function (scope) {
+                  return scope.row.hasToken ? '已配置' : h('span', { class: 'text-red-400' }, '无');
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { label: '操作', width: 220, fixed: 'right' }, {
+                default: function (scope) {
+                  var row = scope.row;
+                  return h('div', { class: 'flex flex-wrap gap-1' }, [
+                    h(ElementPlus.ElButton, { size: 'small', link: true, onClick: function () { self.openEdit(row); } }, function () { return '编辑'; }),
+                    !row.isEnabled
+                      ? h(ElementPlus.ElButton, { size: 'small', link: true, type: 'primary', onClick: function () { self.enable(row); } }, function () { return '设为启用'; })
+                      : null,
+                    h(ElementPlus.ElButton, { size: 'small', link: true, type: 'danger', onClick: function () { self.remove(row); } }, function () { return '删除'; })
+                  ]);
+                }
+              })
+            ];
+          })
+        ]),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.dialog,
+          'onUpdate:modelValue': function (v) { self.dialog = v; },
+          title: self.editing ? '编辑 GitHub 配置' : '新建 GitHub 配置',
+          width: '640px'
+        }, {
+          default: function () {
+            return h('div', { class: 'form-grid', style: 'display:grid;gap:12px' }, [
+              h(ElementPlus.ElFormItem, { label: '名称' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.name,
+                  'onUpdate:modelValue': function (v) { self.form.name = v; },
+                  placeholder: '可选，默认 owner/repo'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'Owner' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.owner,
+                  'onUpdate:modelValue': function (v) { self.form.owner = v; },
+                  placeholder: 'GitHub 用户或组织'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'Repo' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.repo,
+                  'onUpdate:modelValue': function (v) { self.form.repo = v; },
+                  placeholder: '仓库名'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'Token' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.token,
+                  'onUpdate:modelValue': function (v) { self.form.token = v; },
+                  type: 'password',
+                  showPassword: true,
+                  placeholder: self.editing ? '留空则不修改' : 'classic PAT，需 repo/releases 权限'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'Tag 前缀' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.tagPrefix,
+                  'onUpdate:modelValue': function (v) { self.form.tagPrefix = v; },
+                  placeholder: 'videos → videos-20260326'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'URL 模板' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.urlTemplate,
+                  'onUpdate:modelValue': function (v) { self.form.urlTemplate = v; },
+                  placeholder: '{owner} {repo} {tag} {name}'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: 'CDN/镜像前缀' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.cdnPrefix,
+                  'onUpdate:modelValue': function (v) { self.form.cdnPrefix = v; },
+                  placeholder: '可选，如 https://ghfast.top/ 或带 {url}'
+                });
+              }),
+              h(ElementPlus.ElFormItem, { label: '备注' }, function () {
+                return h(ElementPlus.ElInput, {
+                  modelValue: self.form.notes,
+                  'onUpdate:modelValue': function (v) { self.form.notes = v; },
+                  type: 'textarea',
+                  rows: 2
+                });
+              }),
+              !self.editing
+                ? h(ElementPlus.ElFormItem, { label: '启用' }, function () {
+                    return h(ElementPlus.ElSwitch, {
+                      modelValue: self.form.enableNow,
+                      'onUpdate:modelValue': function (v) { self.form.enableNow = v; }
+                    });
+                  })
+                : null
+            ]);
+          },
+          footer: function () {
+            return [
+              h(ElementPlus.ElButton, { onClick: function () { self.dialog = false; } }, function () { return '取消'; }),
+              h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.save(); } }, function () { return '保存'; })
+            ];
+          }
+        })
+      ]);
+    }
+  };
+
   global.AdminViews = {
     LoginView: LoginView,
     DashboardView: DashboardView,
@@ -1862,6 +2092,7 @@
     HelpCategoriesView: HelpCategoriesView,
     HelpDocsView: HelpDocsView,
     EnvInstallersView: EnvInstallersView,
+    GithubConfigsView: GithubConfigsView,
     TaskResetView: TaskResetView,
     TaskClearView: TaskClearView,
     QuickOpsView: QuickOpsView

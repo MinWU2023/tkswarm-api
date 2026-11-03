@@ -1586,6 +1586,11 @@
     }
   };
 
+  var PUBLISH_VIDEO_EXTS = ['mp4', 'mov', 'webm'];
+  var PUBLISH_VIDEO_MAX = 60 * 1024 * 1024;
+  var PUBLISH_COVER_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
+  var PUBLISH_COVER_MAX = 5 * 1024 * 1024;
+
   var PublishView = {
     name: 'PublishView',
     data: function () {
@@ -1597,12 +1602,23 @@
         total: 0,
         page: 1,
         pageSize: 20,
-        form: { accountId: null, title: '', caption: '', file: null, fileName: '' }
+        form: { accountId: null, title: '', caption: '', file: null, fileName: '' },
+        videoUrl: '',
+        videoDuration: 0,
+        scrubTime: 0,
+        coverBlob: null,
+        coverPreview: '',
+        coverSource: '',
+        coverName: ''
       };
     },
     mounted: function () {
       this.loadAccounts();
       this.loadTasks();
+    },
+    beforeUnmount: function () {
+      this.revokeVideoUrl();
+      this.revokeCoverPreview();
     },
     methods: {
       loadAccounts: async function () {
@@ -1625,18 +1641,152 @@
           this.loading = false;
         }
       },
+      fileExt: function (name) {
+        var m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+        return m ? m[1] : '';
+      },
+      revokeVideoUrl: function () {
+        if (this.videoUrl) {
+          try { URL.revokeObjectURL(this.videoUrl); } catch (e) {}
+          this.videoUrl = '';
+        }
+      },
+      revokeCoverPreview: function () {
+        if (this.coverPreview && String(this.coverPreview).indexOf('blob:') === 0) {
+          try { URL.revokeObjectURL(this.coverPreview); } catch (e) {}
+        }
+        this.coverPreview = '';
+      },
+      clearCover: function () {
+        this.revokeCoverPreview();
+        this.coverBlob = null;
+        this.coverSource = '';
+        this.coverName = '';
+      },
+      clearFile: function () {
+        this.revokeVideoUrl();
+        this.form.file = null;
+        this.form.fileName = '';
+        this.videoDuration = 0;
+        this.scrubTime = 0;
+        this.clearCover();
+      },
+      validateVideoFile: function (file) {
+        var ext = this.fileExt(file.name);
+        if (ext === 'm4v') ext = 'mp4';
+        if (PUBLISH_VIDEO_EXTS.indexOf(ext) < 0) {
+          return '视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM；单文件最大 60MB';
+        }
+        if ((file.size || 0) > PUBLISH_VIDEO_MAX) {
+          return '视频过大：单文件最大 60MB（当前约 ' + (file.size / 1048576).toFixed(1) + 'MB）';
+        }
+        return '';
+      },
       onFileChange: function (uploadFile) {
         var raw = uploadFile && (uploadFile.raw || uploadFile);
         if (!raw) return;
+        var err = this.validateVideoFile(raw);
+        if (err) {
+          ElMessage.warning(err);
+          return;
+        }
+        this.revokeVideoUrl();
+        this.clearCover();
         this.form.file = raw;
         this.form.fileName = raw.name || 'video.mp4';
         if (!this.form.title) {
           this.form.title = String(raw.name || '').replace(/\.[^.]+$/, '');
         }
+        this.videoUrl = URL.createObjectURL(raw);
+        this.videoDuration = 0;
+        this.scrubTime = 0;
+        var self = this;
+        this.$nextTick(function () { self.bindVideoMeta(); });
       },
-      clearFile: function () {
-        this.form.file = null;
-        this.form.fileName = '';
+      bindVideoMeta: function () {
+        var el = document.getElementById('company-publish-video');
+        if (!el) return;
+        var self = this;
+        var onMeta = function () {
+          self.videoDuration = Number(el.duration || 0) || 0;
+          if (self.scrubTime <= 0) self.scrubTime = Math.min(0.5, self.videoDuration || 0);
+        };
+        el.onloadedmetadata = onMeta;
+        if (el.readyState >= 1) onMeta();
+      },
+      onScrub: function (v) {
+        this.scrubTime = Number(v) || 0;
+        var el = document.getElementById('company-publish-video');
+        if (el && isFinite(this.scrubTime)) {
+          try { el.currentTime = this.scrubTime; } catch (e) {}
+        }
+      },
+      captureFrame: function () {
+        var el = document.getElementById('company-publish-video');
+        if (!el || !this.form.file) {
+          ElMessage.warning('请先选择视频');
+          return;
+        }
+        var self = this;
+        var doCapture = function () {
+          try {
+            var w = el.videoWidth || 0;
+            var h = el.videoHeight || 0;
+            if (!w || !h) {
+              ElMessage.warning('视频尚未加载完成，请稍后再截取');
+              return;
+            }
+            var canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(el, 0, 0, w, h);
+            canvas.toBlob(function (blob) {
+              if (!blob) {
+                ElMessage.error('截取封面失败');
+                return;
+              }
+              self.revokeCoverPreview();
+              self.coverBlob = blob;
+              self.coverPreview = URL.createObjectURL(blob);
+              self.coverSource = 'frame';
+              self.coverName = 'cover-frame.jpg';
+              ElMessage.success('已截取当前帧作为封面');
+            }, 'image/jpeg', 0.92);
+          } catch (e) {
+            ElMessage.error(e.message || '截取封面失败');
+          }
+        };
+        try {
+          el.pause();
+          if (Math.abs((el.currentTime || 0) - this.scrubTime) > 0.05) {
+            el.currentTime = this.scrubTime;
+            el.onseeked = function () {
+              el.onseeked = null;
+              doCapture();
+            };
+            return;
+          }
+        } catch (e) {}
+        doCapture();
+      },
+      onCoverUpload: function (uploadFile) {
+        var raw = uploadFile && (uploadFile.raw || uploadFile);
+        if (!raw) return;
+        var ext = this.fileExt(raw.name);
+        if (PUBLISH_COVER_EXTS.indexOf(ext) < 0) {
+          ElMessage.warning('封面仅支持 JPG / PNG / WebP（最大 5MB）');
+          return;
+        }
+        if ((raw.size || 0) > PUBLISH_COVER_MAX) {
+          ElMessage.warning('封面过大：最大 5MB');
+          return;
+        }
+        this.revokeCoverPreview();
+        this.coverBlob = raw;
+        this.coverPreview = URL.createObjectURL(raw);
+        this.coverSource = 'upload';
+        this.coverName = raw.name || 'cover.jpg';
       },
       statusLabel: function (s) {
         var map = {
@@ -1645,13 +1795,28 @@
         };
         return map[s] || s || '-';
       },
+      formatTime: function (sec) {
+        var s = Math.max(0, Number(sec) || 0);
+        var m = Math.floor(s / 60);
+        var r = Math.floor(s % 60);
+        return m + ':' + String(r).padStart(2, '0');
+      },
       submit: async function () {
         if (!this.form.accountId) {
           ElMessage.warning('请选择发布账号');
           return;
         }
         if (!this.form.file) {
-          ElMessage.warning('请上传视频文件');
+          ElMessage.warning('请上传视频（仅支持 MP4 / MOV / WebM，最大 60MB）');
+          return;
+        }
+        var verr = this.validateVideoFile(this.form.file);
+        if (verr) {
+          ElMessage.warning(verr);
+          return;
+        }
+        if (!this.coverBlob) {
+          ElMessage.warning('请设置封面：拖动进度条后点「截取当前帧」，或上传封面图');
           return;
         }
         this.submitting = true;
@@ -1659,6 +1824,7 @@
           var fd = new FormData();
           fd.append('accountId', String(this.form.accountId));
           fd.append('file', this.form.file);
+          fd.append('cover', this.coverBlob, this.coverName || 'cover.jpg');
           if (this.form.title) fd.append('title', this.form.title);
           if (this.form.caption) fd.append('caption', this.form.caption);
           await CompanyAPI.createPublishTask(fd);
@@ -1681,6 +1847,14 @@
         pageHead('发布视频', '选择账号并上传视频，生成委托发布任务供运营执行'),
         h('div', { class: 'panel publish-form-panel' }, [
           panelHead('新建委托'),
+          h('div', { class: 'publish-hint' }, [
+            h('b', '上传要求：'),
+            '仅支持 TikTok / YouTube 通用视频格式 ',
+            h('code', 'MP4 / MOV / WebM'),
+            '，单文件最大 ',
+            h('b', '60MB'),
+            '；封面可逐帧截取或自行上传（JPG / PNG / WebP，最大 5MB），提交后视频与封面都会上传到 GitHub CDN。'
+          ]),
           h('div', { class: 'publish-form-grid' }, [
             h('div', { class: 'field' }, [
               h('label', '发布账号'),
@@ -1724,7 +1898,7 @@
                 drag: true,
                 autoUpload: false,
                 showFileList: false,
-                accept: 'video/*,.mp4,.mov,.webm,.mkv,.avi,.m4v',
+                accept: '.mp4,.mov,.webm,video/mp4,video/quicktime,video/webm',
                 onChange: function (f) { self.onFileChange(f); }
               }, {
                 default: function () {
@@ -1732,18 +1906,77 @@
                     h('div', { class: 'el-upload__text' }, [
                       self.form.fileName
                         ? ('已选：' + self.form.fileName)
-                        : h('span', [h('em', '点击或拖拽'), ' 视频到此处'])
+                        : h('span', [h('em', '点击或拖拽'), ' MP4 / MOV / WebM（≤60MB）到此处'])
                     ])
                   ];
                 }
               }),
               self.form.fileName
                 ? h('div', { class: 'publish-file-row' }, [
-                    h('span', { class: 'muted' }, self.form.fileName),
+                    h('span', { class: 'muted' }, self.form.fileName + ' · ' + ((self.form.file && self.form.file.size) ? ((self.form.file.size / 1048576).toFixed(2) + ' MB') : '')),
                     h(ElementPlus.ElButton, { link: true, type: 'danger', onClick: function () { self.clearFile(); } }, function () { return '清除'; })
                   ])
                 : null
-            ])
+            ]),
+            self.videoUrl
+              ? h('div', { class: 'field full publish-cover-box' }, [
+                  h('label', '封面设置（必填）'),
+                  h('div', { class: 'publish-cover-grid' }, [
+                    h('div', { class: 'publish-cover-video' }, [
+                      h('video', {
+                        id: 'company-publish-video',
+                        src: self.videoUrl,
+                        controls: true,
+                        preload: 'metadata',
+                        playsinline: true,
+                        style: 'width:100%;max-height:280px;background:#0f172a;border-radius:10px'
+                      }),
+                      h('div', { class: 'publish-scrub' }, [
+                        h('span', { class: 'muted' }, self.formatTime(self.scrubTime)),
+                        h(ElementPlus.ElSlider, {
+                          modelValue: self.scrubTime,
+                          'onUpdate:modelValue': function (v) { self.onScrub(v); },
+                          min: 0,
+                          max: Math.max(0.1, self.videoDuration || 0.1),
+                          step: 0.05,
+                          showTooltip: false,
+                          style: 'flex:1;margin:0 12px'
+                        }),
+                        h('span', { class: 'muted' }, self.formatTime(self.videoDuration))
+                      ]),
+                      h('div', { class: 'publish-cover-actions' }, [
+                        h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.captureFrame(); } }, function () { return '截取当前帧'; }),
+                        h(ElementPlus.ElUpload, {
+                          autoUpload: false,
+                          showFileList: false,
+                          accept: '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp',
+                          onChange: function (f) { self.onCoverUpload(f); }
+                        }, {
+                          default: function () {
+                            return h(ElementPlus.ElButton, {}, function () { return '上传封面图'; });
+                          }
+                        })
+                      ])
+                    ]),
+                    h('div', { class: 'publish-cover-preview' }, [
+                      h('div', { class: 'muted', style: 'margin-bottom:8px' }, self.coverPreview
+                        ? ('已选封面' + (self.coverSource === 'frame' ? '（逐帧）' : '（上传）'))
+                        : '暂无封面预览'),
+                      self.coverPreview
+                        ? h('img', { src: self.coverPreview, alt: 'cover' })
+                        : h('div', { class: 'publish-cover-empty' }, '请截取或上传封面'),
+                      self.coverPreview
+                        ? h(ElementPlus.ElButton, {
+                            link: true,
+                            type: 'danger',
+                            style: 'margin-top:8px',
+                            onClick: function () { self.clearCover(); }
+                          }, function () { return '清除封面'; })
+                        : null
+                    ])
+                  ])
+                ])
+              : null
           ]),
           h('div', { class: 'publish-form-actions' }, [
             h(ElementPlus.ElButton, {
