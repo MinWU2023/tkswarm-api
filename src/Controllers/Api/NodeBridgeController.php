@@ -3461,7 +3461,7 @@ class NodeBridgeController extends Controller
         return $this->success($out['meta'] ?? null, '已占用环境租约');
     }
 
-    /** POST 释放跨机独占租约 */
+    /** POST 释放跨机独占租约（并信号通知 FIFO 等待方） */
     public function browserProfilePackLeaseRelease(Request $request, string $profileId): Response
     {
         [$env, $err] = $this->resolveEnvRowForPack($profileId);
@@ -3478,7 +3478,39 @@ class NodeBridgeController extends Controller
         if (empty($out['ok'])) {
             return $this->error((string)($out['message'] ?? '释放失败'), 409, $out['meta'] ?? null);
         }
-        return $this->success($out['meta'] ?? null, '已释放环境租约');
+        return $this->success([
+            'meta' => $out['meta'] ?? null,
+            'signal' => $out['signal'] ?? null,
+        ], '已释放环境租约');
+    }
+
+    /**
+     * POST 被动挂起等待占用解除（FIFO）。
+     * Node/linuxbrowse 一次长请求挂起，禁止短间隔轮询 pack-lease。
+     */
+    public function browserProfilePackLeaseWait(Request $request, string $profileId): Response
+    {
+        [$env, $err] = $this->resolveEnvRowForPack($profileId);
+        if ($err) {
+            return $err;
+        }
+        $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $timeout = (int)$request->input('timeoutSeconds', $request->input('timeout_seconds', 120));
+        // 避免 PHP 被网关先掐断：略留余量
+        if ($timeout > 90) {
+            @set_time_limit($timeout + 30);
+        }
+        $out = \App\Services\AccountBrowserEnvService::waitPackLeaseReady(
+            (string)$env['browser_profile_id'],
+            $hostId,
+            $accountId,
+            $timeout
+        );
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['message'] ?? '等待失败'), 422, $out);
+        }
+        return $this->success($out, !empty($out['ready']) ? '占用已解除，轮到本端' : '仍在等待');
     }
 
     /**

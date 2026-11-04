@@ -95,6 +95,9 @@ class AccountBrowserEnvService
                 // 缺包静默补齐：queued=已推送待上传 / done=已补齐或已替换，不再入队
                 'pack_heal_status' => "ALTER TABLE account_browser_envs ADD COLUMN pack_heal_status VARCHAR(16) NOT NULL DEFAULT '' AFTER pack_host_id",
                 'pack_heal_at' => "ALTER TABLE account_browser_envs ADD COLUMN pack_heal_at DATETIME NULL AFTER pack_heal_status",
+                // 跨机登录占用等待队列（FIFO JSON）+ 释放信号序号（唤醒挂起等待）
+                'pack_wait_queue' => "ALTER TABLE account_browser_envs ADD COLUMN pack_wait_queue MEDIUMTEXT NULL AFTER pack_heal_at",
+                'pack_release_seq' => "ALTER TABLE account_browser_envs ADD COLUMN pack_release_seq INT NOT NULL DEFAULT 0 AFTER pack_wait_queue",
             ];
             foreach ($packCols as $col => $sql) {
                 if (!in_array($col, $envCols, true)) {
@@ -1152,10 +1155,232 @@ class AccountBrowserEnvService
              WHERE id=?",
             [$ourLock, $until, (int)$env['id']]
         );
+        // 成功占用后从等待队列摘掉自己（FIFO 队首出队）
+        self::dequeuePackWait($profileId, $hostId);
         return ['ok' => true, 'meta' => self::packMeta($profileId)];
     }
 
-    /** @return array{ok:bool,message?:string,meta?:array<string,mixed>} */
+    /** @return list<array{hostId:string,accountId:int,enqueuedAt:string}> */
+    public static function readPackWaitQueue(array $env): array
+    {
+        $raw = trim((string)($env['pack_wait_queue'] ?? ''));
+        if ($raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        $out = [];
+        foreach ($decoded as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $hid = trim((string)($row['hostId'] ?? ''));
+            if ($hid === '') {
+                continue;
+            }
+            $out[] = [
+                'hostId' => mb_substr($hid, 0, 120),
+                'accountId' => (int)($row['accountId'] ?? 0),
+                'enqueuedAt' => (string)($row['enqueuedAt'] ?? ''),
+            ];
+        }
+        return $out;
+    }
+
+    /** @param list<array{hostId:string,accountId:int,enqueuedAt:string}> $queue */
+    public static function writePackWaitQueue(int $envId, array $queue): void
+    {
+        DB::query(
+            'UPDATE account_browser_envs SET pack_wait_queue=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [json_encode(array_values($queue), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $envId]
+        );
+    }
+
+    /**
+     * 加入 FIFO 等待队列（已存在则保持原位次，不插队）。
+     * @return array{ok:bool,position:int,queueSize:int,meta?:array<string,mixed>}
+     */
+    public static function enqueuePackWait(string $profileId, string $hostId, int $accountId = 0): array
+    {
+        self::ensureSchema();
+        $hostId = trim($hostId);
+        if ($hostId === '') {
+            return ['ok' => false, 'position' => 0, 'queueSize' => 0, 'message' => '缺少 hostId'];
+        }
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return ['ok' => false, 'position' => 0, 'queueSize' => 0, 'message' => '环境绑定不存在'];
+        }
+        $queue = self::readPackWaitQueue($env);
+        $pos = 0;
+        foreach ($queue as $i => $row) {
+            if (($row['hostId'] ?? '') === $hostId) {
+                $pos = $i + 1;
+                break;
+            }
+        }
+        if ($pos === 0) {
+            $queue[] = [
+                'hostId' => mb_substr($hostId, 0, 120),
+                'accountId' => $accountId,
+                'enqueuedAt' => date('Y-m-d H:i:s'),
+            ];
+            self::writePackWaitQueue((int)$env['id'], $queue);
+            $pos = count($queue);
+        }
+        return [
+            'ok' => true,
+            'position' => $pos,
+            'queueSize' => count($queue),
+            'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
+            'meta' => self::packMeta($profileId),
+        ];
+    }
+
+    public static function dequeuePackWait(string $profileId, string $hostId): void
+    {
+        $hostId = trim($hostId);
+        if ($hostId === '') {
+            return;
+        }
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return;
+        }
+        $queue = self::readPackWaitQueue($env);
+        $next = [];
+        foreach ($queue as $row) {
+            if (($row['hostId'] ?? '') === $hostId) {
+                continue;
+            }
+            $next[] = $row;
+        }
+        if (count($next) !== count($queue)) {
+            self::writePackWaitQueue((int)$env['id'], $next);
+        }
+    }
+
+    /** 登录包上传/释放占用后：递增信号，唤醒挂起的 FIFO 等待方 */
+    public static function signalPackWaiters(string $profileId): array
+    {
+        self::ensureSchema();
+        $env = self::findByProfileId($profileId);
+        if (!$env) {
+            return ['ok' => false, 'message' => '环境绑定不存在'];
+        }
+        DB::query(
+            'UPDATE account_browser_envs SET pack_release_seq=pack_release_seq+1, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [(int)$env['id']]
+        );
+        $fresh = self::findByProfileId($profileId) ?: $env;
+        $queue = self::readPackWaitQueue($fresh);
+        $nextHost = $queue[0]['hostId'] ?? '';
+        return [
+            'ok' => true,
+            'releaseSeq' => (int)($fresh['pack_release_seq'] ?? 0),
+            'nextHostId' => $nextHost,
+            'queueSize' => count($queue),
+            'meta' => self::packMeta($profileId),
+        ];
+    }
+
+    /**
+     * 被动挂起等待：入队后阻塞直到轮到自己且占用已解除（或超时）。
+     * Node/linuxbrowse 用一次长请求挂起，禁止客户端短间隔轮询 acquire。
+     * @return array{ok:bool,ready:bool,timedOut?:bool,position?:int,queueSize?:int,releaseSeq?:int,message?:string,meta?:array}
+     */
+    public static function waitPackLeaseReady(string $profileId, string $hostId, int $accountId = 0, int $timeoutSeconds = 120): array
+    {
+        self::ensureSchema();
+        self::reclaimExpiredEnvLeases();
+        $hostId = trim($hostId);
+        if ($hostId === '') {
+            return ['ok' => false, 'ready' => false, 'message' => '缺少 hostId'];
+        }
+        $enqueued = self::enqueuePackWait($profileId, $hostId, $accountId);
+        if (empty($enqueued['ok'])) {
+            return ['ok' => false, 'ready' => false, 'message' => (string)($enqueued['message'] ?? '入队失败')];
+        }
+
+        $timeoutSeconds = max(5, min(300, $timeoutSeconds));
+        $deadline = time() + $timeoutSeconds;
+        $ourLock = self::PACK_LEASE_PREFIX . $hostId;
+
+        while (time() <= $deadline) {
+            self::reclaimExpiredEnvLeases();
+            $env = self::findByProfileId($profileId);
+            if (!$env) {
+                return ['ok' => false, 'ready' => false, 'message' => '环境绑定不存在'];
+            }
+            $queue = self::readPackWaitQueue($env);
+            $position = 0;
+            foreach ($queue as $i => $row) {
+                if (($row['hostId'] ?? '') === $hostId) {
+                    $position = $i + 1;
+                    break;
+                }
+            }
+            if ($position === 0) {
+                // 已被成功占用逻辑出队，或队列被清：视为可继续抢锁
+                return [
+                    'ok' => true,
+                    'ready' => true,
+                    'position' => 1,
+                    'queueSize' => count($queue),
+                    'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
+                    'meta' => self::packMeta($profileId),
+                ];
+            }
+
+            $lockedBy = (string)($env['locked_by'] ?? '');
+            $leaseUntil = (string)($env['lease_until'] ?? '');
+            $busy = ($env['saturation'] ?? '') === 'busy'
+                && $leaseUntil !== ''
+                && strtotime($leaseUntil) > time()
+                && $lockedBy !== ''
+                && $lockedBy !== $ourLock
+                && !self::isSameHostLock($lockedBy, $hostId);
+
+            // 队首 + 无人占用（或本机已占）→ 唤醒
+            if ($position === 1 && !$busy) {
+                return [
+                    'ok' => true,
+                    'ready' => true,
+                    'position' => $position,
+                    'queueSize' => count($queue),
+                    'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
+                    'nextHostId' => $hostId,
+                    'meta' => self::packMeta($profileId),
+                ];
+            }
+
+            usleep(800000); // 0.8s 服务端挂起探测；客户端仍是一次 HTTP 挂起
+        }
+
+        $env = self::findByProfileId($profileId);
+        $queue = $env ? self::readPackWaitQueue($env) : [];
+        $position = 0;
+        foreach ($queue as $i => $row) {
+            if (($row['hostId'] ?? '') === $hostId) {
+                $position = $i + 1;
+                break;
+            }
+        }
+        return [
+            'ok' => true,
+            'ready' => false,
+            'timedOut' => true,
+            'position' => $position,
+            'queueSize' => count($queue),
+            'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
+            'message' => '等待占用释放超时，将继续挂起',
+            'meta' => $env ? self::packMeta($profileId) : null,
+        ];
+    }
+
+    /** @return array{ok:bool,message?:string,meta?:array<string,mixed>,signal?:array} */
     public static function releasePackLease(string $profileId, string $hostId, bool $force = false): array
     {
         self::ensureSchema();
@@ -1183,7 +1408,8 @@ class AccountBrowserEnvService
                 [(int)$env['id'], $ourLock, $force ? 1 : 0]
             );
         }
-        return ['ok' => true, 'meta' => self::packMeta($profileId)];
+        $signal = self::signalPackWaiters($profileId);
+        return ['ok' => true, 'meta' => self::packMeta($profileId), 'signal' => $signal];
     }
 
     /**
@@ -1239,6 +1465,8 @@ class AccountBrowserEnvService
                 [(int)$env['id'], self::PACK_LEASE_PREFIX . $hostId]
             );
         }
-        return ['ok' => true, 'meta' => self::packMeta($profileId)];
+        // 通知 FIFO 等待方：可拉取最新包并自动登录
+        $signal = self::signalPackWaiters($profileId);
+        return ['ok' => true, 'meta' => self::packMeta($profileId), 'signal' => $signal];
     }
 }
