@@ -1148,6 +1148,36 @@ class AccountBrowserEnvService
             ];
         }
 
+        // FIFO 保护：队列里有更早入队的其它主机时，不允许插队抢锁（本机刚释放后再占用也一样要排队）。
+        // 入队超过 30 分钟的条目视为僵尸（等待方已超时离开），忽略，避免队首死掉后永久卡住。
+        $waitQueue = array_values(array_filter(
+            self::readPackWaitQueue($env),
+            static function (array $row): bool {
+                $t = strtotime((string)($row['enqueuedAt'] ?? ''));
+                return $t === false || $t === 0 || (time() - $t) < 1800;
+            }
+        ));
+        if ($waitQueue !== []) {
+            $headHost = (string)($waitQueue[0]['hostId'] ?? '');
+            if ($headHost !== '' && $headHost !== $hostId
+                && !self::isSameHostLock(self::PACK_LEASE_PREFIX . $headHost, $hostId)) {
+                $baseMeta = self::packMeta($profileId);
+                if (!is_array($baseMeta)) {
+                    $baseMeta = [];
+                }
+                return [
+                    'ok' => false,
+                    'message' => '该环境有更早排队的其它主机（' . $headHost . '），请按先进先出等待',
+                    'meta' => array_merge($baseMeta, [
+                        'code' => 'PACK_LEASE_BUSY',
+                        'holderHost' => $headHost,
+                        'leaseUntil' => '',
+                        'lockedBy' => '',
+                    ]),
+                ];
+            }
+        }
+
         $until = date('Y-m-d H:i:s', time() + max(120, $leaseSeconds));
         DB::query(
             "UPDATE account_browser_envs
@@ -1277,6 +1307,10 @@ class AccountBrowserEnvService
         $fresh = self::findByProfileId($profileId) ?: $env;
         $queue = self::readPackWaitQueue($fresh);
         $nextHost = $queue[0]['hostId'] ?? '';
+        // 只推 FIFO 队首：先入先出，其余等待方继续被动等待下一次释放
+        if ($nextHost !== '') {
+            self::notifyPackRelay($profileId, (string)$nextHost, (int)($fresh['pack_release_seq'] ?? 0), count($queue));
+        }
         return [
             'ok' => true,
             'releaseSeq' => (int)($fresh['pack_release_seq'] ?? 0),
@@ -1286,12 +1320,59 @@ class AccountBrowserEnvService
         ];
     }
 
+    /** 通过 WSS 中继把「占用已解除」只通知给指定主机（失败不影响释放；客户端重连会重新入队补漏） */
+    public static function notifyPackRelay(string $profileId, string $hostId, int $seq = 0, int $queueSize = 0): bool
+    {
+        $url = trim((string)(getenv('TKSWARM_RELAY_NOTIFY_URL') ?: 'http://127.0.0.1:8998/notify'));
+        $secret = trim((string)(getenv('TKSWARM_RELAY_SECRET') ?: ''));
+        if ($hostId === '' || $secret === '' || !function_exists('curl_init')) {
+            return false;
+        }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 1,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-Relay-Secret: ' . $secret],
+            CURLOPT_POSTFIELDS => json_encode([
+                'profileId' => $profileId,
+                'hostId' => $hostId,
+                'releaseSeq' => $seq,
+                'queueSize' => $queueSize,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+        $res = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        return $res !== false && $code >= 200 && $code < 300;
+    }
+
+    /** 签发中继连接票据：base64url(JSON{h,e}).hex(hmac)；客户端只需普通 API 鉴权即可换取 */
+    public static function packRelayTicket(string $hostId, int $ttlSeconds = 3600): array
+    {
+        $secret = trim((string)(getenv('TKSWARM_RELAY_SECRET') ?: ''));
+        $hostId = trim($hostId);
+        if ($secret === '' || $hostId === '') {
+            return ['ok' => false, 'message' => '中继未配置（缺少 TKSWARM_RELAY_SECRET）或缺少 hostId'];
+        }
+        $exp = time() + max(60, $ttlSeconds);
+        $payload = rtrim(strtr(base64_encode(json_encode(['h' => $hostId, 'e' => $exp], JSON_UNESCAPED_UNICODE)), '+/', '-_'), '=');
+        $sig = hash_hmac('sha256', $payload, $secret);
+        return [
+            'ok' => true,
+            'ticket' => $payload . '.' . $sig,
+            'expiresAt' => $exp,
+            'url' => trim((string)(getenv('TKSWARM_RELAY_PUBLIC_URL') ?: '')),
+        ];
+    }
+
     /**
-     * 被动挂起等待：入队后阻塞直到轮到自己且占用已解除（或超时）。
-     * Node/linuxbrowse 用一次长请求挂起，禁止客户端短间隔轮询 acquire。
-     * @return array{ok:bool,ready:bool,timedOut?:bool,position?:int,queueSize?:int,releaseSeq?:int,message?:string,meta?:array}
+     * 入队并立即返回（不挂起）。ready=true 表示已是队首且无人占用，可直接 acquire；
+     * 否则被动等待中继推送。重连/租约到期时客户端再调一次本接口即可补漏。
+     * @return array{ok:bool,ready:bool,position?:int,queueSize?:int,releaseSeq?:int,leaseUntil?:string,message?:string}
      */
-    public static function waitPackLeaseReady(string $profileId, string $hostId, int $accountId = 0, int $timeoutSeconds = 120): array
+    public static function enqueuePackWaitState(string $profileId, string $hostId, int $accountId = 0): array
     {
         self::ensureSchema();
         self::reclaimExpiredEnvLeases();
@@ -1299,68 +1380,15 @@ class AccountBrowserEnvService
         if ($hostId === '') {
             return ['ok' => false, 'ready' => false, 'message' => '缺少 hostId'];
         }
-        $enqueued = self::enqueuePackWait($profileId, $hostId, $accountId);
-        if (empty($enqueued['ok'])) {
-            return ['ok' => false, 'ready' => false, 'message' => (string)($enqueued['message'] ?? '入队失败')];
+        $enq = self::enqueuePackWait($profileId, $hostId, $accountId);
+        if (empty($enq['ok'])) {
+            return ['ok' => false, 'ready' => false, 'message' => (string)($enq['message'] ?? '入队失败')];
         }
-
-        $timeoutSeconds = max(5, min(300, $timeoutSeconds));
-        $deadline = time() + $timeoutSeconds;
-        $ourLock = self::PACK_LEASE_PREFIX . $hostId;
-
-        while (time() <= $deadline) {
-            self::reclaimExpiredEnvLeases();
-            $env = self::findByProfileId($profileId);
-            if (!$env) {
-                return ['ok' => false, 'ready' => false, 'message' => '环境绑定不存在'];
-            }
-            $queue = self::readPackWaitQueue($env);
-            $position = 0;
-            foreach ($queue as $i => $row) {
-                if (($row['hostId'] ?? '') === $hostId) {
-                    $position = $i + 1;
-                    break;
-                }
-            }
-            if ($position === 0) {
-                // 已被成功占用逻辑出队，或队列被清：视为可继续抢锁
-                return [
-                    'ok' => true,
-                    'ready' => true,
-                    'position' => 1,
-                    'queueSize' => count($queue),
-                    'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
-                    'meta' => self::packMeta($profileId),
-                ];
-            }
-
-            $lockedBy = (string)($env['locked_by'] ?? '');
-            $leaseUntil = (string)($env['lease_until'] ?? '');
-            $busy = ($env['saturation'] ?? '') === 'busy'
-                && $leaseUntil !== ''
-                && strtotime($leaseUntil) > time()
-                && $lockedBy !== ''
-                && $lockedBy !== $ourLock
-                && !self::isSameHostLock($lockedBy, $hostId);
-
-            // 队首 + 无人占用（或本机已占）→ 唤醒
-            if ($position === 1 && !$busy) {
-                return [
-                    'ok' => true,
-                    'ready' => true,
-                    'position' => $position,
-                    'queueSize' => count($queue),
-                    'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
-                    'nextHostId' => $hostId,
-                    'meta' => self::packMeta($profileId),
-                ];
-            }
-
-            usleep(800000); // 0.8s 服务端挂起探测；客户端仍是一次 HTTP 挂起
-        }
-
         $env = self::findByProfileId($profileId);
-        $queue = $env ? self::readPackWaitQueue($env) : [];
+        if (!$env) {
+            return ['ok' => false, 'ready' => false, 'message' => '环境绑定不存在'];
+        }
+        $queue = self::readPackWaitQueue($env);
         $position = 0;
         foreach ($queue as $i => $row) {
             if (($row['hostId'] ?? '') === $hostId) {
@@ -1368,15 +1396,23 @@ class AccountBrowserEnvService
                 break;
             }
         }
+        $lockedBy = (string)($env['locked_by'] ?? '');
+        $leaseUntil = (string)($env['lease_until'] ?? '');
+        $ourLock = self::PACK_LEASE_PREFIX . $hostId;
+        $busy = ($env['saturation'] ?? '') === 'busy'
+            && $leaseUntil !== ''
+            && strtotime($leaseUntil) > time()
+            && $lockedBy !== ''
+            && $lockedBy !== $ourLock
+            && !self::isSameHostLock($lockedBy, $hostId);
+        $ready = ($position === 0) || ($position === 1 && !$busy);
         return [
             'ok' => true,
-            'ready' => false,
-            'timedOut' => true,
+            'ready' => $ready,
             'position' => $position,
             'queueSize' => count($queue),
             'releaseSeq' => (int)($env['pack_release_seq'] ?? 0),
-            'message' => '等待占用释放超时，将继续挂起',
-            'meta' => $env ? self::packMeta($profileId) : null,
+            'leaseUntil' => $busy ? $leaseUntil : '',
         ];
     }
 

@@ -1,0 +1,9 @@
+{
+  "name": "tkswarm-ws-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TkSwarm 环境包租约 WSS 中继（FIFO 队首被动推送）",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}

@@ -578,7 +578,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/browser-profiles/{profileId}/pack', NodeBridgeController::class . '@browserProfilePackUpload');
     Router::post('/api/node/browser-profiles/{profileId}/pack-lease', NodeBridgeController::class . '@browserProfilePackLease');
     Router::post('/api/node/browser-profiles/{profileId}/pack-lease/release', NodeBridgeController::class . '@browserProfilePackLeaseRelease');
-    Router::post('/api/node/browser-profiles/{profileId}/pack-lease/wait', NodeBridgeController::class . '@browserProfilePackLeaseWait');
+    Router::post('/api/node/browser-profiles/{profileId}/pack-lease/enqueue', NodeBridgeController::class . '@browserProfilePackLeaseEnqueue');
+    Router::post('/api/node/pack-relay/ticket', NodeBridgeController::class . '@packRelayTicket');
     Router::post('/api/node/browser-envs/wipe-all', NodeBridgeController::class . '@wipeAllBrowserEnvData');
     Router::post('/api/admin/browser-envs/wipe-all', NodeBridgeController::class . '@wipeAllBrowserEnvData');
     Router::get('/api/node/accounts/{id}/bundle', NodeBridgeController::class . '@accountBundle');

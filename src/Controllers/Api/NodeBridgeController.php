@@ -3485,10 +3485,10 @@ class NodeBridgeController extends Controller
     }
 
     /**
-     * POST 被动挂起等待占用解除（FIFO）。
-     * Node/linuxbrowse 一次长请求挂起，禁止短间隔轮询 pack-lease。
+     * POST 入队并立即返回（不挂起）。ready=true 可直接 acquire；否则被动等待 WSS 中继推送。
+     * 重连或租约到期时客户端再调一次即可补漏。
      */
-    public function browserProfilePackLeaseWait(Request $request, string $profileId): Response
+    public function browserProfilePackLeaseEnqueue(Request $request, string $profileId): Response
     {
         [$env, $err] = $this->resolveEnvRowForPack($profileId);
         if ($err) {
@@ -3496,21 +3496,26 @@ class NodeBridgeController extends Controller
         }
         $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
         $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
-        $timeout = (int)$request->input('timeoutSeconds', $request->input('timeout_seconds', 120));
-        // 避免 PHP 被网关先掐断：略留余量
-        if ($timeout > 90) {
-            @set_time_limit($timeout + 30);
-        }
-        $out = \App\Services\AccountBrowserEnvService::waitPackLeaseReady(
+        $out = \App\Services\AccountBrowserEnvService::enqueuePackWaitState(
             (string)$env['browser_profile_id'],
             $hostId,
-            $accountId,
-            $timeout
+            $accountId
         );
         if (empty($out['ok'])) {
-            return $this->error((string)($out['message'] ?? '等待失败'), 422, $out);
+            return $this->error((string)($out['message'] ?? '入队失败'), 422, $out);
         }
-        return $this->success($out, !empty($out['ready']) ? '占用已解除，轮到本端' : '仍在等待');
+        return $this->success($out, !empty($out['ready']) ? '轮到本端' : '已入队，等待推送');
+    }
+
+    /** POST 换取 WSS 中继连接票据（只需普通 API 鉴权） */
+    public function packRelayTicket(Request $request): Response
+    {
+        $hostId = trim((string)$request->input('hostId', $request->input('host_id', '')));
+        $out = \App\Services\AccountBrowserEnvService::packRelayTicket($hostId);
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['message'] ?? '签发失败'), 422);
+        }
+        return $this->success($out, '已签发中继票据');
     }
 
     /**
