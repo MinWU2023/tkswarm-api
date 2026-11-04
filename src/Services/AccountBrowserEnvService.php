@@ -1427,9 +1427,14 @@ class AccountBrowserEnvService
             return ['ok' => false, 'message' => '上传临时文件不存在'];
         }
         $bytes = (int)filesize($tmpFile);
-        // 含 Cookie 的会话包通常远大于 8KB；过小多为空目录/未刷盘，禁止盖掉中心库有效包
+        // 空文件仍拒；过小默认允许覆盖（与 Node 侧一致：会话日志为准，过小也要传）
+        // 设环境变量 TKSWARM_ENV_PACK_REJECT_TINY=1 可恢复「过小拒传」
+        if ($bytes <= 0) {
+            return ['ok' => false, 'message' => '环境包为空，已拒绝覆盖'];
+        }
         $minPackBytes = 8 * 1024;
-        if ($bytes < $minPackBytes) {
+        $rejectTiny = in_array(strtolower(trim((string)(getenv('TKSWARM_ENV_PACK_REJECT_TINY') ?: ''))), ['1', 'true', 'on'], true);
+        if ($bytes < $minPackBytes && $rejectTiny) {
             return ['ok' => false, 'message' => '环境包过小（疑似未含登录会话），已拒绝覆盖'];
         }
         if ($bytes > self::PACK_MAX_BYTES) {
