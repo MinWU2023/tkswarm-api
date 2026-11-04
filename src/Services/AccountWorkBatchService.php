@@ -644,6 +644,33 @@ class AccountWorkBatchService
     }
 
     /**
+     * 清空执行日志：指定 item 则只清该分任务；否则清整批。
+     * @return array{deleted:int,batchId:int,itemId:int}
+     */
+    public static function clearLogs(int $batchId, int $itemId = 0): array
+    {
+        self::ensureSchema();
+        $batchId = max(0, $batchId);
+        $itemId = max(0, $itemId);
+        if ($batchId < 1) {
+            return ['deleted' => 0, 'batchId' => 0, 'itemId' => 0];
+        }
+        if ($itemId > 0) {
+            $stmt = DB::query(
+                'DELETE FROM account_work_logs WHERE batch_id=? AND item_id=?',
+                [$batchId, $itemId]
+            );
+        } else {
+            $stmt = DB::query(
+                'DELETE FROM account_work_logs WHERE batch_id=?',
+                [$batchId]
+            );
+        }
+        $deleted = (int)$stmt->rowCount();
+        return ['deleted' => $deleted, 'batchId' => $batchId, 'itemId' => $itemId];
+    }
+
+    /**
      * 解析 TikTok 登录应使用的账号名。
      * 系统里已写入新 Username、但「修改资料」分任务尚未在 TikTok 提交成功时，必须用原账号名登录。
      *
@@ -1506,10 +1533,26 @@ class AccountWorkBatchService
                     $params[] = $eid;
                 }
             }
-            // 服务器浏览器自动执行：只领客服坐席 / linux 拓客，不抢桌面 general
+            // 服务器浏览器队列：只领客服坐席 / linux 拓客
+            // 桌面 WSS 领取：排除上述范围，避免抢单后无人执行导致一直「待执行」
             $serverOnlySql = '';
             if ($serverBrowserOnly) {
                 $serverOnlySql = " AND (
+                     COALESCE(b.batch_scope,'general') = 'cs_seat'
+                     OR (
+                       COALESCE(b.batch_scope,'general') = 'ai_lead'
+                       AND EXISTS (
+                         SELECT 1 FROM account_work_items li
+                         WHERE li.batch_id=b.id AND li.status IN ('pending','running')
+                           AND (
+                             li.payload_json LIKE '%\"browserBackend\":\"linux\"%'
+                             OR li.payload_json LIKE '%\"browser_backend\":\"linux\"%'
+                           )
+                       )
+                     )
+                   )";
+            } else {
+                $serverOnlySql = " AND NOT (
                      COALESCE(b.batch_scope,'general') = 'cs_seat'
                      OR (
                        COALESCE(b.batch_scope,'general') = 'ai_lead'

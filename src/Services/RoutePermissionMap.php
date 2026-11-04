@@ -182,6 +182,7 @@ class RoutePermissionMap
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/resume#', 'codes' => ['account.work.pause']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/delete#', 'codes' => ['account.work.delete']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/reset#', 'codes' => ['account.work.reset']],
+            ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/logs/clear#', 'codes' => ['account.work.reset']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/force-fail#', 'codes' => ['account.work.pause']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/items/.+/pause#', 'codes' => ['account.work.pause']],
             ['method' => 'POST', 'pattern' => '#^/api/account-work-batches/.+/items/.+/resume#', 'codes' => ['account.work.pause']],

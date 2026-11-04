@@ -2372,8 +2372,11 @@ class AccountController extends Controller
         if (!preg_match('/sessionid|sid_tt/i', $cookie)) {
             return $this->error('Cookie 中未找到 sessionid', 422);
         }
+        // LocalStorage 过大时降级：仍保存 Cookie（登录态关键），丢弃 Storage，避免 422 导致「已登录却写不上会话」
+        $storageDropped = false;
         if (strlen($storage) > 2000000) {
-            return $this->error('LocalStorage 过大', 422);
+            $storage = '';
+            $storageDropped = true;
         }
         // 每 TikTok 账号仅保留一条最新会话（主键 account_id）
         DB::query(
@@ -2395,7 +2398,15 @@ class AccountController extends Controller
             "UPDATE accounts SET has_session=1, fingerprint=IF(?='', fingerprint, ?), login_status='online', updated_at=CURRENT_TIMESTAMP WHERE id=?",
             [$fingerprint, mb_substr($fingerprint, 0, 255), (int)$id]
         );
-        return $this->success(['accountId' => (int)$id, 'hasSession' => true, 'hasStorage' => $storage !== ''], '登录会话已加密保存（仅保留最新一条）');
+        $msg = $storageDropped
+            ? '登录会话已加密保存（LocalStorage 过大已省略，Cookie 已保留）'
+            : '登录会话已加密保存（仅保留最新一条）';
+        return $this->success([
+            'accountId' => (int)$id,
+            'hasSession' => true,
+            'hasStorage' => $storage !== '',
+            'storageDropped' => $storageDropped,
+        ], $msg);
     }
 
     /** 退出登录：删除该 TikTok 唯一会话日志 */

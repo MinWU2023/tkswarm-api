@@ -547,6 +547,20 @@ class AccountWorkController extends Controller
         ]);
     }
 
+    /** 清空总任务执行日志（account_work_logs） */
+    public function clearBatchLogs(Request $request, string $id): Response
+    {
+        AccountWorkBatchService::ensureSchema();
+        DataScope::ensureColumns();
+        $batch = DB::selectOne('SELECT * FROM account_work_batches WHERE id=?', [(int)$id]);
+        if ($err = $this->assertWorkBatchOwns($batch)) {
+            return $err;
+        }
+        $itemId = (int)$request->input('itemId', $request->input('item_id', 0));
+        $out = AccountWorkBatchService::clearLogs((int)$id, $itemId);
+        return $this->success($out, $out['deleted'] > 0 ? '日志已清空' : '无日志可清空');
+    }
+
     public function enqueue(Request $request): Response
     {
         AccountWorkBatchService::ensureSchema();

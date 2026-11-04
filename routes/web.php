@@ -398,6 +398,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/account-work-items', AccountWorkController::class . '@listItems');
     Router::get('/api/account-work-batches/{id}/items', AccountWorkController::class . '@batchItems');
     Router::get('/api/account-work-batches/{id}/logs', AccountWorkController::class . '@batchLogs');
+    Router::post('/api/account-work-batches/{id}/logs/clear', AccountWorkController::class . '@clearBatchLogs');
     Router::get('/api/account-work-batches/{id}/items/{itemId}/logs', AccountWorkController::class . '@itemLogs');
     Router::post('/api/account-work-batches/enqueue', AccountWorkController::class . '@enqueue');
     // 全角色可创建「拉取视频列表」（不走 account.work 写权限；路径不在 RoutePermissionMap 写规则内）
