@@ -27,7 +27,16 @@ location /ws-relay {
 
 对外用 HTTPS 站点时即为 `wss://你的域名/ws-relay`。
 
-## PHP 侧环境变量（php-fpm 必须能读到，宝塔在 PHP 配置里关闭 clear_env 或写入 fpm 池 env[...]）
+## PHP 侧配置（二选一）
+
+**推荐（宝塔）**：在 `ws-relay/.env` 写配置，PHP 会自动读取（不依赖 php-fpm 传 env）：
+
+```bash
+cp /www/wwwroot/tkswarm-api/ws-relay/.env.example /www/wwwroot/tkswarm-api/ws-relay/.env
+# 编辑 .env，SECRET 与 pm2 中继一致
+```
+
+也可仍用 php-fpm `env[...]`（须关闭 clear_env）：
 
 | 变量 | 说明 |
 | --- | --- |

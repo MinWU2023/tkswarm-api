@@ -1320,11 +1320,56 @@ class AccountBrowserEnvService
         ];
     }
 
+    /**
+     * 读取中继配置：环境变量优先；宝塔 PHP-FPM 常读不到 env，再回退 ws-relay/.env
+     */
+    private static function relayConfig(string $key, string $default = ''): string
+    {
+        $fromEnv = getenv($key);
+        if ($fromEnv !== false && trim((string)$fromEnv) !== '') {
+            return trim((string)$fromEnv);
+        }
+        if (isset($_ENV[$key]) && trim((string)$_ENV[$key]) !== '') {
+            return trim((string)$_ENV[$key]);
+        }
+        if (isset($_SERVER[$key]) && trim((string)$_SERVER[$key]) !== '') {
+            return trim((string)$_SERVER[$key]);
+        }
+        static $fileMap = null;
+        if ($fileMap === null) {
+            $fileMap = [];
+            $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ws-relay' . DIRECTORY_SEPARATOR . '.env';
+            if (is_file($path) && is_readable($path)) {
+                foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+                    $line = trim((string)$line);
+                    if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) {
+                        continue;
+                    }
+                    [$k, $v] = explode('=', $line, 2);
+                    $k = trim($k);
+                    $v = trim($v);
+                    if ($k === '') {
+                        continue;
+                    }
+                    if (
+                        (str_starts_with($v, '"') && str_ends_with($v, '"'))
+                        || (str_starts_with($v, "'") && str_ends_with($v, "'"))
+                    ) {
+                        $v = substr($v, 1, -1);
+                    }
+                    $fileMap[$k] = $v;
+                }
+            }
+        }
+        $fromFile = $fileMap[$key] ?? '';
+        return $fromFile !== '' ? $fromFile : $default;
+    }
+
     /** 通过 WSS 中继把「占用已解除」只通知给指定主机（失败不影响释放；客户端重连会重新入队补漏） */
     public static function notifyPackRelay(string $profileId, string $hostId, int $seq = 0, int $queueSize = 0): bool
     {
-        $url = trim((string)(getenv('TKSWARM_RELAY_NOTIFY_URL') ?: 'http://127.0.0.1:8998/notify'));
-        $secret = trim((string)(getenv('TKSWARM_RELAY_SECRET') ?: ''));
+        $url = self::relayConfig('TKSWARM_RELAY_NOTIFY_URL', 'http://127.0.0.1:8998/notify');
+        $secret = self::relayConfig('TKSWARM_RELAY_SECRET');
         if ($hostId === '' || $secret === '' || !function_exists('curl_init')) {
             return false;
         }
@@ -1351,7 +1396,7 @@ class AccountBrowserEnvService
     /** 签发中继连接票据：base64url(JSON{h,e}).hex(hmac)；客户端只需普通 API 鉴权即可换取 */
     public static function packRelayTicket(string $hostId, int $ttlSeconds = 3600): array
     {
-        $secret = trim((string)(getenv('TKSWARM_RELAY_SECRET') ?: ''));
+        $secret = self::relayConfig('TKSWARM_RELAY_SECRET');
         $hostId = trim($hostId);
         if ($secret === '' || $hostId === '') {
             return ['ok' => false, 'message' => '中继未配置（缺少 TKSWARM_RELAY_SECRET）或缺少 hostId'];
@@ -1363,7 +1408,7 @@ class AccountBrowserEnvService
             'ok' => true,
             'ticket' => $payload . '.' . $sig,
             'expiresAt' => $exp,
-            'url' => trim((string)(getenv('TKSWARM_RELAY_PUBLIC_URL') ?: '')),
+            'url' => self::relayConfig('TKSWARM_RELAY_PUBLIC_URL'),
         ];
     }
 
