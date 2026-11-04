@@ -1474,8 +1474,12 @@ class AccountWorkBatchService
      * 仅领取「账号尚有空闲比特环境」的 pending 总任务；领取时占用环境为 busy。
      * @return array<string,mixed>|null
      */
-    public static function claimBatch(string $workerId, int $leaseSeconds = 300, ?int $ownerFilter = null): ?array
-    {
+    public static function claimBatch(
+        string $workerId,
+        int $leaseSeconds = 300,
+        ?int $ownerFilter = null,
+        bool $serverBrowserOnly = false
+    ): ?array {
         self::ensureSchema();
         self::reclaimExpiredLeases();
         // 把已到点的定时任务挂进会话，再领取
@@ -1501,6 +1505,24 @@ class AccountWorkBatchService
                 foreach ($excludeIds as $eid) {
                     $params[] = $eid;
                 }
+            }
+            // 服务器浏览器自动执行：只领客服坐席 / linux 拓客，不抢桌面 general
+            $serverOnlySql = '';
+            if ($serverBrowserOnly) {
+                $serverOnlySql = " AND (
+                     COALESCE(b.batch_scope,'general') = 'cs_seat'
+                     OR (
+                       COALESCE(b.batch_scope,'general') = 'ai_lead'
+                       AND EXISTS (
+                         SELECT 1 FROM account_work_items li
+                         WHERE li.batch_id=b.id AND li.status IN ('pending','running')
+                           AND (
+                             li.payload_json LIKE '%\"browserBackend\":\"linux\"%'
+                             OR li.payload_json LIKE '%\"browser_backend\":\"linux\"%'
+                           )
+                       )
+                     )
+                   )";
             }
 
             // 常规总任务优先；同账号有 general 未完成时不领 ai_lead
@@ -1548,6 +1570,7 @@ class AccountWorkBatchService
                          )
                      )
                    )
+                   {$serverOnlySql}
                    {$ownerSql}
                    {$excludeSql}
                  ORDER BY

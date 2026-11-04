@@ -2512,7 +2512,11 @@ class NodeBridgeController extends Controller
         if ($ownerFilter < 1) {
             $ownerFilter = null;
         }
-        $batch = AccountWorkBatchService::claimBatch($workerId, $lease, $ownerFilter);
+        $serverBrowserOnly = filter_var(
+            $request->input('serverBrowserOnly', $request->input('server_browser_only', false)),
+            FILTER_VALIDATE_BOOLEAN
+        );
+        $batch = AccountWorkBatchService::claimBatch($workerId, $lease, $ownerFilter, $serverBrowserOnly);
         if (!$batch) {
             return $this->success(null, '暂无待执行账号会话');
         }
