@@ -1321,7 +1321,8 @@ class AccountBrowserEnvService
     }
 
     /**
-     * 读取中继配置：环境变量优先；宝塔 PHP-FPM 常读不到 env，再回退 ws-relay/.env
+     * 读取中继配置：环境变量优先；宝塔 PHP-FPM 常读不到 env，再回退本地文件
+     * 候选路径：ws-relay/.env、storage/relay.env（后者便于 www 可读）
      */
     private static function relayConfig(string $key, string $default = ''): string
     {
@@ -1338,8 +1339,15 @@ class AccountBrowserEnvService
         static $fileMap = null;
         if ($fileMap === null) {
             $fileMap = [];
-            $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ws-relay' . DIRECTORY_SEPARATOR . '.env';
-            if (is_file($path) && is_readable($path)) {
+            $root = dirname(__DIR__, 2);
+            $candidates = [
+                $root . DIRECTORY_SEPARATOR . 'ws-relay' . DIRECTORY_SEPARATOR . '.env',
+                $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'relay.env',
+            ];
+            foreach ($candidates as $path) {
+                if (!is_file($path) || !is_readable($path)) {
+                    continue;
+                }
                 foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
                     $line = trim((string)$line);
                     if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) {
@@ -1357,7 +1365,10 @@ class AccountBrowserEnvService
                     ) {
                         $v = substr($v, 1, -1);
                     }
-                    $fileMap[$k] = $v;
+                    // 先出现的文件优先，已有键不覆盖
+                    if (!isset($fileMap[$k]) || $fileMap[$k] === '') {
+                        $fileMap[$k] = $v;
+                    }
                 }
             }
         }
@@ -1398,8 +1409,11 @@ class AccountBrowserEnvService
     {
         $secret = self::relayConfig('TKSWARM_RELAY_SECRET');
         $hostId = trim($hostId);
-        if ($secret === '' || $hostId === '') {
-            return ['ok' => false, 'message' => '中继未配置（缺少 TKSWARM_RELAY_SECRET）或缺少 hostId'];
+        if ($secret === '') {
+            return ['ok' => false, 'message' => '中继未配置（缺少 TKSWARM_RELAY_SECRET：请写 ws-relay/.env 或 storage/relay.env，并确保 PHP-FPM 用户可读）'];
+        }
+        if ($hostId === '') {
+            return ['ok' => false, 'message' => '缺少 hostId'];
         }
         $exp = time() + max(60, $ttlSeconds);
         $payload = rtrim(strtr(base64_encode(json_encode(['h' => $hostId, 'e' => $exp], JSON_UNESCAPED_UNICODE)), '+/', '-_'), '=');
