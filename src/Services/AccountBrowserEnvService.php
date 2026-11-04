@@ -1129,10 +1129,19 @@ class AccountBrowserEnvService
             }
             $holderHost = self::hostIdFromWorkerOrLock($lockedBy);
             $hint = $holderHost !== '' ? $holderHost : $lockedBy;
+            $baseMeta = self::packMeta($profileId);
+            if (!is_array($baseMeta)) {
+                $baseMeta = [];
+            }
             return [
                 'ok' => false,
-                'message' => '该环境正在其它主机使用（' . $hint . '），请稍后再试或等对方关闭后上传',
-                'meta' => self::packMeta($profileId),
+                'message' => '该环境正在其它主机使用（' . $hint . '），请等待对方登录完成并上传凭证后自动继续',
+                'meta' => array_merge($baseMeta, [
+                    'code' => 'PACK_LEASE_BUSY',
+                    'holderHost' => $hint,
+                    'leaseUntil' => $leaseUntil,
+                    'lockedBy' => $lockedBy,
+                ]),
             ];
         }
 
