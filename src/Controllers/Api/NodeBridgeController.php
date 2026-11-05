@@ -2179,6 +2179,13 @@ class NodeBridgeController extends Controller
         $aid = (int)$account['id'];
         $translated = (string)$request->input('translated', '');
         $status = (string)$request->input('status', 'sent');
+        // 带 recordId：该消息已在入队时入库（同步中），这里只更新状态，不再重复插入
+        $recordId = (int)$request->input('recordId', $request->input('record_id', 0));
+        if ($recordId > 0) {
+            $st = in_array($status, ['sent', 'synced'], true) ? 'synced' : ($status === 'failed' ? 'failed' : $status);
+            DB::query('UPDATE chat_records SET status=? WHERE id=? AND user_id=?', [$st, $recordId, $friendId]);
+            return $this->success(['id' => $recordId, 'account_id' => $aid, 'friend_id' => $friendId, 'status' => $st], '私信状态已更新');
+        }
         DB::query(
             "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status)
              VALUES (?,?,'out','text',?,?,?)",

@@ -1381,6 +1381,18 @@ class ChatController extends Controller
             $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');
             $payload['toUser'] = $payload['recipient'];
             $payload['translated'] = trim((string)$request->input('translated', ''));
+            // 先入库成聊天记录，标记「同步中」；任务收尾时（finishItem）改为 synced / failed
+            DB::query(
+                "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status, owner_id)
+                 VALUES (?,?, 'out', 'text', ?, ?, 'syncing', ?)",
+                [$accountId, $friendId, $content, $payload['translated'], $this->writeOwnerId()]
+            );
+            $recordId = (int)DB::getPdo()->lastInsertId();
+            $payload['recordId'] = $recordId;
+            DB::query(
+                "UPDATE chat_users SET last_message=?, last_direction='out', last_message_at=CURRENT_TIMESTAMP, unread_count=0, is_new=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [mb_substr(($payload['translated'] !== '' ? $payload['translated'] : $content), 0, 200), $friendId]
+            );
         }
         if ($taskType === 'sync_fans') {
             $listKind = in_array($action, ['sync_following', 'refresh_following'], true) ? 'following' : 'followers';
@@ -1420,6 +1432,10 @@ class ChatController extends Controller
                 'batchScope' => 'cs_seat',
             ], '已推送坐席任务到服务器浏览器队列');
         } catch (\Throwable $e) {
+            // 入队失败：已先入库的记录标记失败，避免永远停在「同步中」
+            if (!empty($payload['recordId'])) {
+                DB::query("UPDATE chat_records SET status='failed' WHERE id=?", [(int)$payload['recordId']]);
+            }
             return $this->error($e->getMessage(), 422);
         }
     }

@@ -1999,6 +1999,27 @@ class AccountWorkBatchService
     /**
      * @param array<string,mixed>|null $result
      */
+    /** 批量置失败前：把该批次里未完成的坐席发信（dm_reply）对应的聊天记录从「同步中」改为失败 */
+    private static function syncSeatRecordsOnBatchFail(int $batchId): void
+    {
+        try {
+            $rows = DB::select(
+                "SELECT payload_json FROM account_work_items
+                 WHERE batch_id=? AND task_type='dm_reply' AND status IN ('pending','running','paused')",
+                [$batchId]
+            ) ?: [];
+            foreach ($rows as $r) {
+                $pl = json_decode((string)($r['payload_json'] ?? '{}'), true);
+                $recordId = is_array($pl) ? (int)($pl['recordId'] ?? 0) : 0;
+                if ($recordId > 0) {
+                    DB::query("UPDATE chat_records SET status='failed' WHERE id=? AND status='syncing'", [$recordId]);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[chat_record_sync] batch fail: ' . $e->getMessage());
+        }
+    }
+
     public static function finishItem(
         int $batchId,
         int $itemId,
@@ -2092,6 +2113,22 @@ class AccountWorkBatchService
                 \App\Services\PlanTask\PullDataAnalysisService::enqueueFromWorkItem(is_array($fresh) ? $fresh : $item);
             } catch (\Throwable $e) {
                 error_log('[pull_data_analysis] enqueue failed: ' . $e->getMessage());
+            }
+        }
+
+        // 坐席发信：回写聊天记录同步状态（成功=synced，失败/跳过=failed）
+        if ($type === 'dm_reply') {
+            try {
+                $pl = json_decode((string)($item['payload_json'] ?? '{}'), true);
+                $recordId = is_array($pl) ? (int)($pl['recordId'] ?? 0) : 0;
+                if ($recordId > 0) {
+                    DB::query(
+                        "UPDATE chat_records SET status=? WHERE id=? AND status='syncing'",
+                        [$status === 'completed' ? 'synced' : 'failed', $recordId]
+                    );
+                }
+            } catch (\Throwable $e) {
+                error_log('[chat_record_sync] ' . $e->getMessage());
             }
         }
 
@@ -2574,6 +2611,7 @@ class AccountWorkBatchService
             );
         } elseif ($forceStatus === 'failed') {
             $status = 'failed';
+            self::syncSeatRecordsOnBatchFail($batchId);
             $openItems = DB::select(
                 "SELECT id, task_type, task_ref_id, payload_json FROM account_work_items
                  WHERE batch_id=? AND status IN ('pending','running','paused')",
@@ -2757,6 +2795,7 @@ class AccountWorkBatchService
              WHERE batch_id=? AND status IN ('pending','running','paused')",
             [$batchId]
         ) ?: [];
+        self::syncSeatRecordsOnBatchFail($batchId);
         $pending = count($openItems);
         DB::query(
             "UPDATE account_work_items
