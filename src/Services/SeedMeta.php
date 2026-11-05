@@ -558,6 +558,12 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET parent_id=210, sort_order=2, visible=1 WHERE id=212 OR (view='proxies' AND subview='io')");
             DB::query("UPDATE navigation_menus SET parent_id=210, sort_order=3, visible=1 WHERE id=213 OR (view='proxies' AND subview='create')");
             DB::query("UPDATE navigation_menus SET sort_order=3 WHERE id=120 OR (parent_id=100 AND view='accounts' AND subview='browser' AND title='环境与指纹')");
+            // 注册环境：挂在「环境与指纹」下
+            DB::query(
+                "INSERT IGNORE INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (123, 120, '注册环境', 'plus-square', '', 'registerEnvs', '', 3, 1)"
+            );
             DB::query("UPDATE navigation_menus SET sort_order=4 WHERE id=130 OR (parent_id=100 AND view='logs' AND title='操作与审计')");
             DB::query("UPDATE navigation_menus SET visible=0 WHERE id=200 OR (parent_id IS NULL AND title='代理网络')");
             DB::query("UPDATE navigation_menus SET parent_id=100, title='分组管理', icon='folder', path='', view='groups', subview='account', sort_order=2, visible=1 WHERE id=114 OR (view='groups' AND parent_id=110)");

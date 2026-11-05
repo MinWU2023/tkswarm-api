@@ -210,6 +210,11 @@ class RoutePermissionMap
                 'write' => ['proxy.create', 'proxy.update'],
                 'delete' => ['proxy.delete', 'proxy.create'],
             ],
+            '/api/register-envs' => [
+                'read' => ['account.view', 'account.create'],
+                'write' => ['account.create', 'account.update'],
+                'delete' => ['account.delete', 'account.create'],
+            ],
             '/api/groups' => [
                 'read' => ['group.view', 'group.manage', 'account.view'],
                 'write' => ['group.create', 'group.update', 'group.manage'],

@@ -7,6 +7,7 @@ use App\Middlewares\AuthMiddleware;
 use App\Middlewares\PermissionMiddleware;
 use App\Controllers\Api\AccountController;
 use App\Controllers\Api\ProxyController;
+use App\Controllers\Api\RegisterEnvController;
 use App\Controllers\Api\MenuController;
 use App\Controllers\Api\AuthController;
 use App\Controllers\Api\TaskController;
@@ -364,6 +365,16 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/proxies/{id}/unbind-accounts', ProxyController::class . '@unbindAccounts');
     Router::post('/api/proxies/{id}/test', ProxyController::class . '@test');
     Router::delete('/api/proxies/{id}', ProxyController::class . '@delete');
+
+    // 注册环境：代理 + 环境 + 待注册账号信息，发布后才生成正式账号
+    Router::get('/api/register-envs', RegisterEnvController::class . '@list');
+    Router::post('/api/register-envs', RegisterEnvController::class . '@create');
+    Router::get('/api/register-envs/{id}', RegisterEnvController::class . '@show');
+    Router::put('/api/register-envs/{id}', RegisterEnvController::class . '@update');
+    Router::delete('/api/register-envs/{id}', RegisterEnvController::class . '@delete');
+    Router::get('/api/register-envs/{id}/bundle', RegisterEnvController::class . '@bundle');
+    Router::put('/api/register-envs/{id}/profile', RegisterEnvController::class . '@attachProfile');
+    Router::post('/api/register-envs/{id}/published', RegisterEnvController::class . '@markPublished');
 
     Router::get('/api/tasks/export.csv', TaskController::class . '@exportCsv');
     Router::get('/api/tasks/import-template.csv', TaskController::class . '@importTemplate');
