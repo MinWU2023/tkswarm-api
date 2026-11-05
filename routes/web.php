@@ -29,6 +29,7 @@ use App\Controllers\Api\EnvInstallerController;
 use App\Controllers\Api\AiPlatformController;
 use App\Controllers\Api\SmtpConfigController;
 use App\Controllers\Api\DmWeightConfigController;
+use App\Controllers\Api\NocaptchaKeyController;
 use App\Controllers\Api\AiPromptTemplateController;
 use App\Controllers\Api\AiCallLogController;
 use App\Controllers\Api\NodeBridgeController;
@@ -181,6 +182,14 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::put('/api/dm-weight-config', DmWeightConfigController::class . '@save');
     Router::post('/api/dm-weight-config', DmWeightConfigController::class . '@save');
     Router::post('/api/dm-weight-config/reset', DmWeightConfigController::class . '@reset');
+
+    // 开发管理 · NoCaptchaAI 密钥（仅超管，同一时间仅一条启用）
+    Router::get('/api/nocaptcha-keys', NocaptchaKeyController::class . '@list');
+    Router::post('/api/nocaptcha-keys', NocaptchaKeyController::class . '@create');
+    Router::put('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@update');
+    Router::post('/api/nocaptcha-keys/{id}/enable', NocaptchaKeyController::class . '@enable');
+    Router::post('/api/nocaptcha-keys/{id}/disable', NocaptchaKeyController::class . '@disable');
+    Router::delete('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@delete');
 
     Router::get('/api/meta', MetaController::class . '@index');
     Router::get('/api/meta/dicts/{domain}', MetaController::class . '@dicts');
