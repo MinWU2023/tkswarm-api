@@ -41,6 +41,27 @@ class NocaptchaKeyController extends Controller
         }
     }
 
+    /**
+     * 获取当前启用（status=1）的 NoCaptchaAI 密钥记录。
+     * @return array<string,mixed>|null
+     */
+    public static function activeRecord(): ?array
+    {
+        try {
+            self::ensureSchema();
+            $row = DB::selectOne('SELECT * FROM nocaptcha_keys WHERE status=1 ORDER BY id DESC LIMIT 1');
+            return $row ?: null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    public static function activeApiKey(): string
+    {
+        $row = self::activeRecord();
+        return trim((string)($row['api_key'] ?? ''));
+    }
+
     private function denyUnlessLoginSuper(): ?Response
     {
         DataScope::bootFromGlobals();

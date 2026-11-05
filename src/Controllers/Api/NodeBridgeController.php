@@ -1395,7 +1395,26 @@ class NodeBridgeController extends Controller
     public function settingsForNode(Request $request): Response
     {
         $map = \App\Services\UserSettingsService::getForUser(null, false);
+        $activeKey = NocaptchaKeyController::activeApiKey();
+        $map['nocaptchaApiKey'] = $activeKey;
         return $this->success($map);
+    }
+
+    /** Node / LinuxBrowse 读取当前启用的 NoCaptchaAI 密钥记录（status=1） */
+    public function nocaptchaKey(Request $request): Response
+    {
+        $row = NocaptchaKeyController::activeRecord();
+        $apiKey = trim((string)($row['api_key'] ?? ''));
+        return $this->success([
+            'enabled' => $row !== null && $apiKey !== '',
+            'id' => (int)($row['id'] ?? 0),
+            'email' => (string)($row['email'] ?? ''),
+            'username' => (string)($row['username'] ?? ''),
+            'apiKey' => $apiKey,
+            'api_key' => $apiKey,
+            'status' => $row ? (int)($row['status'] ?? 0) : 0,
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+        ]);
     }
 
     /** Node 基础设置：可选已健康检测成功的服务器浏览器列表 */

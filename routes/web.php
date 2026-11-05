@@ -89,6 +89,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     // 运维审计：查 proxies 表缺密码记录
     Router::get('/api/debug/proxies-missing-password', ProxyController::class . '@missingPasswordAudit');
 
+    // 服务器浏览器 / Node 执行器读取当前启用的 NoCaptchaAI 密钥
+    Router::get('/api/node/nocaptcha-key', NodeBridgeController::class . '@nocaptchaKey');
+
     // 运营控制台 SPA（静态资源走 public/admin，深链回落）
     Router::get('/admin', ConsoleController::class . '@spa');
     Router::get('/admin/', ConsoleController::class . '@spa');
