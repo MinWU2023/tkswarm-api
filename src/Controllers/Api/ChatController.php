@@ -171,6 +171,45 @@ class ChatController extends Controller
         return null;
     }
 
+    /**
+     * 客服坐席读/同步：与客服账号列表（chatAccountListFilters → applyAccountListScope）同一套可见范围。
+     * 账号在列表里能看到，就能查看粉丝/关注、刷新、查状态；不再走另一套单行归属判断。
+     */
+    private function assertChatAccountVisible(?array $account): ?Response
+    {
+        if (!$account) {
+            return $this->error('资源不存在', 404);
+        }
+        $filters = ['a.id=?'];
+        $params = [(int)($account['id'] ?? 0)];
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
+        $row = DB::selectOne('SELECT a.id FROM accounts a WHERE ' . implode(' AND ', $filters), $params);
+        if (!$row) {
+            return $this->error('无权访问该资源', 403);
+        }
+        return null;
+    }
+
+    /**
+     * 本控制器内 assertOwns 的对象都是客服好友行（chat_users 联 accounts）。
+     * 好友能否访问，跟其所属账号在客服账号列表里是否可见保持一致，不再要求 owner_id 严格等于当前用户。
+     */
+    protected function assertOwns(?array $row, string $field = 'owner_id'): ?Response
+    {
+        if (!$row) {
+            return $this->error('资源不存在', 404);
+        }
+        $accountId = (int)($row['account_id'] ?? 0);
+        if ($accountId < 1 && (int)($row['id'] ?? 0) > 0) {
+            $f = DB::selectOne('SELECT account_id FROM chat_users WHERE id=?', [(int)$row['id']]);
+            $accountId = (int)($f['account_id'] ?? 0);
+        }
+        if ($accountId < 1) {
+            return $this->error('资源不存在', 404);
+        }
+        return $this->assertChatAccountVisible(['id' => $accountId]);
+    }
+
     public function connect(Request $request, string $id): Response
     {
         $this->ensureSchema();
@@ -280,7 +319,7 @@ class ChatController extends Controller
         }
         if (!$global) {
             $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
-            if ($err = $this->assertAccountOwns($account)) {
+            if ($err = $this->assertChatAccountVisible($account)) {
                 return $err;
             }
         }
@@ -840,7 +879,7 @@ class ChatController extends Controller
             'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id FROM accounts WHERE id=?',
             [(int)$id]
         );
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $hasEnv = trim((string)($account['browser_profile_id'] ?? '')) !== ''
@@ -900,7 +939,7 @@ class ChatController extends Controller
         $this->ensureSchema();
         DataScope::ensureColumns();
         $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $taskId = (int)$request->get('taskId', 0);
@@ -958,7 +997,7 @@ class ChatController extends Controller
             'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id FROM accounts WHERE id=?',
             [(int)$id]
         );
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $hasEnv = trim((string)($account['browser_profile_id'] ?? '')) !== ''
@@ -1016,7 +1055,7 @@ class ChatController extends Controller
         $this->ensureSchema();
         DataScope::ensureColumns();
         $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $taskId = (int)$request->get('taskId', 0);
@@ -1295,7 +1334,7 @@ class ChatController extends Controller
             'SELECT id, username, browser_profile_id, tkswarm_browser_profile_id, linux_browser_profile_id, owner_id, login_status FROM accounts WHERE id=? AND enabled=1',
             [$accountId]
         );
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $hasEnv = trim((string)($account['tkswarm_browser_profile_id'] ?? '')) !== ''
@@ -1397,7 +1436,7 @@ class ChatController extends Controller
             return $this->error('坐席任务不存在', 404);
         }
         $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)($row['account_id'] ?? 0)]);
-        if ($err = $this->assertAccountOwns($account)) {
+        if ($err = $this->assertChatAccountVisible($account)) {
             return $err;
         }
         $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
