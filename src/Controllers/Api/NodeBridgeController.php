@@ -988,7 +988,7 @@ class NodeBridgeController extends Controller
                             (int)($f['unreadCount'] ?? $f['unread_count'] ?? 0),
                             (string)($f['lastMessage'] ?? $f['last_message'] ?? ''),
                             (string)($f['lastDirection'] ?? $f['last_direction'] ?? ''),
-                            !empty($f['isNew'] ?? $f['is_new']) ? 1 : 0,
+                            !empty($f['isNew'] ?? $f['is_new'] ?? 0) ? 1 : 0,
                         ]
                     );
                 }
