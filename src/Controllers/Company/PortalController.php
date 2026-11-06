@@ -12,7 +12,10 @@ use App\Core\Response;
  */
 class PortalController extends Controller
 {
-    public function spa(Request $request): Response
+    /**
+     * SPA 入口；部分路由带 {id}，PHP 8 named args 要求方法声明同名参数。
+     */
+    public function spa(Request $request, string $id = ''): Response
     {
         $file = dirname(__DIR__, 3) . '/public/company/index.html';
         if (!is_file($file)) {
