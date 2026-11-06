@@ -142,6 +142,10 @@ class VideoDeliveryService
 
         self::ensureOrderColumns();
         self::ensureFileColumns();
+        try {
+            CustomVideoTypeService::ensureSchema();
+        } catch (\Throwable $e) {
+        }
     }
 
     private static function ensureOrderColumns(): void
@@ -621,6 +625,25 @@ class VideoDeliveryService
         };
     }
 
+    public static function resolveSettleTypeLabel(string $code): string
+    {
+        $code = trim($code);
+        if ($code === '') {
+            return '未指定';
+        }
+        try {
+            $type = CustomVideoTypeService::findByCode($code);
+            if ($type) {
+                $label = (string)($type['settlementTitle'] ?: $type['title'] ?: '');
+                if ($label !== '') {
+                    return $label;
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+        return $code;
+    }
+
     public static function versionLabel(string $code): string
     {
         return self::VERSIONS[$code] ?? ($code !== '' ? $code : '标准版');
@@ -802,7 +825,8 @@ class VideoDeliveryService
             'clientId' => (int)($row['client_id'] ?? 0),
             'title' => (string)($row['title'] ?? ''),
             'requirements' => (string)($row['requirements'] ?? ''),
-            'settleType' => (string)($row['settle_type'] ?? '按次结算'),
+            'settleType' => self::resolveSettleTypeLabel((string)($row['settle_type'] ?? '')),
+            'settleTypeCode' => (string)($row['settle_type'] ?? ''),
             'pointsCost' => (int)($row['points_cost'] ?? 0),
             'status' => $status,
             'statusLabel' => self::statusLabel($status),

@@ -286,6 +286,15 @@ class RoutePermissionMap
                 'write' => ['publish.video_delivery.update', 'publish.video_delivery'],
                 'delete' => ['publish.video_delivery.update', 'publish.video_delivery'],
             ],
+            // 类型列表：交付页计价可读；写入由控制器校验 system.video_delivery_types
+            '/api/video-delivery-types' => [
+                'read' => [
+                    'publish.video_delivery.view', 'publish.video_delivery',
+                    'system.video_delivery_types', 'admin',
+                ],
+                'write' => ['system.video_delivery_types', 'admin'],
+                'delete' => ['system.video_delivery_types', 'admin'],
+            ],
             '/api/interaction-templates' => [
                 'read' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],
                 'write' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],

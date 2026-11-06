@@ -8,6 +8,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
 use App\Middlewares\CorsMiddleware;
+use App\Services\CustomVideoTypeService;
 use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\VideoDeliveryService;
@@ -233,11 +234,37 @@ class VideoDeliveryController extends Controller
             $title = '定制视频 ' . date('Ymd-His');
         }
         $requirements = trim((string)$request->input('requirements', ''));
-        $settleType = trim((string)$request->input('settleType', $request->input('settle_type', '按次结算')));
+        $settleType = trim((string)$request->input('settleType', $request->input('settle_type', '')));
         if ($settleType === '') {
-            $settleType = '按次结算';
+            return $this->error('请选择结算视频类型', 422);
         }
-        $pointsCost = max(0, (int)$request->input('pointsCost', $request->input('points_cost', 0)));
+
+        $materialIds = $this->parseMaterialIds($request);
+        $qtyHint = (int)$request->input('quantity', $request->input('qty', 0));
+        if ($qtyHint <= 0) {
+            $qtyHint = max(1, count($materialIds));
+        }
+        $manualPtsRaw = $request->input('pointsCost', $request->input('points_cost', null));
+        $manualPts = $manualPtsRaw === null || $manualPtsRaw === '' ? null : (int)$manualPtsRaw;
+
+        CustomVideoTypeService::ensureSchema();
+        $quote = CustomVideoTypeService::quote($settleType, $qtyHint, $manualPts);
+        if (empty($quote['ok'])) {
+            return $this->error((string)($quote['message'] ?? '计价失败'), 422);
+        }
+        $pointsCost = max(0, (int)$quote['pointsCost']);
+        $settleTypeCode = (string)$quote['code'];
+        // 落库存英文 code，列表展示时再解析标题
+        $settleType = $settleTypeCode;
+
+        $balance = max(0, (int)($mapped['points'] ?? 0));
+        if ($pointsCost > $balance) {
+            return $this->error(
+                "积分不足：本次需 {$pointsCost}，当前余额 {$balance}",
+                422
+            );
+        }
+
         $status = VideoDeliveryService::normalizeOrderStatus(
             (string)$request->input('status', 'completed')
         );
@@ -252,6 +279,12 @@ class VideoDeliveryController extends Controller
             if ($authStart !== '' || $authEnd !== '') {
                 $requirements .= "；服务期：{$authStart} ~ {$authEnd}";
             }
+        }
+        if (!empty($quote['title'])) {
+            $requirements = trim($requirements . "\n结算类型：" . $quote['title']
+                . (empty($quote['manual']) && !empty($quote['unitPrice'])
+                    ? "（单价 {$quote['unitPrice']} × {$quote['quantity']}）"
+                    : ''));
         }
 
         $deliveredAt = $status === 'completed' ? date('Y-m-d H:i:s') : null;
@@ -274,7 +307,6 @@ class VideoDeliveryController extends Controller
         );
         $orderId = (int)DB::lastInsertId();
 
-        $materialIds = $this->parseMaterialIds($request);
         $linked = $this->attachMaterials($adminUserId, $orderId, $materialIds);
         if ($linked instanceof Response) {
             DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
@@ -293,11 +325,33 @@ class VideoDeliveryController extends Controller
         }
 
         if ($pointsCost > 0) {
-            $pts = max(0, (int)($mapped['points'] ?? 0) - $pointsCost);
-            DB::query(
-                'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
-                [$pts, $profileId]
-            );
+            try {
+                $ok = DB::transaction(static function () use ($profileId, $pointsCost) {
+                    $fresh = DB::selectOne(
+                        'SELECT points FROM video_delivery_clients WHERE id=? FOR UPDATE',
+                        [$profileId]
+                    );
+                    $cur = max(0, (int)($fresh['points'] ?? 0));
+                    if ($pointsCost > $cur) {
+                        return false;
+                    }
+                    DB::query(
+                        'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
+                        [$cur - $pointsCost, $profileId]
+                    );
+                    return true;
+                });
+            } catch (\Throwable $e) {
+                $ok = false;
+            }
+            if (!$ok) {
+                DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
+                $cur = max(0, (int)(DB::selectOne(
+                    'SELECT points FROM video_delivery_clients WHERE id=?',
+                    [$profileId]
+                )['points'] ?? 0));
+                return $this->error("积分不足：本次需 {$pointsCost}，当前余额 {$cur}", 422);
+            }
         }
 
         $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);

@@ -87,6 +87,7 @@ class SeedMeta
             ['dmWeightConfig', ['system.dm_weight', 'admin']],
             ['dmWeightConfig', ['system.dm_weight', 'admin']],
             ['nocaptchaKeys', ['system.nocaptcha', 'admin']],
+            ['videoDeliveryTypes', ['system.video_delivery_types', 'admin']],
             ['tasks', [
                 'publish.tasks', 'publish.tasks.view', 'publish.mass', 'publish.mass.view',
                 'warm.tasks', 'warm.view', 'publish.materials', 'publish.materials.view',
@@ -236,6 +237,7 @@ class SeedMeta
             ['system.smtp', 'SMTP配置(超管)'],
             ['system.dm_weight', '日私信权重(超管)'],
             ['system.nocaptcha', 'NoCaptchaAI密钥'],
+            ['system.video_delivery_types', '视频交付类型'],
             ['menu.visible', '菜单节点'],
         ]);
         $pairs('material_status', [['ready', '可用'], ['disabled', '停用'], ['missing', '文件缺失']]);
@@ -788,6 +790,11 @@ class SeedMeta
                  VALUES (760, 820, 'NoCaptchaAI密钥', 'key', '', 'nocaptchaKeys', '', 6, 1)"
             );
             DB::query("UPDATE navigation_menus SET parent_id=820, title='NoCaptchaAI密钥', icon='key', path='', view='nocaptchaKeys', subview='', sort_order=6, visible=1 WHERE id=760");
+            DB::query(
+                "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (770, 820, '视频交付类型', 'clapperboard', '', 'videoDeliveryTypes', '', 7, 1)"
+            );
+            DB::query("UPDATE navigation_menus SET parent_id=820, title='视频交付类型', icon='clapperboard', path='', view='videoDeliveryTypes', subview='', sort_order=7, visible=1 WHERE id=770");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='帮助文档', icon='book', path='', view='helpDocs', subview='', sort_order=1, visible=1 WHERE id=680");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='工单处理', icon='ticket', path='', view='tickets', subview='', sort_order=2, visible=1 WHERE id=690");
             // 兼容：旧「权限管理中台 / 权限与角色中台」归并到用户角色
@@ -871,6 +878,7 @@ class SeedMeta
                 [98, 'system', 'system.smtp', '管理SMTP配置(仅超管)', 98],
                 [99, 'system', 'system.dm_weight', '管理日私信权重规则(仅超管)', 99],
                 [176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176],
+                [183, 'system', 'system.video_delivery_types', '管理视频交付类型', 183],
             ];
             foreach ($extraPerms as [$id, $mod, $code, $name, $sort]) {
                 DB::query(

@@ -39,6 +39,7 @@ use App\Controllers\Api\PullCommentController;
 use App\Controllers\Api\AutoFollowController;
 use App\Controllers\Api\VideoBoostController;
 use App\Controllers\Api\VideoDeliveryController;
+use App\Controllers\Api\VideoDeliveryTypeController;
 use App\Controllers\Api\AiLeadController;
 use App\Controllers\Api\AiLeadClueController;
 use App\Controllers\Api\IndustryDataController;
@@ -268,6 +269,15 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::patch('/api/video-boost-tasks/{id}/dispatch', VideoBoostController::class . '@patchDispatch');
     Router::post('/api/video-boost-tasks/{id}/cancel', VideoBoostController::class . '@cancel');
     Router::delete('/api/video-boost-tasks/{id}', VideoBoostController::class . '@delete');
+
+    // 开发管理 · 视频交付类型（配置分 × 倍率 = 实际积分）
+    Router::get('/api/video-delivery-types', VideoDeliveryTypeController::class . '@list');
+    Router::post('/api/video-delivery-types/quote', VideoDeliveryTypeController::class . '@quote');
+    Router::put('/api/video-delivery-types/settings', VideoDeliveryTypeController::class . '@saveSettings');
+    Router::post('/api/video-delivery-types/settings', VideoDeliveryTypeController::class . '@saveSettings');
+    Router::post('/api/video-delivery-types', VideoDeliveryTypeController::class . '@create');
+    Router::put('/api/video-delivery-types/{id}', VideoDeliveryTypeController::class . '@update');
+    Router::delete('/api/video-delivery-types/{id}', VideoDeliveryTypeController::class . '@delete');
 
     // 视频交付（视频素材 → 视频交付）
     Router::get('/api/video-delivery-clients', VideoDeliveryController::class . '@list');

@@ -148,6 +148,9 @@ class PermissionCatalog
             [180, 'publish', 'publish.video_boost', '视频增值写入', 180],
             [181, 'publish', 'publish.video_boost.view', '查看视频增值', 181],
             [182, 'publish', 'publish.video_boost.update', '维护视频增值', 182],
+
+            // —— 开发管理 · 视频交付类型 ——
+            [183, 'system', 'system.video_delivery_types', '管理视频交付类型', 183],
         ];
     }
 
@@ -293,6 +296,7 @@ class PermissionCatalog
             self::ensureOpsAdminUserPerms();
             self::ensureVideoDeliveryPerms();
             self::ensureVideoBoostPerms();
+            self::ensureVideoDeliveryTypesPerms();
             self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
@@ -613,6 +617,39 @@ class PermissionCatalog
             'group.assign',
             'system.nocaptcha',
             'menu.760',
+            'system.video_delivery_types',
+            'menu.770',
+        ]);
+    }
+
+    /** 开发管理 · 视频交付类型：运营管理可配；企业客户不授予 */
+    private static function ensureVideoDeliveryTypesPerms(): void
+    {
+        try {
+            MenuPermissionService::syncOne([
+                'id' => 770,
+                'title' => '视频交付类型',
+                'view' => 'videoDeliveryTypes',
+                'subview' => '',
+                'permission_code' => '',
+            ]);
+        } catch (\Throwable $e) {
+        }
+        try {
+            DB::query(
+                "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                 VALUES (183, 'system', 'system.video_delivery_types', '管理视频交付类型', 183)
+                 ON DUPLICATE KEY UPDATE module='system', code='system.video_delivery_types', name='管理视频交付类型', sort_order=183"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            CustomVideoTypeService::ensureSchema();
+        } catch (\Throwable $e) {
+        }
+        self::ensureRoleCodesByName('%运营管理%', [
+            'system.video_delivery_types',
+            'menu.770',
         ]);
     }
 
@@ -850,6 +887,7 @@ class PermissionCatalog
             ['agent.manage', '智能体'],
             ['ai.leads', 'AI拓客'],
             ['system.view', '系统设置'],
+            ['system.video_delivery_types', '视频交付类型'],
             ['menu.visible', '菜单节点'],
         ];
         foreach ($subgroups as $i => [$code, $label]) {
