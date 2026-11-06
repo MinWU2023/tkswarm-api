@@ -103,6 +103,7 @@ class SeedMeta
             ['aiLeadClueData', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['autoFollow', ['ai.leads', 'ai.leads.view', 'account.create', 'publish.tasks', 'account.view']],
             ['videoBoost', ['publish.tasks', 'publish.tasks.view', 'matrix.publish', 'account.create', 'account.view']],
+            ['videoDelivery', ['publish.materials', 'publish.materials.view', 'publish.tasks', 'publish.tasks.view', 'matrix.publish']],
         ];
         foreach ($rows as [$view, $codes]) {
             DB::query(
@@ -547,6 +548,16 @@ class SeedMeta
               (id, parent_id, title, icon, path, view, subview, sort_order, visible)
              VALUES (413, 420, '素材导入', 'upload', '', 'publish', 'material_import', 2, 1)"
         );
+        // 视频交付：挂在「视频素材」下，独立页面
+        try {
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (421, 420, '视频交付', 'film', '', 'videoDelivery', '', 3, 1)
+                 ON DUPLICATE KEY UPDATE parent_id=420, title='视频交付', icon='film', view='videoDelivery', subview='', sort_order=3, visible=1"
+            );
+        } catch (\Throwable $e) {
+        }
         // 修复：此前误把根菜单 400（AI 矩阵）/410（视频发布向导）写成了「视频发布任务」
         try {
             DB::query("UPDATE navigation_menus SET parent_id=NULL, title='AI 矩阵', icon='video', path='', view='publish', subview='tasks', sort_order=4, visible=1 WHERE id=400");
@@ -608,6 +619,15 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET parent_id=510, view='chat', subview='uids', title='UID好友', sort_order=2, visible=1 WHERE title='UID好友' OR (view='publish' AND subview='uids')");
         } catch (\Throwable $e) {
         }
+        try {
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (421, 420, '视频交付', 'film', '', 'videoDelivery', '', 3, 1)
+                 ON DUPLICATE KEY UPDATE parent_id=420, title='视频交付', icon='film', view='videoDelivery', subview='', sort_order=3, visible=1"
+            );
+        } catch (\Throwable $e) {
+        }
         // AI矩阵：一级 → 视频向导（二级）→ 发布/删除/回复/拉列表/拉详情（三级），映射现有 publish 页
         try {
             DB::query("UPDATE navigation_menus SET parent_id=NULL, title='AI矩阵', icon='video', path='', view='publish', subview='tasks', sort_order=5, visible=1 WHERE id=400");
@@ -624,7 +644,20 @@ class SeedMeta
             // 素材 / 账号向导 / 矩阵任务挂在 AI矩阵 下
             DB::query("UPDATE navigation_menus SET parent_id=400, title='视频素材', icon='folder', view='publish', subview='materials', sort_order=2, visible=1 WHERE id=420");
             try {
+                DB::query(
+                    "INSERT INTO navigation_menus
+                      (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                     VALUES (421, 420, '视频交付', 'film', '', 'videoDelivery', '', 3, 1)
+                     ON DUPLICATE KEY UPDATE parent_id=420, title='视频交付', icon='film', view='videoDelivery', subview='', sort_order=3, visible=1"
+                );
+            } catch (\Throwable $e) {
+            }
+            try {
                 DB::query("ALTER TABLE navigation_menus ADD COLUMN permission_code VARCHAR(64) NULL DEFAULT NULL AFTER visible");
+            } catch (\Throwable $e) {
+            }
+            try {
+                DB::query("UPDATE navigation_menus SET permission_code='publish.materials.view' WHERE id=421 OR view='videoDelivery'");
             } catch (\Throwable $e) {
             }
             // 父级默认进「拉取数据」；叶子各自用独立 subview，避免与「修改资料」抢路由

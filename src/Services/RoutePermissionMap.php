@@ -266,6 +266,11 @@ class RoutePermissionMap
                 'write' => ['publish.tasks.create', 'publish.tasks.update', 'publish.tasks', 'matrix.publish', 'account.create'],
                 'delete' => ['publish.tasks.delete', 'publish.tasks', 'matrix.publish', 'account.create'],
             ],
+            '/api/video-delivery-clients' => [
+                'read' => ['publish.materials.view', 'publish.materials', 'publish.tasks', 'matrix.publish'],
+                'write' => ['publish.materials.update', 'publish.materials.create', 'publish.materials', 'publish.tasks'],
+                'delete' => ['publish.materials.delete', 'publish.materials', 'publish.tasks'],
+            ],
             '/api/interaction-templates' => [
                 'read' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],
                 'write' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],

@@ -38,6 +38,7 @@ use App\Controllers\Api\HumanVerifyController;
 use App\Controllers\Api\PullCommentController;
 use App\Controllers\Api\AutoFollowController;
 use App\Controllers\Api\VideoBoostController;
+use App\Controllers\Api\VideoDeliveryController;
 use App\Controllers\Api\AiLeadController;
 use App\Controllers\Api\AiLeadClueController;
 use App\Controllers\Api\IndustryDataController;
@@ -259,6 +260,24 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::patch('/api/video-boost-tasks/{id}/dispatch', VideoBoostController::class . '@patchDispatch');
     Router::post('/api/video-boost-tasks/{id}/cancel', VideoBoostController::class . '@cancel');
     Router::delete('/api/video-boost-tasks/{id}', VideoBoostController::class . '@delete');
+
+    // 视频交付（视频素材 → 视频交付）
+    Router::get('/api/video-delivery-clients', VideoDeliveryController::class . '@list');
+    Router::post('/api/video-delivery-clients', VideoDeliveryController::class . '@create');
+    Router::get('/api/video-delivery-clients/{id}/orders', VideoDeliveryController::class . '@listOrders');
+    Router::post('/api/video-delivery-clients/{id}/orders', VideoDeliveryController::class . '@createOrder');
+    Router::put('/api/video-delivery-clients/{id}/service', VideoDeliveryController::class . '@saveService');
+    Router::post('/api/video-delivery-clients/{id}/token', VideoDeliveryController::class . '@generateToken');
+    Router::post('/api/video-delivery-clients/{id}/check-link', VideoDeliveryController::class . '@checkLink');
+    Router::post('/api/video-delivery-clients/{id}/recharge', VideoDeliveryController::class . '@recharge');
+    Router::get('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@show');
+    Router::put('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@update');
+    Router::delete('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@delete');
+    Router::get('/api/video-delivery-orders/{id}/files', VideoDeliveryController::class . '@orderFiles');
+    Router::post('/api/video-delivery-orders/{id}/notes', VideoDeliveryController::class . '@addNote');
+    Router::get('/api/video-delivery-orders/{id}/downloads', VideoDeliveryController::class . '@downloadRecords');
+    Router::get('/api/video-delivery-files/{id}/stream', VideoDeliveryController::class . '@streamFile');
+    Router::get('/api/video-delivery-files/{id}/download', VideoDeliveryController::class . '@downloadFile');
 
     Router::get('/api/ai-lead-clues', AiLeadClueController::class . '@list');
     Router::get('/api/ai-lead-clues/share-users', AiLeadClueController::class . '@shareRoleUsers');
