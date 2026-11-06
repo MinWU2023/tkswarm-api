@@ -1725,9 +1725,52 @@ html { color-scheme: light; }
   gap: 8px;
   flex-shrink: 0;
 }
-.vd-req-dialog { display: flex; flex-direction: column; gap: 14px; }
+/* 提交视频要求弹框：默认 1280×800 */
+.vd-req-dialog-wrap.el-dialog,
+.el-dialog.vd-req-dialog-wrap {
+  width: 1280px !important;
+  max-width: 96vw !important;
+  height: 800px !important;
+  max-height: 92vh !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.vd-req-dialog-wrap .el-dialog__header {
+  flex: 0 0 auto;
+  padding: 18px 24px 12px;
+  margin-right: 0;
+}
+.vd-req-dialog-wrap .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 24px 16px;
+}
+.vd-req-dialog-wrap .el-dialog__footer {
+  flex: 0 0 auto;
+  padding: 12px 24px 18px;
+  border-top: 1px solid #eef2f7;
+}
+.vd-req-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
 .vd-req-field { display: flex; flex-direction: column; gap: 6px; }
 .vd-req-field > label { font-size: 13px; font-weight: 600; color: #334155; }
+@media (max-width: 1360px) {
+  .vd-req-dialog-wrap.el-dialog,
+  .el-dialog.vd-req-dialog-wrap {
+    width: 96vw !important;
+    height: min(800px, 92vh) !important;
+  }
+}
 .vd-req-type-hint {
   margin-top: 2px;
   padding: 10px 12px;

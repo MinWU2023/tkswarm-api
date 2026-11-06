@@ -2846,9 +2846,12 @@
           modelValue: self.submitVisible,
           'onUpdate:modelValue': function (v) { self.submitVisible = v; },
           title: '提交视频要求',
-          width: '640px',
+          width: '1280px',
+          top: '4vh',
+          class: 'vd-req-dialog-wrap',
           destroyOnClose: true,
-          closeOnClickModal: false
+          closeOnClickModal: false,
+          alignCenter: true
         }, {
           default: function () {
             return h('div', { class: 'vd-req-dialog', vLoading: self.typeLoading }, [
