@@ -94,14 +94,15 @@ class RoutePermissionMap
             ['method' => 'POST', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'PUT', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
-            // SMTP / NoCaptchaAI：中间件放行持码角色；控制器再强制 isLoginSuper
+            // SMTP：中间件放行持码角色；控制器再强制 isLoginSuper
             ['method' => 'GET', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'PUT', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
-            ['method' => 'GET', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
-            ['method' => 'POST', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
-            ['method' => 'PUT', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
-            ['method' => 'DELETE', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
+            // NoCaptchaAI：中间件已登录即可（[]）；控制器按登录账号校验 system.nocaptcha（不受身份切换影响）
+            ['method' => 'GET', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
+            ['method' => 'POST', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
+            ['method' => 'PUT', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
+            ['method' => 'DELETE', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
             ['method' => 'POST', 'pattern' => '#^/api/system/backup#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/system/restore#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
@@ -323,10 +324,11 @@ class RoutePermissionMap
                 'read' => ['system.smtp', 'admin'],
                 'write' => ['system.smtp', 'admin'],
             ],
+            // 细校验在 NocaptchaKeyController（登录账号 system.nocaptcha）；中间件不拦
             '/api/nocaptcha-keys' => [
-                'read' => ['system.nocaptcha', 'admin'],
-                'write' => ['system.nocaptcha', 'admin'],
-                'delete' => ['system.nocaptcha', 'admin'],
+                'read' => [],
+                'write' => [],
+                'delete' => [],
             ],
             '/api/help-' => ['read' => ['system.help', 'system.view', 'rbac.manage'], 'write' => ['system.help', 'rbac.manage']],
             '/api/tickets' => ['read' => ['system.tickets', 'system.view', 'rbac.manage'], 'write' => ['system.tickets', 'rbac.manage']],

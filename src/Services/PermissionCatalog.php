@@ -136,6 +136,8 @@ class PermissionCatalog
             // —— 系统设置 ——
             [170, 'system', 'system.settings.view', '查看基础设置', 170],
             [171, 'system', 'system.settings.update', '保存基础设置', 171],
+            // 176：避开 SeedMeta 曾误用的 174（与 group.assign 冲突）
+            [176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176],
         ];
     }
 
@@ -386,13 +388,83 @@ class PermissionCatalog
         ];
     }
 
-    /** 运营管理：保证可打开并维护「管理用户」列表（含选角色） */
+    /** 运营管理：保证可打开并维护「管理用户」列表（含选角色）+ NoCaptchaAI */
     private static function ensureOpsAdminUserPerms(): void
     {
+        // 确保 NoCaptchaAI 菜单权限节点存在（menu.760），便于菜单权限模式下可见
+        try {
+            MenuPermissionService::syncOne([
+                'id' => 760,
+                'title' => 'NoCaptchaAI密钥',
+                'view' => 'nocaptchaKeys',
+                'subview' => '',
+                'permission_code' => '',
+            ]);
+        } catch (\Throwable $e) {
+        }
+        // 历史 SeedMeta 曾把 system.nocaptcha 写成 id=174，与 group.assign 冲突 → 迁到 176
+        try {
+            $hit = DB::selectOne("SELECT id FROM admin_permissions WHERE code='system.nocaptcha' LIMIT 1");
+            if ($hit && (int)$hit['id'] === 174) {
+                DB::query("UPDATE admin_permissions SET code='_tmp_system_nocaptcha' WHERE id=174");
+                DB::query(
+                    "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                     VALUES (176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176)
+                     ON DUPLICATE KEY UPDATE module='system', code='system.nocaptcha', name='管理NoCaptchaAI密钥', sort_order=176"
+                );
+                DB::query(
+                    "UPDATE admin_permissions SET module='group', code='group.assign', name='分配分组用户', sort_order=54 WHERE id=174"
+                );
+                // 原勾选 174 的角色补上 176，保留 NoCaptchaAI 能力
+                $roles = DB::select('SELECT id, permissions FROM admin_roles') ?: [];
+                foreach ($roles as $role) {
+                    $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
+                    if (!is_array($ids) || in_array('*', $ids, true)) {
+                        continue;
+                    }
+                    $has174 = false;
+                    $has176 = false;
+                    $norm = [];
+                    foreach ($ids as $raw) {
+                        $id = (int)$raw;
+                        if ($id <= 0) {
+                            continue;
+                        }
+                        $norm[$id] = true;
+                        if ($id === 174) {
+                            $has174 = true;
+                        }
+                        if ($id === 176) {
+                            $has176 = true;
+                        }
+                    }
+                    if ($has174 && !$has176) {
+                        $norm[176] = true;
+                        $newIds = array_map('strval', array_keys($norm));
+                        sort($newIds, SORT_NUMERIC);
+                        DB::query(
+                            'UPDATE admin_roles SET permissions=? WHERE id=?',
+                            [json_encode($newIds, JSON_UNESCAPED_UNICODE), (int)$role['id']]
+                        );
+                    }
+                }
+            } elseif (!$hit) {
+                DB::query(
+                    "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                     VALUES (176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176)
+                     ON DUPLICATE KEY UPDATE module='system', code='system.nocaptcha', name='管理NoCaptchaAI密钥', sort_order=176"
+                );
+            } else {
+                DB::query("UPDATE admin_permissions SET name='管理NoCaptchaAI密钥' WHERE code='system.nocaptcha'");
+            }
+        } catch (\Throwable $e) {
+        }
         self::ensureRoleCodesByName('%运营管理%', [
             'rbac.users.view', 'rbac.users.create', 'rbac.users.update', 'rbac.users.delete',
             'rbac.roles.view',
             'group.assign',
+            'system.nocaptcha',
+            'menu.760',
         ]);
     }
 

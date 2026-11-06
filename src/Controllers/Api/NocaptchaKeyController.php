@@ -7,11 +7,12 @@ use App\Core\Controller;
 use App\Core\Database\DB;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Auth\RBAC;
 use App\Services\DataScope;
 use App\Services\Schedule\ScheduleRunner;
 
 /**
- * 开发管理 · NoCaptchaAI 密钥（仅登录超管可访问）
+ * 开发管理 · NoCaptchaAI 密钥（需登录账号持有 system.nocaptcha；不受身份切换影响）
  * 规则：
  * 1. 同一时间只允许一条记录处于启用状态（status=1）；
  * 2. 每个账号每天最多允许使用 200 次（quota_limit 默认 200），达到 200 当日不可用（is_exhausted=1, status=0）并自动切换启用下一个可用账号；
@@ -554,18 +555,26 @@ class NocaptchaKeyController extends Controller
         return trim((string)($row['api_key'] ?? ''));
     }
 
-    private function denyUnlessLoginSuper(): ?Response
+    private function denyUnlessNocaptchaPerm(): ?Response
     {
         DataScope::bootFromGlobals();
-        if (!DataScope::isLoginSuper()) {
-            return $this->error('仅超级管理员可管理 NoCaptchaAI 密钥', 403);
+        if (DataScope::isLoginSuper()) {
+            return null;
         }
-        return null;
+        $login = DataScope::loginUser();
+        $uid = (int)($login['id'] ?? 0);
+        if ($uid <= 0) {
+            return $this->error('未登录', 401);
+        }
+        if (RBAC::checkPermission($uid, 'system.nocaptcha')) {
+            return null;
+        }
+        return $this->error('无权管理 NoCaptchaAI 密钥（需要权限节点：system.nocaptcha）', 403);
     }
 
     public function list(Request $request): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -580,7 +589,7 @@ class NocaptchaKeyController extends Controller
 
     public function create(Request $request): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -624,7 +633,7 @@ class NocaptchaKeyController extends Controller
 
     public function update(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -688,7 +697,7 @@ class NocaptchaKeyController extends Controller
     /** 启用指定记录，其余全部置为不启用（已报废或当日已满 200 的不允许启用） */
     public function enable(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -715,7 +724,7 @@ class NocaptchaKeyController extends Controller
 
     public function disable(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureSchema();
@@ -727,7 +736,7 @@ class NocaptchaKeyController extends Controller
     /** 标记指定密钥今日额度已用完，并自动启用下一条可用密钥 */
     public function markExhausted(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -750,7 +759,7 @@ class NocaptchaKeyController extends Controller
     /** 恢复未报废密钥的当日可用状态（已报废密钥不可恢复） */
     public function markAvailable(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -784,7 +793,7 @@ class NocaptchaKeyController extends Controller
     /** 手动直接标记某条密钥报废（不可逆，不可再启用），并自动切换到其他可用密钥 */
     public function markScrapped(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureDailyState();
@@ -807,7 +816,7 @@ class NocaptchaKeyController extends Controller
     /** 超管手动一键执行「次日重置 + 超30天报废检测」 */
     public function dailyReset(Request $request): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         $stats = self::runDailyMaintenance(true);
@@ -821,7 +830,7 @@ class NocaptchaKeyController extends Controller
 
     public function delete(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessLoginSuper()) {
+        if ($deny = $this->denyUnlessNocaptchaPerm()) {
             return $deny;
         }
         self::ensureSchema();

@@ -235,7 +235,7 @@ class SeedMeta
             ['system.ai_log', 'AI调用记录'],
             ['system.smtp', 'SMTP配置(超管)'],
             ['system.dm_weight', '日私信权重(超管)'],
-            ['system.nocaptcha', 'NoCaptchaAI密钥(超管)'],
+            ['system.nocaptcha', 'NoCaptchaAI密钥'],
             ['menu.visible', '菜单节点'],
         ]);
         $pairs('material_status', [['ready', '可用'], ['disabled', '停用'], ['missing', '文件缺失']]);
@@ -861,7 +861,7 @@ class SeedMeta
                 [97, 'account', 'account.msg_template.dm', '管理私信模板', 77],
                 [98, 'system', 'system.smtp', '管理SMTP配置(仅超管)', 98],
                 [99, 'system', 'system.dm_weight', '管理日私信权重规则(仅超管)', 99],
-                [174, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥(仅超管)', 174],
+                [176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176],
             ];
             foreach ($extraPerms as [$id, $mod, $code, $name, $sort]) {
                 DB::query(
