@@ -2622,6 +2622,21 @@
         var m = { pending: '待处理', processing: '制作中', completed: '已完成', cancelled: '已取消' };
         return m[s] || s || '-';
       },
+      hasDeliveryMedia: function (item) {
+        if (!item) return false;
+        if (Number(item.fileCount || 0) > 0) return true;
+        if (item.assets && item.assets.length) return true;
+        if (item.files && item.files.length) return true;
+        return false;
+      },
+      canConfirmRow: function (row) {
+        if (!row) return false;
+        var cs = row.customerConfirmStatus || 'pending';
+        if (cs !== 'pending') return false;
+        if (row.status === 'cancelled') return false;
+        // 已完成，或已有交付视频（运营已传文件但未改状态）均可确认收货
+        return row.status === 'completed' || this.hasDeliveryMedia(row);
+      },
       playUrlOf: function (item) {
         var assets = (item.assets && item.assets.length) ? item.assets : (item.files || []);
         for (var i = 0; i < assets.length; i++) {
@@ -2790,24 +2805,41 @@
               }),
               h(ElementPlus.ElTableColumn, { label: '确认状态', width: 110 }, {
                 default: function (scope) {
-                  return h(ElementPlus.ElTag, { type: self.confirmType(scope.row.customerConfirmStatus), size: 'small' },
-                    function () { return self.confirmLabel(scope.row.customerConfirmStatus); });
+                  var row = scope.row;
+                  var cs = row.customerConfirmStatus || 'pending';
+                  if (cs === 'pending' && row.status !== 'completed' && !self.hasDeliveryMedia(row)) {
+                    return h(ElementPlus.ElTag, { type: 'info', size: 'small' }, function () { return '待交付'; });
+                  }
+                  return h(ElementPlus.ElTag, { type: self.confirmType(cs), size: 'small' },
+                    function () { return self.confirmLabel(cs); });
                 }
               }),
               h(ElementPlus.ElTableColumn, { prop: 'createdAt', label: '提交/交付时间', width: 170 }),
-              h(ElementPlus.ElTableColumn, { label: '操作', width: 240, fixed: 'right' }, {
+              h(ElementPlus.ElTableColumn, { label: '操作', width: 300, fixed: 'right' }, {
                 default: function (scope) {
                   var row = scope.row;
                   var canPreview = !!self.playUrlOf(row);
-                  return h('div', { class: 'vd-company-ops' }, [
-                    h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openDetail(row); } }, function () { return '详情'; }),
-                    canPreview
-                      ? h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openPreview(row); } }, function () { return '预览'; })
-                      : null,
-                    row.status === 'completed' && row.customerConfirmStatus === 'pending'
-                      ? h(ElementPlus.ElButton, { link: true, type: 'success', onClick: function () { self.confirmOne(row); } }, function () { return '确认'; })
-                      : null
-                  ]);
+                  var cs = row.customerConfirmStatus || 'pending';
+                  var confirmed = cs === 'confirmed' || cs === 'auto_confirmed';
+                  var canConfirm = self.canConfirmRow(row);
+                  var ops = [
+                    h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openDetail(row); } }, function () { return '详情'; })
+                  ];
+                  if (canPreview) {
+                    ops.push(h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openPreview(row); } }, function () { return '预览'; }));
+                  }
+                  if (confirmed) {
+                    ops.push(h(ElementPlus.ElTag, { type: 'success', size: 'small' }, function () { return self.confirmLabel(cs); }));
+                  } else {
+                    ops.push(h(ElementPlus.ElButton, {
+                      type: 'success',
+                      size: 'small',
+                      disabled: !canConfirm,
+                      title: canConfirm ? '确认已收到交付视频' : '运营交付完成后可确认收货',
+                      onClick: function () { if (canConfirm) self.confirmOne(row); }
+                    }, function () { return '确认'; }));
+                  }
+                  return h('div', { class: 'vd-company-ops' }, ops);
                 }
               })
             ];
@@ -2965,6 +2997,21 @@
         var m = { pending: '待确认', confirmed: '已确认', auto_confirmed: '自动确认' };
         return m[s] || s || '待确认';
       },
+      hasDeliveryMedia: function (item) {
+        if (!item) return false;
+        if (Number(item.fileCount || 0) > 0) return true;
+        if (item.assets && item.assets.length) return true;
+        if (item.files && item.files.length) return true;
+        return false;
+      },
+      canConfirm: function () {
+        var o = this.order;
+        if (!o) return false;
+        var cs = o.customerConfirmStatus || 'pending';
+        if (cs !== 'pending') return false;
+        if (o.status === 'cancelled') return false;
+        return o.status === 'completed' || this.hasDeliveryMedia(o);
+      },
       load: async function () {
         if (!this.orderId) return;
         this.loading = true;
@@ -3020,8 +3067,8 @@
           o.title || ''
         ),
         h('div', { class: 'panel' }, [
-          panelHead('基本信息', o.status === 'completed' && o.customerConfirmStatus === 'pending'
-            ? h(ElementPlus.ElButton, { type: 'success', onClick: function () { self.confirm(); } }, function () { return '确认收货'; })
+          panelHead('基本信息', self.canConfirm()
+            ? h(ElementPlus.ElButton, { type: 'success', onClick: function () { self.confirm(); } }, function () { return '确认'; })
             : h(ElementPlus.ElTag, { type: o.source === 'customer' ? 'warning' : 'success' }, function () {
               return o.sourceLabel || (o.source === 'customer' ? '客户需求' : self.confirmLabel(o.customerConfirmStatus));
             })),

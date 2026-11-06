@@ -2466,12 +2466,40 @@ class PortalApiController extends Controller
                 'customerConfirmStatusLabel' => VideoDeliveryService::confirmStatusLabel($cur),
             ], '该交付单已确认');
         }
-        DB::query(
-            "UPDATE video_delivery_orders
-             SET customer_confirm_status='confirmed', customer_confirmed_at=NOW()
-             WHERE id=? AND customer_confirm_status='pending'",
+        $status = VideoDeliveryService::normalizeOrderStatus((string)($order['status'] ?? 'pending'));
+        if ($status === 'cancelled') {
+            return $this->error('已取消的交付单无法确认', 422);
+        }
+        $fileCnt = (int)(DB::selectOne(
+            'SELECT COUNT(*) AS c FROM video_delivery_files WHERE order_id=?',
             [$orderId]
-        );
+        )['c'] ?? 0);
+        $assetCnt = (int)(DB::selectOne(
+            'SELECT COUNT(*) AS c FROM video_delivery_assets WHERE order_id=?',
+            [$orderId]
+        )['c'] ?? 0);
+        if ($status !== 'completed' && $fileCnt <= 0 && $assetCnt <= 0) {
+            return $this->error('交付尚未完成，暂不可确认收货', 422);
+        }
+        // 已有交付文件但状态未改完时，确认收货一并标记完成
+        if ($status !== 'completed') {
+            DB::query(
+                "UPDATE video_delivery_orders
+                 SET status='completed',
+                     delivered_at=COALESCE(delivered_at, NOW()),
+                     customer_confirm_status='confirmed',
+                     customer_confirmed_at=NOW()
+                 WHERE id=? AND customer_confirm_status='pending'",
+                [$orderId]
+            );
+        } else {
+            DB::query(
+                "UPDATE video_delivery_orders
+                 SET customer_confirm_status='confirmed', customer_confirmed_at=NOW()
+                 WHERE id=? AND customer_confirm_status='pending'",
+                [$orderId]
+            );
+        }
         $updated = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]) ?: $order;
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
@@ -2485,14 +2513,14 @@ class PortalApiController extends Controller
      * 企业客户预览/播放交付视频（仅本人档案下的文件）。
      * 优先 302 到 CDN/GitHub；无远程地址时回源本地文件。
      */
-    public function videoDeliveryStream(Request $request, string $fileId): Response
+    public function videoDeliveryStream(Request $request, string $id): Response
     {
         if ($err = $this->gate($request)) {
             return $err;
         }
         VideoDeliveryService::ensureSchema();
         $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
-        $fid = (int)$fileId;
+        $fid = (int)$id;
         $file = DB::selectOne('SELECT * FROM video_delivery_files WHERE id=?', [$fid]);
         if (!$file) {
             // 兼容 assets.id：若 files 不存在则尝试 assets.file_id
