@@ -2637,15 +2637,16 @@
         // 已完成，或已有交付视频（运营已传文件但未改状态）均可确认收货
         return row.status === 'completed' || this.hasDeliveryMedia(row);
       },
+      /** 预览仅用 GitHub/CDN；无链接返回空 */
+      githubPlayUrlOf: function (a) {
+        if (!a) return '';
+        return String(a.playUrl || a.cdnUrl || a.githubAssetUrl || '').trim();
+      },
       playUrlOf: function (item) {
         var assets = (item.assets && item.assets.length) ? item.assets : (item.files || []);
         for (var i = 0; i < assets.length; i++) {
-          var a = assets[i];
-          if (a.playUrl) return a.playUrl;
-          if (a.cdnUrl) return a.cdnUrl;
-          if (a.githubAssetUrl) return a.githubAssetUrl;
-          var sid = a.fileId || a.id;
-          if (sid) return '/api/company/ops/video-delivery-files/' + sid + '/stream';
+          var url = this.githubPlayUrlOf(assets[i]);
+          if (url) return url;
         }
         return '';
       },
@@ -2675,7 +2676,7 @@
       openPreview: function (row) {
         var url = this.playUrlOf(row);
         if (!url) {
-          ElMessage.warning('暂无可预览视频');
+          ElMessage.warning('暂无 GitHub/CDN 链接，无法预览');
           return;
         }
         this.previewTitle = row.title || ('交付 #' + row.id);
@@ -2818,7 +2819,7 @@
               h(ElementPlus.ElTableColumn, { label: '操作', width: 300, fixed: 'right' }, {
                 default: function (scope) {
                   var row = scope.row;
-                  var canPreview = !!self.playUrlOf(row);
+                  var canPreview = !!self.playUrlOf(row); // 仅当有 GitHub/CDN 时可预览
                   var cs = row.customerConfirmStatus || 'pending';
                   var confirmed = cs === 'confirmed' || cs === 'auto_confirmed';
                   var canConfirm = self.canConfirmRow(row);
@@ -3027,13 +3028,12 @@
       },
       back: function () { this.$router.push('/ops/video-delivery'); },
       assetPlayUrl: function (a) {
-        return a.playUrl || a.cdnUrl || a.githubAssetUrl
-          || (a.fileId || a.id ? '/api/company/ops/video-delivery-files/' + (a.fileId || a.id) + '/stream' : '');
+        return String((a && (a.playUrl || a.cdnUrl || a.githubAssetUrl)) || '').trim();
       },
       openPreview: function (a) {
         var url = this.assetPlayUrl(a);
         if (!url) {
-          ElMessage.warning('暂无可预览地址');
+          ElMessage.warning('暂无 GitHub/CDN 链接，无法预览');
           return;
         }
         this.previewTitle = a.name || a.fileName || '预览视频';
@@ -3098,13 +3098,17 @@
                   ].join(''))
                 ]),
                 h('div', { class: 'vd-company-asset-ops' }, [
-                  a.isVideo !== false
+                  self.assetPlayUrl(a)
                     ? h(ElementPlus.ElButton, { type: 'primary', size: 'small', onClick: function () { self.openPreview(a); } }, function () { return '预览'; })
-                    : null,
-                  (a.playUrl || a.cdnUrl || a.githubAssetUrl)
+                    : h(ElementPlus.ElButton, {
+                      size: 'small',
+                      disabled: true,
+                      title: '暂无 GitHub/CDN 链接'
+                    }, function () { return '待上传 GitHub'; }),
+                  self.assetPlayUrl(a)
                     ? h('a', {
                       class: 'el-button el-button--small is-link',
-                      href: a.playUrl || a.cdnUrl || a.githubAssetUrl,
+                      href: self.assetPlayUrl(a),
                       target: '_blank',
                       rel: 'noopener'
                     }, '打开链接')

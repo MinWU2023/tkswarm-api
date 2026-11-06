@@ -2394,6 +2394,7 @@ class PortalApiController extends Controller
         $items = [];
         foreach ($rows as $row) {
             $oid = (int)$row['id'];
+            VideoDeliveryService::syncMaterialGithubLinks($oid);
             $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
             $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
             $items[] = VideoDeliveryService::mapOrder($row, $files, [], $assets);
@@ -2427,6 +2428,7 @@ class PortalApiController extends Controller
         if (!$profile) {
             return $this->error('无权查看该交付单', 403);
         }
+        VideoDeliveryService::syncMaterialGithubLinks($orderId);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         $notes = DB::select(
@@ -2521,10 +2523,9 @@ class PortalApiController extends Controller
                 $file = DB::selectOne('SELECT * FROM video_delivery_files WHERE id=?', [(int)$asset['file_id']]);
             }
             if (!$file && $asset) {
-                $remote = trim((string)($asset['cdn_url'] ?? ''));
-                if ($remote === '') {
-                    $remote = trim((string)($asset['github_asset_url'] ?? ''));
-                }
+                VideoDeliveryService::syncMaterialGithubLinks((int)($asset['order_id'] ?? 0));
+                $asset = DB::selectOne('SELECT * FROM video_delivery_assets WHERE id=?', [$fid]) ?: $asset;
+                $remote = VideoDeliveryService::resolveGithubPlayUrl($asset);
                 if ($remote !== '') {
                     $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [(int)$asset['order_id']]);
                     if ($order) {
@@ -2537,7 +2538,7 @@ class PortalApiController extends Controller
                         }
                     }
                 }
-                return $this->error('交付文件不存在', 404);
+                return $this->error('暂无 GitHub/CDN 链接，无法在线预览', 422);
             }
             if (!$file) {
                 return $this->error('交付文件不存在', 404);
@@ -2554,28 +2555,15 @@ class PortalApiController extends Controller
         if (!$profile) {
             return $this->error('无权播放该视频', 403);
         }
-        $remote = trim((string)($file['cdn_url'] ?? ''));
-        if ($remote === '') {
-            $remote = trim((string)($file['github_asset_url'] ?? ''));
+        VideoDeliveryService::syncMaterialGithubLinks((int)($file['order_id'] ?? 0));
+        $fresh = DB::selectOne('SELECT * FROM video_delivery_files WHERE id=?', [(int)$file['id']]);
+        if ($fresh) {
+            $file = $fresh;
         }
+        $remote = VideoDeliveryService::resolveGithubPlayUrl($file);
         if ($remote !== '') {
             return Response::make('', 302, ['Location' => $remote]);
         }
-        $path = (string)($file['file_path'] ?? '');
-        if ($path !== '' && !is_file($path)) {
-            $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
-            $cand = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path), '/\\');
-            $path = is_file($cand) ? $cand : '';
-        }
-        if ($path === '' || !is_file($path)) {
-            return $this->error('文件不存在', 404);
-        }
-        $mime = (string)($file['mime_type'] ?: 'application/octet-stream');
-        $safeName = preg_replace('/[^\w.\-\x{4e00}-\x{9fff}]+/u', '_', (string)($file['file_name'] ?? 'file')) ?: 'file';
-        return Response::file($path, 200, [
-            'Content-Type' => $mime,
-            'Content-Disposition' => 'inline; filename="' . $safeName . '"',
-            'Cache-Control' => 'private, max-age=0, must-revalidate',
-        ]);
+        return $this->error('暂无 GitHub/CDN 链接，无法在线预览', 422);
     }
 }

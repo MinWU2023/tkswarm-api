@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Database\DB;
+use App\Services\Github\GithubReleaseCdnService;
 
 /**
  * 视频交付：客户 + 授权/积分 + 定制订单 + 交付文件 + 备注/下载记录
@@ -787,6 +788,97 @@ class VideoDeliveryService
         return self::mapClient($row);
     }
 
+    /** 预览专用：仅返回 GitHub/CDN 链接（cdn 优先）。 */
+    public static function resolveGithubPlayUrl(array $row): string
+    {
+        $cdn = trim((string)($row['cdn_url'] ?? $row['cdnUrl'] ?? ''));
+        if ($cdn !== '') {
+            return $cdn;
+        }
+        return trim((string)($row['github_asset_url'] ?? $row['githubAssetUrl'] ?? $row['playUrl'] ?? ''));
+    }
+
+    /**
+     * 将 materials 上的 GitHub/CDN 回写到交付 assets/files。
+     */
+    public static function syncMaterialGithubLinks(int $orderId): int
+    {
+        self::ensureSchema();
+        GithubReleaseCdnService::ensureSchema();
+        $assets = DB::select(
+            "SELECT id, file_id, material_id,
+                    IFNULL(cdn_url,'') AS cdn_url,
+                    IFNULL(github_asset_url,'') AS github_asset_url,
+                    IFNULL(github_config_id,0) AS github_config_id
+             FROM video_delivery_assets
+             WHERE order_id=? AND material_id>0",
+            [$orderId]
+        ) ?: [];
+        if (!$assets) {
+            return 0;
+        }
+        $mids = [];
+        foreach ($assets as $a) {
+            $mid = (int)($a['material_id'] ?? 0);
+            if ($mid > 0) {
+                $mids[$mid] = true;
+            }
+        }
+        $mids = array_keys($mids);
+        if (!$mids) {
+            return 0;
+        }
+        $ph = implode(',', array_fill(0, count($mids), '?'));
+        $mats = DB::select(
+            "SELECT id,
+                    IFNULL(cdn_url,'') AS cdn_url,
+                    IFNULL(github_asset_url,'') AS github_asset_url,
+                    IFNULL(github_config_id,0) AS github_config_id
+             FROM materials WHERE id IN ({$ph})",
+            $mids
+        ) ?: [];
+        $byId = [];
+        foreach ($mats as $m) {
+            $byId[(int)$m['id']] = $m;
+        }
+        $updated = 0;
+        foreach ($assets as $a) {
+            $mid = (int)($a['material_id'] ?? 0);
+            $mat = $byId[$mid] ?? null;
+            if (!$mat) {
+                continue;
+            }
+            $cdn = trim((string)($mat['cdn_url'] ?? ''));
+            $gh = trim((string)($mat['github_asset_url'] ?? ''));
+            $cfg = (int)($mat['github_config_id'] ?? 0);
+            if ($cdn === '' && $gh === '') {
+                continue;
+            }
+            $curCdn = trim((string)($a['cdn_url'] ?? ''));
+            $curGh = trim((string)($a['github_asset_url'] ?? ''));
+            $curCfg = (int)($a['github_config_id'] ?? 0);
+            if ($curCdn === $cdn && $curGh === $gh && $curCfg === $cfg) {
+                continue;
+            }
+            $aid = (int)($a['id'] ?? 0);
+            $fid = (int)($a['file_id'] ?? 0);
+            if ($aid > 0) {
+                DB::query(
+                    'UPDATE video_delivery_assets SET cdn_url=?, github_asset_url=?, github_config_id=? WHERE id=?',
+                    [$cdn, $gh, $cfg, $aid]
+                );
+            }
+            if ($fid > 0) {
+                DB::query(
+                    'UPDATE video_delivery_files SET cdn_url=?, github_asset_url=?, github_config_id=? WHERE id=?',
+                    [$cdn, $gh, $cfg, $fid]
+                );
+            }
+            $updated++;
+        }
+        return $updated;
+    }
+
     public static function mapFile(array $row): array
     {
         $mime = (string)($row['mime_type'] ?? '');
@@ -795,6 +887,7 @@ class VideoDeliveryService
         $isVideo = str_starts_with($mime, 'video/') || in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true);
         $cdn = trim((string)($row['cdn_url'] ?? ''));
         $gh = trim((string)($row['github_asset_url'] ?? ''));
+        $play = $cdn !== '' ? $cdn : $gh;
         return [
             'id' => (int)($row['id'] ?? 0),
             'orderId' => (int)($row['order_id'] ?? 0),
@@ -805,7 +898,8 @@ class VideoDeliveryService
             'cdnUrl' => $cdn,
             'githubAssetUrl' => $gh,
             'githubConfigId' => (int)($row['github_config_id'] ?? 0),
-            'playUrl' => $cdn !== '' ? $cdn : $gh,
+            'playUrl' => $play,
+            'hasGithub' => $play !== '',
             'isVideo' => $isVideo,
             'createdAt' => (string)($row['created_at'] ?? ''),
         ];
@@ -815,6 +909,7 @@ class VideoDeliveryService
     {
         $cdn = trim((string)($row['cdn_url'] ?? ''));
         $gh = trim((string)($row['github_asset_url'] ?? ''));
+        $play = $cdn !== '' ? $cdn : $gh;
         $mime = (string)($row['mime_type'] ?? '');
         $ext = strtolower((string)pathinfo((string)($row['file_name'] ?? $row['name'] ?? ''), PATHINFO_EXTENSION));
         $isVideo = str_starts_with($mime, 'video/') || in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true);
@@ -829,7 +924,8 @@ class VideoDeliveryService
             'cdnUrl' => $cdn,
             'githubAssetUrl' => $gh,
             'githubConfigId' => (int)($row['github_config_id'] ?? 0),
-            'playUrl' => $cdn !== '' ? $cdn : $gh,
+            'playUrl' => $play,
+            'hasGithub' => $play !== '',
             'sizeBytes' => (int)($row['size_bytes'] ?? 0),
             'mimeType' => $mime,
             'isVideo' => $isVideo,
