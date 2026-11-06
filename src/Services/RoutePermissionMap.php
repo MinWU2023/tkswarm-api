@@ -267,9 +267,9 @@ class RoutePermissionMap
                 'delete' => ['ai.leads.delete', 'ai.leads'],
             ],
             '/api/video-boost-tasks' => [
-                'read' => ['publish.tasks.view', 'publish.tasks', 'matrix.publish', 'account.view'],
-                'write' => ['publish.tasks.create', 'publish.tasks.update', 'publish.tasks', 'matrix.publish', 'account.create'],
-                'delete' => ['publish.tasks.delete', 'publish.tasks', 'matrix.publish', 'account.create'],
+                'read' => ['publish.video_boost.view', 'publish.video_boost'],
+                'write' => ['publish.video_boost.update', 'publish.video_boost'],
+                'delete' => ['publish.video_boost.update', 'publish.video_boost'],
             ],
             '/api/video-delivery-clients' => [
                 'read' => ['publish.video_delivery.view', 'publish.video_delivery'],

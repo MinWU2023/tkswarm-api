@@ -143,6 +143,11 @@ class PermissionCatalog
             [177, 'publish', 'publish.video_delivery', '视频交付写入', 177],
             [178, 'publish', 'publish.video_delivery.view', '查看视频交付', 178],
             [179, 'publish', 'publish.video_delivery.update', '维护视频交付', 179],
+
+            // —— 视频增值（独立于发布任务；勿挂到 publish.tasks 自动展开）——
+            [180, 'publish', 'publish.video_boost', '视频增值写入', 180],
+            [181, 'publish', 'publish.video_boost.view', '查看视频增值', 181],
+            [182, 'publish', 'publish.video_boost.update', '维护视频增值', 182],
         ];
     }
 
@@ -252,6 +257,10 @@ class PermissionCatalog
             'publish.video_delivery' => [],
             'publish.video_delivery.view' => ['publish.video_delivery'],
             'publish.video_delivery.update' => ['publish.video_delivery'],
+            // 视频增值：仅精确命中 / * / admin；不与发布任务互认
+            'publish.video_boost' => [],
+            'publish.video_boost.view' => ['publish.video_boost'],
+            'publish.video_boost.update' => ['publish.video_boost'],
             'warm.view' => ['warm.tasks', 'publish.tasks'],
             'warm.create' => ['warm.tasks'],
             'warm.update' => ['warm.tasks'],
@@ -283,6 +292,7 @@ class PermissionCatalog
             self::migrateRoles();
             self::ensureOpsAdminUserPerms();
             self::ensureVideoDeliveryPerms();
+            self::ensureVideoBoostPerms();
             self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
@@ -313,6 +323,43 @@ class PermissionCatalog
             'publish.video_delivery.view',
             'publish.video_delivery.update',
             'menu.421',
+        ];
+        self::ensureRoleCodesByName('%运营管理%', $codes);
+        self::ensureRoleCodesByName('%运营专员%', $codes);
+        self::stripRoleCodesByName('%企业客户%', $codes);
+    }
+
+    /**
+     * 视频增值：运营管理 / 运营专员可见可操作；企业客户不授予。
+     * Admin（*）天然全量。菜单节点 menu.446 一并授权。
+     */
+    private static function ensureVideoBoostPerms(): void
+    {
+        try {
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (446, 410, '视频增值', 'zap', '', 'videoBoost', 'list', 6, 1)
+                 ON DUPLICATE KEY UPDATE parent_id=410, title='视频增值', icon='zap', view='videoBoost', subview='list', sort_order=6, visible=1"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            MenuPermissionService::syncOne([
+                'id' => 446,
+                'title' => '视频增值',
+                'view' => 'videoBoost',
+                'subview' => 'list',
+                'permission_code' => '',
+            ]);
+        } catch (\Throwable $e) {
+        }
+
+        $codes = [
+            'publish.video_boost',
+            'publish.video_boost.view',
+            'publish.video_boost.update',
+            'menu.446',
         ];
         self::ensureRoleCodesByName('%运营管理%', $codes);
         self::ensureRoleCodesByName('%运营专员%', $codes);
@@ -473,6 +520,18 @@ class PermissionCatalog
             ],
             'videoDelivery|' => [
                 'publish.video_delivery', 'publish.video_delivery.view', 'publish.video_delivery.update',
+            ],
+            'videoBoost|list' => [
+                'publish.video_boost', 'publish.video_boost.view', 'publish.video_boost.update',
+            ],
+            'videoBoost|' => [
+                'publish.video_boost', 'publish.video_boost.view', 'publish.video_boost.update',
+            ],
+            'videoBoost|create' => [
+                'publish.video_boost', 'publish.video_boost.update',
+            ],
+            'videoBoost|edit' => [
+                'publish.video_boost', 'publish.video_boost.update',
             ],
         ];
     }
@@ -664,6 +723,7 @@ class PermissionCatalog
             'publish.mass' => ['publish.mass.view', 'publish.mass.create', 'publish.mass.update', 'publish.mass.delete'],
             'publish.materials' => ['publish.materials.view', 'publish.materials.create', 'publish.materials.update', 'publish.materials.delete'],
             'publish.video_delivery' => ['publish.video_delivery.view', 'publish.video_delivery.update'],
+            'publish.video_boost' => ['publish.video_boost.view', 'publish.video_boost.update'],
             'warm.tasks' => ['warm.view', 'warm.create', 'warm.update', 'warm.delete'],
             'ai.leads' => ['ai.leads.view', 'ai.leads.create', 'ai.leads.update', 'ai.leads.delete'],
             'agent.manage' => ['agent.create', 'agent.update', 'agent.delete'],
@@ -776,6 +836,7 @@ class PermissionCatalog
             ['publish.mass', '群发任务'],
             ['publish.materials', '素材管理'],
             ['publish.video_delivery', '视频交付'],
+            ['publish.video_boost', '视频增值'],
             ['warm.tasks', '养号任务'],
             ['rbac.users', '管理用户'],
             ['rbac.roles', '用户角色'],

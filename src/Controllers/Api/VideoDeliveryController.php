@@ -274,10 +274,22 @@ class VideoDeliveryController extends Controller
         );
         $orderId = (int)DB::lastInsertId();
 
+        $materialIds = $this->parseMaterialIds($request);
+        $linked = $this->attachMaterials($adminUserId, $orderId, $materialIds);
+        if ($linked instanceof Response) {
+            DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
+            return $linked;
+        }
+
         $uploaded = $this->storeUploadedFiles($adminUserId, $orderId);
         if ($uploaded instanceof Response) {
             DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
             return $uploaded;
+        }
+
+        if (!$linked && !$uploaded) {
+            DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
+            return $this->error('请至少选择一个视频素材或上传文件', 422);
         }
 
         if ($pointsCost > 0) {
@@ -494,6 +506,125 @@ class VideoDeliveryController extends Controller
     {
         $name = preg_replace('/[^\w.\-\x{4e00}-\x{9fff}]+/u', '_', $name) ?: 'file';
         return $name;
+    }
+
+    /** @return list<int> */
+    private function parseMaterialIds(Request $request): array
+    {
+        $raw = $request->input('materialIds', $request->input('material_ids', []));
+        if (is_string($raw)) {
+            $raw = preg_split('/[\s,;]+/', $raw) ?: [];
+        }
+        if (!is_array($raw)) {
+            return [];
+        }
+        $ids = [];
+        foreach ($raw as $v) {
+            $id = (int)$v;
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+        return array_values($ids);
+    }
+
+    /**
+     * 将素材库视频关联到交付单（复用素材 CDN；无 CDN 时尝试上传 GitHub）。
+     * @param list<int> $materialIds
+     * @return list<array>|Response
+     */
+    private function attachMaterials(int $clientId, int $orderId, array $materialIds)
+    {
+        if (!$materialIds) {
+            return [];
+        }
+        GithubReleaseCdnService::ensureSchema();
+        $ph = implode(',', array_fill(0, count($materialIds), '?'));
+        $rows = DB::select(
+            "SELECT id, name, file_path, file_name, mime_type, size_bytes,
+                    IFNULL(cdn_url,'') AS cdn_url,
+                    IFNULL(github_asset_url,'') AS github_asset_url,
+                    IFNULL(github_config_id,0) AS github_config_id
+             FROM materials WHERE id IN ({$ph})",
+            $materialIds
+        ) ?: [];
+        if (!$rows) {
+            return $this->error('所选视频素材不存在', 404);
+        }
+        $byId = [];
+        foreach ($rows as $r) {
+            $byId[(int)$r['id']] = $r;
+        }
+        $saved = [];
+        foreach ($materialIds as $mid) {
+            $mat = $byId[$mid] ?? null;
+            if (!$mat) {
+                return $this->error('素材不存在：#' . $mid, 404);
+            }
+            $orig = (string)($mat['file_name'] ?? '');
+            $display = trim((string)($mat['name'] ?? ''));
+            if ($display === '') {
+                $display = pathinfo($orig !== '' ? $orig : ('material-' . $mid), PATHINFO_FILENAME) ?: ('素材#' . $mid);
+            }
+            $path = (string)($mat['file_path'] ?? '');
+            $abs = '';
+            if ($path !== '') {
+                if (is_file($path)) {
+                    $abs = $path;
+                } else {
+                    $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
+                    $cand = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path), '/\\');
+                    if (is_file($cand)) {
+                        $abs = $cand;
+                    }
+                }
+            }
+            $cdnUrl = trim((string)($mat['cdn_url'] ?? ''));
+            $githubAssetUrl = trim((string)($mat['github_asset_url'] ?? ''));
+            $githubConfigId = (int)($mat['github_config_id'] ?? 0);
+            if ($cdnUrl === '' && $githubAssetUrl === '' && $abs !== '') {
+                try {
+                    $up = GithubReleaseCdnService::uploadMaterialFile($abs, $orig !== '' ? $orig : basename($abs), $mid);
+                    if ($up) {
+                        $cdnUrl = (string)($up['cdnUrl'] ?? '');
+                        $githubAssetUrl = (string)($up['githubAssetUrl'] ?? '');
+                        $githubConfigId = (int)($up['configId'] ?? 0);
+                        if ($cdnUrl !== '' || $githubAssetUrl !== '') {
+                            DB::query(
+                                'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                                [$cdnUrl, $githubAssetUrl, $githubConfigId, $mid]
+                            );
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // CDN 失败不阻断交付关联
+                }
+            }
+            $mime = (string)($mat['mime_type'] ?? '');
+            $size = (int)($mat['size_bytes'] ?? 0);
+            $rel = $path !== '' ? $path : ('material:' . $mid);
+            DB::query(
+                'INSERT INTO video_delivery_files
+                  (order_id, name, file_name, file_path, mime_type, size_bytes, cdn_url, github_asset_url, github_config_id)
+                 VALUES (?,?,?,?,?,?,?,?,?)',
+                [$orderId, $display, $orig !== '' ? $orig : $display, $rel, $mime, $size, $cdnUrl, $githubAssetUrl, $githubConfigId]
+            );
+            $fileId = (int)DB::lastInsertId();
+            DB::query(
+                'INSERT INTO video_delivery_assets
+                  (order_id, file_id, material_id, name, file_name, local_path, cdn_url, github_asset_url, github_config_id, size_bytes, mime_type)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                [$orderId, $fileId, $mid, $display, $orig !== '' ? $orig : $display, $rel, $cdnUrl, $githubAssetUrl, $githubConfigId, $size, $mime]
+            );
+            $saved[] = [
+                'id' => $fileId,
+                'materialId' => $mid,
+                'name' => $display,
+                'cdnUrl' => $cdnUrl,
+                'githubAssetUrl' => $githubAssetUrl,
+            ];
+        }
+        return $saved;
     }
 
     /** @return list<array>|Response */

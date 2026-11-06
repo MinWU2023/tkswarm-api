@@ -102,7 +102,7 @@ class SeedMeta
             ['aiLeadClues', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['aiLeadClueData', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['autoFollow', ['ai.leads', 'ai.leads.view', 'account.create', 'publish.tasks', 'account.view']],
-            ['videoBoost', ['publish.tasks', 'publish.tasks.view', 'matrix.publish', 'account.create', 'account.view']],
+            ['videoBoost', ['publish.video_boost', 'publish.video_boost.view', 'publish.video_boost.update']],
             ['videoDelivery', ['publish.video_delivery', 'publish.video_delivery.view', 'publish.video_delivery.update']],
         ];
         foreach ($rows as [$view, $codes]) {
@@ -638,6 +638,15 @@ class SeedMeta
             DB::query("UPDATE navigation_menus SET parent_id=410, title='回复评论', icon='message-circle', path='', view='publish', subview='create_comment_reply', sort_order=3, visible=1 WHERE id=441");
             DB::query("UPDATE navigation_menus SET parent_id=410, title='拉取视频列表', icon='list', path='', view='publish', subview='pull_video_list', sort_order=4, visible=1, permission_code='public' WHERE id=444");
             DB::query("UPDATE navigation_menus SET parent_id=410, title='拉取视频详情', icon='download', path='', view='publish', subview='pull_comments', sort_order=5, visible=1 WHERE id=442");
+            try {
+                DB::query(
+                    "INSERT INTO navigation_menus
+                      (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                     VALUES (446, 410, '视频增值', 'zap', '', 'videoBoost', 'list', 6, 1)
+                     ON DUPLICATE KEY UPDATE parent_id=410, title='视频增值', icon='zap', view='videoBoost', subview='list', sort_order=6, visible=1"
+                );
+            } catch (\Throwable $e) {
+            }
             // 旧二级/重复入口隐藏（功能仍可从页面按钮进入）
             DB::query("UPDATE navigation_menus SET visible=0 WHERE id IN (412,414,415,431,440,443,445)");
             DB::query("UPDATE navigation_menus SET visible=0 WHERE view='publish' AND subview IN ('create_publish','create_ordered','create_independent','create_pull_video_list','create_pull_comments','delete_wizard','comment_reply_wizard') AND id NOT IN (411,430,441,442,444)");
