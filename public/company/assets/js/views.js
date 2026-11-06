@@ -2554,6 +2554,330 @@
     }
   };
 
+  var VideoDeliveryView = {
+    name: 'VideoDeliveryView',
+    data: function () {
+      return {
+        loading: false,
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 12,
+        keyword: '',
+        confirmStatus: '',
+        client: null,
+        previewVisible: false,
+        previewUrl: '',
+        previewTitle: ''
+      };
+    },
+    mounted: function () { this.load(); },
+    methods: {
+      confirmLabel: function (s) {
+        var m = { pending: '待确认', confirmed: '已确认', auto_confirmed: '自动确认' };
+        return m[s] || s || '待确认';
+      },
+      confirmType: function (s) {
+        if (s === 'confirmed') return 'success';
+        if (s === 'auto_confirmed') return 'warning';
+        return 'info';
+      },
+      playUrlOf: function (item) {
+        var assets = (item.assets && item.assets.length) ? item.assets : (item.files || []);
+        for (var i = 0; i < assets.length; i++) {
+          var a = assets[i];
+          if (a.playUrl) return a.playUrl;
+          if (a.cdnUrl) return a.cdnUrl;
+          if (a.githubAssetUrl) return a.githubAssetUrl;
+          var sid = a.fileId || a.id;
+          if (sid) return '/api/company/ops/video-delivery-files/' + sid + '/stream';
+        }
+        return '';
+      },
+      load: async function () {
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.videoDeliveryList({
+            page: this.page,
+            pageSize: this.pageSize,
+            keyword: this.keyword || undefined,
+            confirmStatus: this.confirmStatus || undefined
+          });
+          this.items = d.items || [];
+          this.total = d.total || 0;
+          this.client = d.client || null;
+        } catch (e) {
+          ElMessage.error(e.message || '加载交付列表失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      search: function () { this.page = 1; this.load(); },
+      openDetail: function (row) {
+        this.$router.push('/ops/video-delivery/' + row.id);
+      },
+      openPreview: function (row) {
+        var url = this.playUrlOf(row);
+        if (!url) {
+          ElMessage.warning('暂无可预览视频');
+          return;
+        }
+        this.previewTitle = row.title || ('交付 #' + row.id);
+        this.previewUrl = url;
+        this.previewVisible = true;
+      },
+      confirmOne: async function (row) {
+        try {
+          await ElementPlus.ElMessageBox.confirm('确认已收到该交付视频？', '确认交付', { type: 'warning' });
+        } catch (_) { return; }
+        try {
+          await CompanyAPI.videoDeliveryConfirm(row.id);
+          ElMessage.success('已确认');
+          this.load();
+        } catch (e) {
+          ElMessage.error(e.message || '确认失败');
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      var h = Vue.h;
+      return h('div', { class: 'vd-company-page' }, [
+        pageHead('视频交付', '查看运营交付给你的定制视频，可确认收货并预览'),
+        h('div', { class: 'panel' }, [
+          panelHead('交付列表', h('div', { class: 'vd-company-filters' }, [
+            h(ElementPlus.ElInput, {
+              modelValue: self.keyword,
+              'onUpdate:modelValue': function (v) { self.keyword = v; },
+              placeholder: '搜索标题',
+              clearable: true,
+              style: 'width:200px',
+              onKeyup: function (e) { if (e.key === 'Enter') self.search(); }
+            }),
+            h(ElementPlus.ElSelect, {
+              modelValue: self.confirmStatus,
+              'onUpdate:modelValue': function (v) { self.confirmStatus = v; self.search(); },
+              placeholder: '确认状态',
+              clearable: true,
+              style: 'width:140px'
+            }, {
+              default: function () {
+                return [
+                  h(ElementPlus.ElOption, { label: '待确认', value: 'pending' }),
+                  h(ElementPlus.ElOption, { label: '已确认', value: 'confirmed' }),
+                  h(ElementPlus.ElOption, { label: '自动确认', value: 'auto_confirmed' })
+                ];
+              }
+            }),
+            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.search(); } }, function () { return '搜索'; })
+          ])),
+          h(ElementPlus.ElTable, { data: self.items, vLoading: self.loading, stripe: true, style: 'width:100%' }, function () {
+            return [
+              h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
+              h(ElementPlus.ElTableColumn, { prop: 'title', label: '标题', minWidth: 180, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { prop: 'settleType', label: '结算类型', width: 120 }),
+              h(ElementPlus.ElTableColumn, { prop: 'pointsCost', label: '消耗积分', width: 100 }),
+              h(ElementPlus.ElTableColumn, { label: '确认状态', width: 110 }, {
+                default: function (scope) {
+                  return h(ElementPlus.ElTag, { type: self.confirmType(scope.row.customerConfirmStatus), size: 'small' },
+                    function () { return self.confirmLabel(scope.row.customerConfirmStatus); });
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'deliveredAt', label: '交付时间', width: 170 }),
+              h(ElementPlus.ElTableColumn, { label: '操作', width: 240, fixed: 'right' }, {
+                default: function (scope) {
+                  var row = scope.row;
+                  return h('div', { class: 'vd-company-ops' }, [
+                    h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openDetail(row); } }, function () { return '详情'; }),
+                    h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openPreview(row); } }, function () { return '预览'; }),
+                    row.customerConfirmStatus === 'pending'
+                      ? h(ElementPlus.ElButton, { link: true, type: 'success', onClick: function () { self.confirmOne(row); } }, function () { return '确认'; })
+                      : null
+                  ]);
+                }
+              })
+            ];
+          }),
+          h('div', { class: 'pager-wrap', style: 'margin-top:14px;display:flex;justify-content:flex-end' }, [
+            h(ElementPlus.ElPagination, {
+              background: true,
+              layout: 'total, prev, pager, next',
+              currentPage: self.page,
+              'onUpdate:currentPage': function (v) { self.page = v; self.load(); },
+              pageSize: self.pageSize,
+              total: self.total
+            })
+          ])
+        ]),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.previewVisible,
+          'onUpdate:modelValue': function (v) { self.previewVisible = v; if (!v) self.previewUrl = ''; },
+          title: self.previewTitle || '预览视频',
+          width: '860px',
+          destroyOnClose: true
+        }, {
+          default: function () {
+            return self.previewUrl
+              ? h('video', {
+                class: 'vd-company-preview',
+                src: self.previewUrl,
+                controls: true,
+                autoplay: true,
+                style: 'width:100%;max-height:70vh;background:#000;border-radius:8px'
+              })
+              : h('div', { class: 'empty' }, '暂无视频');
+          }
+        })
+      ]);
+    }
+  };
+
+  var VideoDeliveryDetailView = {
+    name: 'VideoDeliveryDetailView',
+    data: function () {
+      return {
+        loading: false,
+        order: null,
+        client: null,
+        previewVisible: false,
+        previewUrl: '',
+        previewTitle: ''
+      };
+    },
+    computed: {
+      orderId: function () {
+        return Number(this.$route.params.id || 0);
+      }
+    },
+    mounted: function () { this.load(); },
+    watch: {
+      '$route.params.id': function () { this.load(); }
+    },
+    methods: {
+      confirmLabel: function (s) {
+        var m = { pending: '待确认', confirmed: '已确认', auto_confirmed: '自动确认' };
+        return m[s] || s || '待确认';
+      },
+      load: async function () {
+        if (!this.orderId) return;
+        this.loading = true;
+        try {
+          var d = await CompanyAPI.videoDeliveryDetail(this.orderId);
+          this.order = d.order || null;
+          this.client = d.client || null;
+        } catch (e) {
+          ElMessage.error(e.message || '加载详情失败');
+        } finally {
+          this.loading = false;
+        }
+      },
+      back: function () { this.$router.push('/ops/video-delivery'); },
+      assetPlayUrl: function (a) {
+        return a.playUrl || a.cdnUrl || a.githubAssetUrl
+          || (a.fileId || a.id ? '/api/company/ops/video-delivery-files/' + (a.fileId || a.id) + '/stream' : '');
+      },
+      openPreview: function (a) {
+        var url = this.assetPlayUrl(a);
+        if (!url) {
+          ElMessage.warning('暂无可预览地址');
+          return;
+        }
+        this.previewTitle = a.name || a.fileName || '预览视频';
+        this.previewUrl = url;
+        this.previewVisible = true;
+      },
+      confirm: async function () {
+        try {
+          await ElementPlus.ElMessageBox.confirm('确认已收到该交付视频？', '确认交付', { type: 'warning' });
+        } catch (_) { return; }
+        try {
+          await CompanyAPI.videoDeliveryConfirm(this.orderId);
+          ElMessage.success('已确认');
+          this.load();
+        } catch (e) {
+          ElMessage.error(e.message || '确认失败');
+        }
+      }
+    },
+    render: function () {
+      var self = this;
+      var h = Vue.h;
+      var o = self.order || {};
+      var assets = o.assets && o.assets.length ? o.assets : (o.files || []);
+      return h('div', { class: 'vd-company-page', vLoading: self.loading }, [
+        pageHead(
+          h('span', [
+            h(ElementPlus.ElButton, { link: true, onClick: function () { self.back(); } }, function () { return '← 返回'; }),
+            ' 交付详情'
+          ]),
+          o.title || ''
+        ),
+        h('div', { class: 'panel' }, [
+          panelHead('基本信息', o.customerConfirmStatus === 'pending'
+            ? h(ElementPlus.ElButton, { type: 'success', onClick: function () { self.confirm(); } }, function () { return '确认收货'; })
+            : h(ElementPlus.ElTag, { type: 'success' }, function () { return self.confirmLabel(o.customerConfirmStatus); })),
+          h('div', { class: 'detail-kv-grid' }, [
+            h('div', { class: 'detail-kv' }, [h('small', '标题'), h('div', o.title || '-')]),
+            h('div', { class: 'detail-kv' }, [h('small', '结算类型'), h('div', o.settleType || '-')]),
+            h('div', { class: 'detail-kv' }, [h('small', '消耗积分'), h('div', String(o.pointsCost || 0))]),
+            h('div', { class: 'detail-kv' }, [h('small', '确认状态'), h('div', self.confirmLabel(o.customerConfirmStatus))]),
+            h('div', { class: 'detail-kv' }, [h('small', '交付时间'), h('div', o.deliveredAt || o.createdAt || '-')]),
+            h('div', { class: 'detail-kv' }, [h('small', '确认时间'), h('div', o.customerConfirmedAt || '-')]),
+            h('div', { class: 'detail-kv', style: 'grid-column:1 / -1' }, [h('small', '交付说明'), h('div', o.requirements || '-')])
+          ])
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:14px' }, [
+          panelHead('交付文件', h('span', { class: 'muted' }, '共 ' + assets.length + ' 个')),
+          assets.length
+            ? h('div', { class: 'vd-company-assets' }, assets.map(function (a) {
+              return h('div', { class: 'vd-company-asset-card' }, [
+                h('div', { class: 'vd-company-asset-main' }, [
+                  h('b', a.name || a.fileName || ('#' + a.id)),
+                  h('span', { class: 'muted' }, [
+                    a.cdnUrl || a.githubAssetUrl ? 'GitHub 加速已就绪' : '本机存储',
+                    a.sizeBytes ? (' · ' + Math.max(0.1, a.sizeBytes / 1048576).toFixed(1) + ' MB') : ''
+                  ].join(''))
+                ]),
+                h('div', { class: 'vd-company-asset-ops' }, [
+                  a.isVideo !== false
+                    ? h(ElementPlus.ElButton, { type: 'primary', size: 'small', onClick: function () { self.openPreview(a); } }, function () { return '预览'; })
+                    : null,
+                  (a.playUrl || a.cdnUrl || a.githubAssetUrl)
+                    ? h('a', {
+                      class: 'el-button el-button--small is-link',
+                      href: a.playUrl || a.cdnUrl || a.githubAssetUrl,
+                      target: '_blank',
+                      rel: 'noopener'
+                    }, '打开链接')
+                    : null
+                ])
+              ]);
+            }))
+            : h('div', { class: 'empty' }, '暂无交付文件')
+        ]),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.previewVisible,
+          'onUpdate:modelValue': function (v) { self.previewVisible = v; if (!v) self.previewUrl = ''; },
+          title: self.previewTitle || '预览视频',
+          width: '860px',
+          destroyOnClose: true
+        }, {
+          default: function () {
+            return self.previewUrl
+              ? h('video', {
+                class: 'vd-company-preview',
+                src: self.previewUrl,
+                controls: true,
+                autoplay: true,
+                style: 'width:100%;max-height:70vh;background:#000;border-radius:8px'
+              })
+              : h('div', { class: 'empty' }, '暂无视频');
+          }
+        })
+      ]);
+    }
+  };
+
   global.CompanyViews = {
     LoginView: LoginView,
     DashboardView: DashboardView,
@@ -2567,6 +2891,8 @@
     PublishView: PublishView,
     CommentReplyView: CommentReplyView,
     PullVideoListView: PullVideoListView,
-    PullVideoDetailView: PullVideoDetailView
+    PullVideoDetailView: PullVideoDetailView,
+    VideoDeliveryView: VideoDeliveryView,
+    VideoDeliveryDetailView: VideoDeliveryDetailView
   };
 })(window);

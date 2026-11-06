@@ -118,6 +118,74 @@ class VideoDeliveryService
               KEY idx_vdd_order (order_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
+
+        // 交付素材关联：本地路径 → GitHub CDN 链接
+        DB::query(
+            "CREATE TABLE IF NOT EXISTS video_delivery_assets (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              order_id INT NOT NULL,
+              file_id INT NOT NULL DEFAULT 0,
+              material_id INT NOT NULL DEFAULT 0,
+              name VARCHAR(255) NOT NULL DEFAULT '',
+              file_name VARCHAR(255) NOT NULL DEFAULT '',
+              local_path VARCHAR(1000) NOT NULL DEFAULT '',
+              cdn_url VARCHAR(1000) NOT NULL DEFAULT '',
+              github_asset_url VARCHAR(1000) NOT NULL DEFAULT '',
+              github_config_id INT NOT NULL DEFAULT 0,
+              size_bytes BIGINT NOT NULL DEFAULT 0,
+              mime_type VARCHAR(128) NOT NULL DEFAULT '',
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_vda_order (order_id),
+              KEY idx_vda_file (file_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        self::ensureOrderColumns();
+        self::ensureFileColumns();
+    }
+
+    private static function ensureOrderColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM video_delivery_orders') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        $alters = [
+            'customer_confirm_status' => "ALTER TABLE video_delivery_orders ADD COLUMN customer_confirm_status VARCHAR(32) NOT NULL DEFAULT 'pending' AFTER download_count",
+            'customer_confirmed_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN customer_confirmed_at DATETIME NULL AFTER customer_confirm_status',
+            'delivered_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN delivered_at DATETIME NULL AFTER customer_confirmed_at',
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+    }
+
+    private static function ensureFileColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM video_delivery_files') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        $alters = [
+            'cdn_url' => "ALTER TABLE video_delivery_files ADD COLUMN cdn_url VARCHAR(1000) NOT NULL DEFAULT '' AFTER size_bytes",
+            'github_asset_url' => "ALTER TABLE video_delivery_files ADD COLUMN github_asset_url VARCHAR(1000) NOT NULL DEFAULT '' AFTER cdn_url",
+            'github_config_id' => 'ALTER TABLE video_delivery_files ADD COLUMN github_config_id INT NOT NULL DEFAULT 0 AFTER github_asset_url',
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
     }
 
     private static function ensureClientColumns(): void
@@ -184,10 +252,10 @@ class VideoDeliveryService
             }
         }
 
-        // 可见范围：超管/运营管理看全部企业客户；运营专员看关联企业下的企业客户；其余无数据
-        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
+        // 可见范围：Admin 看全部；运营管理/运营专员看 company_users 关联企业下的企业客户；企业客户无数据
+        if (DataScope::isSuper()) {
             // no extra filter
-        } elseif (DataScope::isOperator()) {
+        } elseif (DataScope::isOpsAdmin() || DataScope::isOperator()) {
             $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
             $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
             if (!$companyIds) {
@@ -199,10 +267,6 @@ class VideoDeliveryService
                 WHERE cu2.user_id=u.id AND cu2.company_id IN ({$ph})
             )";
             array_push($params, ...$companyIds);
-        } elseif (DataScope::isEnterpriseCustomer()) {
-            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
-            $filters[] = 'u.id=?';
-            $params[] = $selfId;
         } else {
             return self::emptyListPack($page, $pageSize);
         }
@@ -350,14 +414,10 @@ class VideoDeliveryService
         if (!$row) {
             return null;
         }
-        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
+        if (DataScope::isSuper()) {
             return $row;
         }
-        if (DataScope::isEnterpriseCustomer()) {
-            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
-            return $selfId === $adminUserId ? $row : null;
-        }
-        if (DataScope::isOperator()) {
+        if (DataScope::isOpsAdmin() || DataScope::isOperator()) {
             $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
             $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
             if (!$companyIds) {
@@ -645,6 +705,8 @@ class VideoDeliveryService
         $name = (string)($row['name'] ?? $row['file_name'] ?? '');
         $ext = strtolower((string)pathinfo((string)($row['file_name'] ?? $name), PATHINFO_EXTENSION));
         $isVideo = str_starts_with($mime, 'video/') || in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true);
+        $cdn = trim((string)($row['cdn_url'] ?? ''));
+        $gh = trim((string)($row['github_asset_url'] ?? ''));
         return [
             'id' => (int)($row['id'] ?? 0),
             'orderId' => (int)($row['order_id'] ?? 0),
@@ -652,9 +714,58 @@ class VideoDeliveryService
             'fileName' => (string)($row['file_name'] ?? ''),
             'mimeType' => $mime,
             'sizeBytes' => (int)($row['size_bytes'] ?? 0),
+            'cdnUrl' => $cdn,
+            'githubAssetUrl' => $gh,
+            'githubConfigId' => (int)($row['github_config_id'] ?? 0),
+            'playUrl' => $cdn !== '' ? $cdn : $gh,
             'isVideo' => $isVideo,
             'createdAt' => (string)($row['created_at'] ?? ''),
         ];
+    }
+
+    public static function mapAsset(array $row): array
+    {
+        $cdn = trim((string)($row['cdn_url'] ?? ''));
+        $gh = trim((string)($row['github_asset_url'] ?? ''));
+        $mime = (string)($row['mime_type'] ?? '');
+        $ext = strtolower((string)pathinfo((string)($row['file_name'] ?? $row['name'] ?? ''), PATHINFO_EXTENSION));
+        $isVideo = str_starts_with($mime, 'video/') || in_array($ext, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], true);
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'orderId' => (int)($row['order_id'] ?? 0),
+            'fileId' => (int)($row['file_id'] ?? 0),
+            'materialId' => (int)($row['material_id'] ?? 0),
+            'name' => (string)($row['name'] ?? ''),
+            'fileName' => (string)($row['file_name'] ?? ''),
+            'localPath' => (string)($row['local_path'] ?? ''),
+            'cdnUrl' => $cdn,
+            'githubAssetUrl' => $gh,
+            'githubConfigId' => (int)($row['github_config_id'] ?? 0),
+            'playUrl' => $cdn !== '' ? $cdn : $gh,
+            'sizeBytes' => (int)($row['size_bytes'] ?? 0),
+            'mimeType' => $mime,
+            'isVideo' => $isVideo,
+            'createdAt' => (string)($row['created_at'] ?? ''),
+        ];
+    }
+
+    public static function normalizeConfirmStatus(string $raw): string
+    {
+        $s = trim($raw);
+        return match ($s) {
+            'confirmed', '已确认', 'confirm' => 'confirmed',
+            'auto_confirmed', 'auto', '自动确认' => 'auto_confirmed',
+            default => 'pending',
+        };
+    }
+
+    public static function confirmStatusLabel(string $code): string
+    {
+        return match (self::normalizeConfirmStatus($code)) {
+            'confirmed' => '已确认',
+            'auto_confirmed' => '自动确认',
+            default => '待确认',
+        };
     }
 
     public static function mapNote(array $row): array
@@ -681,10 +792,11 @@ class VideoDeliveryService
         ];
     }
 
-    public static function mapOrder(array $row, array $files = [], array $notes = []): array
+    public static function mapOrder(array $row, array $files = [], array $notes = [], array $assets = []): array
     {
         $status = self::normalizeOrderStatus((string)($row['status'] ?? 'completed'));
         $version = self::normalizeVersion((string)($row['service_version'] ?? 'standard'));
+        $confirm = self::normalizeConfirmStatus((string)($row['customer_confirm_status'] ?? 'pending'));
         return [
             'id' => (int)($row['id'] ?? 0),
             'clientId' => (int)($row['client_id'] ?? 0),
@@ -697,13 +809,45 @@ class VideoDeliveryService
             'serviceVersion' => $version,
             'serviceVersionLabel' => self::versionLabel($version),
             'downloadCount' => (int)($row['download_count'] ?? 0),
+            'customerConfirmStatus' => $confirm,
+            'customerConfirmStatusLabel' => self::confirmStatusLabel($confirm),
+            'customerConfirmedAt' => (string)($row['customer_confirmed_at'] ?? ''),
+            'deliveredAt' => (string)($row['delivered_at'] ?? $row['created_at'] ?? ''),
             'fileCount' => count($files),
             'files' => array_map([self::class, 'mapFile'], $files),
+            'assets' => array_map([self::class, 'mapAsset'], $assets),
             'notes' => array_map([self::class, 'mapNote'], $notes),
             'ownerId' => (int)($row['owner_id'] ?? 0),
             'createdAt' => (string)($row['created_at'] ?? ''),
             'updatedAt' => (string)($row['updated_at'] ?? ''),
         ];
+    }
+
+    /**
+     * 三日未确认自动确认。
+     * @return array{scanned:int,confirmed:int}
+     */
+    public static function autoConfirmExpired(int $days = 3): array
+    {
+        self::ensureSchema();
+        $days = max(1, $days);
+        $rows = DB::select(
+            "SELECT id FROM video_delivery_orders
+             WHERE customer_confirm_status='pending'
+               AND COALESCE(delivered_at, created_at) <= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        ) ?: [];
+        $n = 0;
+        foreach ($rows as $row) {
+            DB::query(
+                "UPDATE video_delivery_orders
+                 SET customer_confirm_status='auto_confirmed', customer_confirmed_at=NOW()
+                 WHERE id=? AND customer_confirm_status='pending'",
+                [(int)$row['id']]
+            );
+            $n++;
+        }
+        return ['scanned' => count($rows), 'confirmed' => $n];
     }
 
     public static function generateToken(): string

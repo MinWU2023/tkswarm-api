@@ -9,6 +9,7 @@ use App\Core\Response;
 use App\Core\Database\DB;
 use App\Middlewares\CorsMiddleware;
 use App\Services\DataScope;
+use App\Services\Github\GithubReleaseCdnService;
 use App\Services\VideoDeliveryService;
 
 class VideoDeliveryController extends Controller
@@ -253,10 +254,12 @@ class VideoDeliveryController extends Controller
             }
         }
 
+        $deliveredAt = $status === 'completed' ? date('Y-m-d H:i:s') : null;
         DB::query(
             "INSERT INTO video_delivery_orders
-              (client_id, title, requirements, settle_type, points_cost, status, service_version, owner_id)
-             VALUES (?,?,?,?,?,?,?,?)",
+              (client_id, title, requirements, settle_type, points_cost, status, service_version, owner_id,
+               customer_confirm_status, delivered_at)
+             VALUES (?,?,?,?,?,?,?,?, 'pending', ?)",
             [
                 $profileId,
                 $title,
@@ -266,6 +269,7 @@ class VideoDeliveryController extends Controller
                 $status,
                 $version,
                 DataScope::writeOwnerId(),
+                $deliveredAt,
             ]
         );
         $orderId = (int)DB::lastInsertId();
@@ -286,7 +290,11 @@ class VideoDeliveryController extends Controller
 
         $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
-        return $this->success(VideoDeliveryService::mapOrder($order ?: ['id' => $orderId], $files), '已上传并创建交付单');
+        $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
+        return $this->success(
+            VideoDeliveryService::mapOrder($order ?: ['id' => $orderId], $files, [], $assets),
+            '已上传并创建交付单'
+        );
     }
 
     public function orderFiles(Request $request, string $orderId): Response
@@ -355,6 +363,14 @@ class VideoDeliveryController extends Controller
         if ($file instanceof Response) {
             return $file;
         }
+        $remote = trim((string)($file['cdn_url'] ?? ''));
+        if ($remote === '') {
+            $remote = trim((string)($file['github_asset_url'] ?? ''));
+        }
+        if ($remote !== '') {
+            $cors = CorsMiddleware::headers($request->getHeader('Origin'));
+            return Response::make('', 302, array_merge($cors, ['Location' => $remote]));
+        }
         $path = $this->resolveFilePath($file);
         if ($path === '' || !is_file($path)) {
             return $this->error('文件不存在', 404);
@@ -374,10 +390,6 @@ class VideoDeliveryController extends Controller
         if ($file instanceof Response) {
             return $file;
         }
-        $path = $this->resolveFilePath($file);
-        if ($path === '' || !is_file($path)) {
-            return $this->error('文件不存在', 404);
-        }
         $orderId = (int)($file['order_id'] ?? 0);
         DB::query(
             'INSERT INTO video_delivery_downloads (order_id, file_id, operator_id, operator_name) VALUES (?,?,?,?)',
@@ -390,6 +402,18 @@ class VideoDeliveryController extends Controller
         );
         DB::query('UPDATE video_delivery_orders SET download_count=download_count+1 WHERE id=?', [$orderId]);
 
+        $remote = trim((string)($file['cdn_url'] ?? ''));
+        if ($remote === '') {
+            $remote = trim((string)($file['github_asset_url'] ?? ''));
+        }
+        if ($remote !== '') {
+            $cors = CorsMiddleware::headers($request->getHeader('Origin'));
+            return Response::make('', 302, array_merge($cors, ['Location' => $remote]));
+        }
+        $path = $this->resolveFilePath($file);
+        if ($path === '' || !is_file($path)) {
+            return $this->error('文件不存在', 404);
+        }
         $mime = (string)($file['mime_type'] ?: 'application/octet-stream');
         $cors = CorsMiddleware::headers($request->getHeader('Origin'));
         return Response::file($path, 200, array_merge($cors, [
@@ -507,14 +531,38 @@ class VideoDeliveryController extends Controller
             $rel = 'video-delivery/' . $clientId . '/' . $orderId . '/' . $destName;
             $mime = (string)($file['type'] ?? '');
             $display = pathinfo($orig, PATHINFO_FILENAME) ?: $destName;
+            $cdnUrl = '';
+            $githubAssetUrl = '';
+            $githubConfigId = 0;
+            try {
+                GithubReleaseCdnService::ensureSchema();
+                $up = GithubReleaseCdnService::uploadMaterialFile($dest, $orig, 0);
+                if ($up) {
+                    $cdnUrl = (string)($up['cdnUrl'] ?? '');
+                    $githubAssetUrl = (string)($up['githubAssetUrl'] ?? '');
+                    $githubConfigId = (int)($up['configId'] ?? 0);
+                }
+            } catch (\Throwable $e) {
+                // CDN 失败不阻断本机入库；关联表仍记录本地路径
+            }
             DB::query(
-                'INSERT INTO video_delivery_files (order_id, name, file_name, file_path, mime_type, size_bytes)
-                 VALUES (?,?,?,?,?,?)',
-                [$orderId, $display, $orig, $rel, $mime, $size]
+                'INSERT INTO video_delivery_files
+                  (order_id, name, file_name, file_path, mime_type, size_bytes, cdn_url, github_asset_url, github_config_id)
+                 VALUES (?,?,?,?,?,?,?,?,?)',
+                [$orderId, $display, $orig, $rel, $mime, $size, $cdnUrl, $githubAssetUrl, $githubConfigId]
+            );
+            $fileId = (int)DB::lastInsertId();
+            DB::query(
+                'INSERT INTO video_delivery_assets
+                  (order_id, file_id, name, file_name, local_path, cdn_url, github_asset_url, github_config_id, size_bytes, mime_type)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)',
+                [$orderId, $fileId, $display, $orig, $rel, $cdnUrl, $githubAssetUrl, $githubConfigId, $size, $mime]
             );
             $saved[] = [
-                'id' => (int)DB::lastInsertId(),
+                'id' => $fileId,
                 'name' => $display,
+                'cdnUrl' => $cdnUrl,
+                'githubAssetUrl' => $githubAssetUrl,
             ];
         }
         return $saved;

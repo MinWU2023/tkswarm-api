@@ -272,9 +272,19 @@ class RoutePermissionMap
                 'delete' => ['publish.tasks.delete', 'publish.tasks', 'matrix.publish', 'account.create'],
             ],
             '/api/video-delivery-clients' => [
-                'read' => ['publish.materials.view', 'publish.materials', 'publish.tasks', 'matrix.publish'],
-                'write' => ['publish.materials.update', 'publish.materials.create', 'publish.materials', 'publish.tasks'],
-                'delete' => ['publish.materials.delete', 'publish.materials', 'publish.tasks'],
+                'read' => ['publish.video_delivery.view', 'publish.video_delivery'],
+                'write' => ['publish.video_delivery.update', 'publish.video_delivery'],
+                'delete' => ['publish.video_delivery.update', 'publish.video_delivery'],
+            ],
+            '/api/video-delivery-orders' => [
+                'read' => ['publish.video_delivery.view', 'publish.video_delivery'],
+                'write' => ['publish.video_delivery.update', 'publish.video_delivery'],
+                'delete' => ['publish.video_delivery.update', 'publish.video_delivery'],
+            ],
+            '/api/video-delivery-files' => [
+                'read' => ['publish.video_delivery.view', 'publish.video_delivery'],
+                'write' => ['publish.video_delivery.update', 'publish.video_delivery'],
+                'delete' => ['publish.video_delivery.update', 'publish.video_delivery'],
             ],
             '/api/interaction-templates' => [
                 'read' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],

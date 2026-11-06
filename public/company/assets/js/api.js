@@ -105,6 +105,15 @@
     createPullCommentsTask: function (body) {
       return request('/api/company/ops/pull-video-detail/tasks', { method: 'POST', body: body });
     },
+    videoDeliveryList: function (params) {
+      return request('/api/company/ops/video-delivery' + qs(params), { method: 'GET' });
+    },
+    videoDeliveryDetail: function (id) {
+      return request('/api/company/ops/video-delivery/' + id, { method: 'GET' });
+    },
+    videoDeliveryConfirm: function (id) {
+      return request('/api/company/ops/video-delivery/' + id + '/confirm', { method: 'POST', body: {} });
+    },
 
     chatAccounts: function (params) {
       return request('/api/company/chat/accounts' + qs(params), { method: 'GET' });

@@ -138,6 +138,11 @@ class PermissionCatalog
             [171, 'system', 'system.settings.update', '保存基础设置', 171],
             // 176：避开 SeedMeta 曾误用的 174（与 group.assign 冲突）
             [176, 'system', 'system.nocaptcha', '管理NoCaptchaAI密钥', 176],
+
+            // —— 视频交付（独立于素材；勿挂到 publish.materials 自动展开）——
+            [177, 'publish', 'publish.video_delivery', '视频交付写入', 177],
+            [178, 'publish', 'publish.video_delivery.view', '查看视频交付', 178],
+            [179, 'publish', 'publish.video_delivery.update', '维护视频交付', 179],
         ];
     }
 
@@ -243,6 +248,10 @@ class PermissionCatalog
             'publish.materials.create' => ['publish.materials'],
             'publish.materials.update' => ['publish.materials'],
             'publish.materials.delete' => ['publish.materials'],
+            // 视频交付：仅精确命中 / * / admin；不与素材、发布任务互认
+            'publish.video_delivery' => [],
+            'publish.video_delivery.view' => ['publish.video_delivery'],
+            'publish.video_delivery.update' => ['publish.video_delivery'],
             'warm.view' => ['warm.tasks', 'publish.tasks'],
             'warm.create' => ['warm.tasks'],
             'warm.update' => ['warm.tasks'],
@@ -273,10 +282,87 @@ class PermissionCatalog
             self::upsertNodes();
             self::migrateRoles();
             self::ensureOpsAdminUserPerms();
+            self::ensureVideoDeliveryPerms();
             self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
             error_log('[PermissionCatalog] ensureSplitNodes: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 视频交付：运营管理 / 运营专员可见可维护；企业客户不授予。
+     * Admin（*）天然全量。菜单节点 menu.421 一并授权。
+     */
+    private static function ensureVideoDeliveryPerms(): void
+    {
+        try {
+            // 同步 menu.421 节点；菜单权限模式下靠 menu.421 显隐
+            MenuPermissionService::syncOne([
+                'id' => 421,
+                'title' => '视频交付',
+                'view' => 'videoDelivery',
+                'subview' => '',
+                'permission_code' => '',
+            ]);
+        } catch (\Throwable $e) {
+        }
+
+        $codes = [
+            'publish.video_delivery',
+            'publish.video_delivery.view',
+            'publish.video_delivery.update',
+            'menu.421',
+        ];
+        self::ensureRoleCodesByName('%运营管理%', $codes);
+        self::ensureRoleCodesByName('%运营专员%', $codes);
+        self::stripRoleCodesByName('%企业客户%', $codes);
+    }
+
+    /** @param list<string> $codes */
+    private static function stripRoleCodesByName(string $roleNameLike, array $codes): void
+    {
+        $codeToId = [];
+        foreach (DB::select('SELECT id, code FROM admin_permissions') as $row) {
+            $codeToId[(string)$row['code']] = (int)$row['id'];
+        }
+        $stripIds = [];
+        foreach ($codes as $code) {
+            if (!empty($codeToId[$code])) {
+                $stripIds[(int)$codeToId[$code]] = true;
+            }
+        }
+        if (!$stripIds) {
+            return;
+        }
+        $roles = DB::select('SELECT id, permissions FROM admin_roles WHERE name LIKE ?', [$roleNameLike]) ?: [];
+        foreach ($roles as $role) {
+            $ids = json_decode((string)($role['permissions'] ?? '[]'), true);
+            if (!is_array($ids) || in_array('*', $ids, true)) {
+                continue;
+            }
+            $set = [];
+            $changed = false;
+            foreach ($ids as $raw) {
+                $id = (int)$raw;
+                if ($id <= 0) {
+                    continue;
+                }
+                if (isset($stripIds[$id])) {
+                    $changed = true;
+                    continue;
+                }
+                $set[$id] = true;
+            }
+            if (!$changed) {
+                continue;
+            }
+            $newIds = array_map('strval', array_keys($set));
+            sort($newIds, SORT_NUMERIC);
+            DB::query(
+                'UPDATE admin_roles SET permissions=? WHERE id=?',
+                [json_encode($newIds, JSON_UNESCAPED_UNICODE), (int)$role['id']]
+            );
         }
     }
 
@@ -384,6 +470,9 @@ class PermissionCatalog
             'rbac|company_data' => [
                 'rbac.company_data', 'rbac.company_data.view', 'rbac.company_data.create',
                 'rbac.company_data.update', 'rbac.company_data.delete',
+            ],
+            'videoDelivery|' => [
+                'publish.video_delivery', 'publish.video_delivery.view', 'publish.video_delivery.update',
             ],
         ];
     }
@@ -574,6 +663,7 @@ class PermissionCatalog
             'publish.tasks' => ['publish.tasks.view', 'publish.tasks.create', 'publish.tasks.update', 'publish.tasks.delete'],
             'publish.mass' => ['publish.mass.view', 'publish.mass.create', 'publish.mass.update', 'publish.mass.delete'],
             'publish.materials' => ['publish.materials.view', 'publish.materials.create', 'publish.materials.update', 'publish.materials.delete'],
+            'publish.video_delivery' => ['publish.video_delivery.view', 'publish.video_delivery.update'],
             'warm.tasks' => ['warm.view', 'warm.create', 'warm.update', 'warm.delete'],
             'ai.leads' => ['ai.leads.view', 'ai.leads.create', 'ai.leads.update', 'ai.leads.delete'],
             'agent.manage' => ['agent.create', 'agent.update', 'agent.delete'],
@@ -685,6 +775,7 @@ class PermissionCatalog
             ['publish.tasks', '发布任务'],
             ['publish.mass', '群发任务'],
             ['publish.materials', '素材管理'],
+            ['publish.video_delivery', '视频交付'],
             ['warm.tasks', '养号任务'],
             ['rbac.users', '管理用户'],
             ['rbac.roles', '用户角色'],

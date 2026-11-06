@@ -98,6 +98,15 @@ final class ScheduleRegistry
                 'args' => [],
                 'defaultEnabled' => true,
             ],
+            [
+                'key' => 'video_delivery_auto_confirm',
+                'title' => '视频交付三日自动确认',
+                'description' => '交付后超过 3 日客户未确认的视频，自动标记为已确认',
+                'command' => 'video-delivery:auto-confirm',
+                'cron' => '15 * * * *',
+                'args' => ['--days=3'],
+                'defaultEnabled' => true,
+            ],
         ];
     }
 

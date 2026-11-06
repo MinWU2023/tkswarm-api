@@ -14,6 +14,7 @@ use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\PullCommentService;
 use App\Services\TikTokVideoScreenshotService;
+use App\Services\VideoDeliveryService;
 
 /**
  * 企业客户门户业务 API（数据范围由 DataScope 企业客户规则过滤）
@@ -2212,5 +2213,234 @@ class PortalApiController extends Controller
             'cover_github_asset_url' => '',
             'owner_id' => $ownerId,
         ];
+    }
+
+    /**
+     * 企业客户：视频交付列表（按当前登录 admin_user 关联档案）
+     */
+    public function videoDeliveryList(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        VideoDeliveryService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = max(1, min(50, (int)$request->get('pageSize', 12)));
+        $keyword = trim((string)$request->get('keyword', ''));
+        $confirm = trim((string)$request->get('confirmStatus', $request->get('confirm_status', '')));
+
+        $profile = DB::selectOne(
+            'SELECT * FROM video_delivery_clients WHERE admin_user_id=? ORDER BY id DESC LIMIT 1',
+            [$userId]
+        );
+        if (!$profile) {
+            return $this->success([
+                'items' => [],
+                'total' => 0,
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'pages' => 1,
+                'client' => null,
+            ]);
+        }
+        $profileId = (int)$profile['id'];
+        $where = ['o.client_id=?'];
+        $params = [$profileId];
+        if ($keyword !== '') {
+            $where[] = '(o.title LIKE ? OR o.requirements LIKE ?)';
+            $params[] = '%' . $keyword . '%';
+            $params[] = '%' . $keyword . '%';
+        }
+        if ($confirm !== '') {
+            $where[] = 'o.customer_confirm_status=?';
+            $params[] = VideoDeliveryService::normalizeConfirmStatus($confirm);
+        }
+        $sqlWhere = implode(' AND ', $where);
+        $total = (int)(DB::selectOne(
+            "SELECT COUNT(*) AS c FROM video_delivery_orders o WHERE {$sqlWhere}",
+            $params
+        )['c'] ?? 0);
+        $pages = max(1, (int)ceil($total / $pageSize));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+        $offset = ($page - 1) * $pageSize;
+        $rows = DB::select(
+            "SELECT o.* FROM video_delivery_orders o
+             WHERE {$sqlWhere}
+             ORDER BY o.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+        $items = [];
+        foreach ($rows as $row) {
+            $oid = (int)$row['id'];
+            $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+            $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+            $items[] = VideoDeliveryService::mapOrder($row, $files, [], $assets);
+        }
+        return $this->success([
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => $pages,
+            'client' => VideoDeliveryService::mapClient($profile),
+        ]);
+    }
+
+    public function videoDeliveryDetail(Request $request, string $id): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        VideoDeliveryService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        $orderId = (int)$id;
+        $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
+        if (!$order) {
+            return $this->error('交付单不存在', 404);
+        }
+        $profile = DB::selectOne(
+            'SELECT * FROM video_delivery_clients WHERE id=? AND admin_user_id=? LIMIT 1',
+            [(int)$order['client_id'], $userId]
+        );
+        if (!$profile) {
+            return $this->error('无权查看该交付单', 403);
+        }
+        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
+        $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
+        $notes = DB::select(
+            'SELECT * FROM video_delivery_notes WHERE order_id=? ORDER BY id DESC LIMIT 20',
+            [$orderId]
+        ) ?: [];
+        return $this->success([
+            'order' => VideoDeliveryService::mapOrder($order, $files, $notes, $assets),
+            'client' => VideoDeliveryService::mapClient($profile),
+        ]);
+    }
+
+    public function videoDeliveryConfirm(Request $request, string $id): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        VideoDeliveryService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        $orderId = (int)$id;
+        $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
+        if (!$order) {
+            return $this->error('交付单不存在', 404);
+        }
+        $profile = DB::selectOne(
+            'SELECT id FROM video_delivery_clients WHERE id=? AND admin_user_id=? LIMIT 1',
+            [(int)$order['client_id'], $userId]
+        );
+        if (!$profile) {
+            return $this->error('无权确认该交付单', 403);
+        }
+        $cur = VideoDeliveryService::normalizeConfirmStatus((string)($order['customer_confirm_status'] ?? 'pending'));
+        if ($cur !== 'pending') {
+            return $this->success([
+                'id' => $orderId,
+                'customerConfirmStatus' => $cur,
+                'customerConfirmStatusLabel' => VideoDeliveryService::confirmStatusLabel($cur),
+            ], '该交付单已确认');
+        }
+        DB::query(
+            "UPDATE video_delivery_orders
+             SET customer_confirm_status='confirmed', customer_confirmed_at=NOW()
+             WHERE id=? AND customer_confirm_status='pending'",
+            [$orderId]
+        );
+        $updated = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]) ?: $order;
+        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
+        $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
+        return $this->success(
+            VideoDeliveryService::mapOrder($updated, $files, [], $assets),
+            '已确认收货'
+        );
+    }
+
+    /**
+     * 企业客户预览/播放交付视频（仅本人档案下的文件）。
+     * 优先 302 到 CDN/GitHub；无远程地址时回源本地文件。
+     */
+    public function videoDeliveryStream(Request $request, string $fileId): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        VideoDeliveryService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        $fid = (int)$fileId;
+        $file = DB::selectOne('SELECT * FROM video_delivery_files WHERE id=?', [$fid]);
+        if (!$file) {
+            // 兼容 assets.id：若 files 不存在则尝试 assets.file_id
+            $asset = DB::selectOne('SELECT * FROM video_delivery_assets WHERE id=?', [$fid]);
+            if ($asset && (int)($asset['file_id'] ?? 0) > 0) {
+                $file = DB::selectOne('SELECT * FROM video_delivery_files WHERE id=?', [(int)$asset['file_id']]);
+            }
+            if (!$file && $asset) {
+                $remote = trim((string)($asset['cdn_url'] ?? ''));
+                if ($remote === '') {
+                    $remote = trim((string)($asset['github_asset_url'] ?? ''));
+                }
+                if ($remote !== '') {
+                    $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [(int)$asset['order_id']]);
+                    if ($order) {
+                        $profile = DB::selectOne(
+                            'SELECT id FROM video_delivery_clients WHERE id=? AND admin_user_id=? LIMIT 1',
+                            [(int)$order['client_id'], $userId]
+                        );
+                        if ($profile) {
+                            return Response::make('', 302, ['Location' => $remote]);
+                        }
+                    }
+                }
+                return $this->error('交付文件不存在', 404);
+            }
+            if (!$file) {
+                return $this->error('交付文件不存在', 404);
+            }
+        }
+        $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [(int)$file['order_id']]);
+        if (!$order) {
+            return $this->error('交付单不存在', 404);
+        }
+        $profile = DB::selectOne(
+            'SELECT id FROM video_delivery_clients WHERE id=? AND admin_user_id=? LIMIT 1',
+            [(int)$order['client_id'], $userId]
+        );
+        if (!$profile) {
+            return $this->error('无权播放该视频', 403);
+        }
+        $remote = trim((string)($file['cdn_url'] ?? ''));
+        if ($remote === '') {
+            $remote = trim((string)($file['github_asset_url'] ?? ''));
+        }
+        if ($remote !== '') {
+            return Response::make('', 302, ['Location' => $remote]);
+        }
+        $path = (string)($file['file_path'] ?? '');
+        if ($path !== '' && !is_file($path)) {
+            $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
+            $cand = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path), '/\\');
+            $path = is_file($cand) ? $cand : '';
+        }
+        if ($path === '' || !is_file($path)) {
+            return $this->error('文件不存在', 404);
+        }
+        $mime = (string)($file['mime_type'] ?: 'application/octet-stream');
+        $safeName = preg_replace('/[^\w.\-\x{4e00}-\x{9fff}]+/u', '_', (string)($file['file_name'] ?? 'file')) ?: 'file';
+        return Response::file($path, 200, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline; filename="' . $safeName . '"',
+            'Cache-Control' => 'private, max-age=0, must-revalidate',
+        ]);
     }
 }

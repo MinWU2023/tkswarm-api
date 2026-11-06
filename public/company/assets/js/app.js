@@ -27,6 +27,7 @@
       icon: 'Film',
       children: [
         { path: '/ops/publish', title: '发布视频', icon: 'Upload' },
+        { path: '/ops/video-delivery', title: '视频交付', icon: 'Box' },
         { path: '/ops/comment-reply', title: '回复评论', icon: 'ChatLineSquare' },
         { path: '/ops/pull-video-list', title: '拉取视频列表', icon: 'List' },
         { path: '/ops/pull-video-detail', title: '拉取视频详情', icon: 'Document' },
@@ -361,6 +362,8 @@
         { path: 'support', component: CompanyViews.SupportView, meta: { title: '客服坐席' } },
         { path: 'ops', redirect: '/ops/publish' },
         { path: 'ops/publish', component: CompanyViews.PublishView, meta: { title: '发布视频' } },
+        { path: 'ops/video-delivery', component: CompanyViews.VideoDeliveryView, meta: { title: '视频交付' } },
+        { path: 'ops/video-delivery/:id', component: CompanyViews.VideoDeliveryDetailView, meta: { title: '交付详情' } },
         { path: 'ops/comment-reply', component: CompanyViews.CommentReplyView, meta: { title: '回复评论' } },
         { path: 'ops/pull-video-list', component: CompanyViews.PullVideoListView, meta: { title: '拉取视频列表' } },
         { path: 'ops/pull-video-detail', component: CompanyViews.PullVideoDetailView, meta: { title: '拉取视频详情' } }

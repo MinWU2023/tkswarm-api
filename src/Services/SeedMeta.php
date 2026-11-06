@@ -103,7 +103,7 @@ class SeedMeta
             ['aiLeadClueData', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['autoFollow', ['ai.leads', 'ai.leads.view', 'account.create', 'publish.tasks', 'account.view']],
             ['videoBoost', ['publish.tasks', 'publish.tasks.view', 'matrix.publish', 'account.create', 'account.view']],
-            ['videoDelivery', ['publish.materials', 'publish.materials.view', 'publish.tasks', 'publish.tasks.view', 'matrix.publish']],
+            ['videoDelivery', ['publish.video_delivery', 'publish.video_delivery.view', 'publish.video_delivery.update']],
         ];
         foreach ($rows as [$view, $codes]) {
             DB::query(
@@ -657,7 +657,7 @@ class SeedMeta
             } catch (\Throwable $e) {
             }
             try {
-                DB::query("UPDATE navigation_menus SET permission_code='publish.materials.view' WHERE id=421 OR view='videoDelivery'");
+                DB::query("UPDATE navigation_menus SET permission_code='menu.421' WHERE id=421 OR view='videoDelivery'");
             } catch (\Throwable $e) {
             }
             // 父级默认进「拉取数据」；叶子各自用独立 subview，避免与「修改资料」抢路由
