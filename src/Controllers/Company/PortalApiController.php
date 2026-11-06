@@ -2322,7 +2322,7 @@ class PortalApiController extends Controller
                 $ownerId,
             ]
         );
-        $orderId = (int)DB::lastInsertId();
+        $orderId = (int)DB::getPdo()->lastInsertId();
         $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
         return $this->success(
             VideoDeliveryService::mapOrder($order ?: ['id' => $orderId]),

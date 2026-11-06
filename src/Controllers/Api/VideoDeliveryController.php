@@ -305,7 +305,7 @@ class VideoDeliveryController extends Controller
                 $deliveredAt,
             ]
         );
-        $orderId = (int)DB::lastInsertId();
+        $orderId = (int)DB::getPdo()->lastInsertId();
 
         $linked = $this->attachMaterials($adminUserId, $orderId, $materialIds);
         if ($linked instanceof Response) {
@@ -663,7 +663,7 @@ class VideoDeliveryController extends Controller
                  VALUES (?,?,?,?,?,?,?,?,?)',
                 [$orderId, $display, $orig !== '' ? $orig : $display, $rel, $mime, $size, $cdnUrl, $githubAssetUrl, $githubConfigId]
             );
-            $fileId = (int)DB::lastInsertId();
+            $fileId = (int)DB::getPdo()->lastInsertId();
             DB::query(
                 'INSERT INTO video_delivery_assets
                   (order_id, file_id, material_id, name, file_name, local_path, cdn_url, github_asset_url, github_config_id, size_bytes, mime_type)
@@ -736,7 +736,7 @@ class VideoDeliveryController extends Controller
                  VALUES (?,?,?,?,?,?,?,?,?)',
                 [$orderId, $display, $orig, $rel, $mime, $size, $cdnUrl, $githubAssetUrl, $githubConfigId]
             );
-            $fileId = (int)DB::lastInsertId();
+            $fileId = (int)DB::getPdo()->lastInsertId();
             DB::query(
                 'INSERT INTO video_delivery_assets
                   (order_id, file_id, name, file_name, local_path, cdn_url, github_asset_url, github_config_id, size_bytes, mime_type)

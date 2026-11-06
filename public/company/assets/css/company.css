@@ -1747,19 +1747,33 @@ html { color-scheme: light; }
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 8px 24px 16px;
+  padding: 8px 40px 16px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.vd-req-dialog-wrap .el-dialog__body::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent;
 }
 .vd-req-dialog-wrap .el-dialog__footer {
   flex: 0 0 auto;
-  padding: 12px 24px 18px;
+  padding: 12px 40px 18px;
   border-top: 1px solid #eef2f7;
 }
 .vd-req-dialog {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 720px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+.vd-req-dialog .el-input,
+.vd-req-dialog .el-textarea,
+.vd-req-dialog .el-select {
   width: 100%;
 }
 .vd-req-field { display: flex; flex-direction: column; gap: 6px; }
