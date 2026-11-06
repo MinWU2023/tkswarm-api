@@ -34,6 +34,7 @@ class VideoDeliveryService
         DB::query(
             "CREATE TABLE IF NOT EXISTS video_delivery_clients (
               id INT AUTO_INCREMENT PRIMARY KEY,
+              admin_user_id INT NOT NULL DEFAULT 0,
               account_name VARCHAR(120) NOT NULL DEFAULT '',
               linkedin_company VARCHAR(255) NOT NULL DEFAULT '',
               phone VARCHAR(64) NOT NULL DEFAULT '',
@@ -53,7 +54,8 @@ class VideoDeliveryService
               updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
               KEY idx_vdc_audit (audit_status),
               KEY idx_vdc_owner (owner_id),
-              KEY idx_vdc_name (account_name)
+              KEY idx_vdc_name (account_name),
+              KEY idx_vdc_admin_user (admin_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
@@ -121,6 +123,7 @@ class VideoDeliveryService
     private static function ensureClientColumns(): void
     {
         $cols = [
+            'admin_user_id' => 'ALTER TABLE video_delivery_clients ADD COLUMN admin_user_id INT NOT NULL DEFAULT 0',
             'service_version' => "ALTER TABLE video_delivery_clients ADD COLUMN service_version VARCHAR(32) NOT NULL DEFAULT 'standard'",
             'auth_start' => 'ALTER TABLE video_delivery_clients ADD COLUMN auth_start DATE NULL',
             'auth_end' => 'ALTER TABLE video_delivery_clients ADD COLUMN auth_end DATE NULL',
@@ -145,6 +148,360 @@ class VideoDeliveryService
                 }
             }
         }
+        try {
+            DB::query('ALTER TABLE video_delivery_clients ADD UNIQUE KEY uk_vdc_admin_user (admin_user_id)');
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * 列表：仅「企业客户」角色管理用户 + 关联企业。
+     * @return array{items:list<array>,total:int,page:int,pageSize:int,pages:int,stats:array}
+     */
+    public static function listEnterpriseCustomers(int $page, int $pageSize, string $keyword, string $audit): array
+    {
+        self::ensureSchema();
+        CompanyService::ensureSchema();
+
+        $filters = [
+            "r.name LIKE ?",
+        ];
+        $params = ['%企业客户%'];
+
+        if ($keyword !== '') {
+            $filters[] = '(u.username LIKE ? OR u.nickname LIKE ? OR c.name LIKE ? OR c.contact_phone LIKE ? OR c.contact_name LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($params, $like, $like, $like, $like, $like);
+        }
+        if ($audit !== '') {
+            $norm = self::normalizeAudit($audit);
+            if ($norm === 'approved') {
+                $filters[] = 'u.status=1';
+            } elseif ($norm === 'rejected') {
+                $filters[] = 'u.status=0';
+            } elseif ($norm === 'pending') {
+                $filters[] = 'u.status NOT IN (0,1)';
+            }
+        }
+
+        // 可见范围：超管/运营管理看全部企业客户；运营专员看关联企业下的企业客户；其余无数据
+        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
+            // no extra filter
+        } elseif (DataScope::isOperator()) {
+            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
+            $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
+            if (!$companyIds) {
+                return self::emptyListPack($page, $pageSize);
+            }
+            $ph = implode(',', array_fill(0, count($companyIds), '?'));
+            $filters[] = "EXISTS (
+                SELECT 1 FROM company_users cu2
+                WHERE cu2.user_id=u.id AND cu2.company_id IN ({$ph})
+            )";
+            array_push($params, ...$companyIds);
+        } elseif (DataScope::isEnterpriseCustomer()) {
+            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
+            $filters[] = 'u.id=?';
+            $params[] = $selfId;
+        } else {
+            return self::emptyListPack($page, $pageSize);
+        }
+
+        $from = "FROM admin_users u
+            INNER JOIN admin_roles r ON r.id = u.role_id
+            LEFT JOIN companies c ON c.id = COALESCE(
+              (SELECT cu.company_id FROM company_users cu WHERE cu.user_id=u.id ORDER BY cu.is_primary DESC, cu.company_id ASC LIMIT 1),
+              NULLIF(u.company_id,0)
+            )";
+        $where = 'WHERE ' . implode(' AND ', $filters);
+
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$from} {$where}", $params)['c'] ?? 0);
+        $pages = max(1, (int)ceil($total / max(1, $pageSize)));
+        $page = min(max(1, $page), $pages);
+        $offset = ($page - 1) * $pageSize;
+
+        $rows = DB::select(
+            "SELECT u.id, u.username, u.nickname, u.status, u.created_at, u.updated_at, u.company_id,
+                    r.name AS role_name,
+                    c.id AS company_id_resolved, c.name AS company_name,
+                    c.contact_phone AS company_phone, c.contact_name AS company_contact,
+                    c.status AS company_status
+             {$from}
+             {$where}
+             ORDER BY u.id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+
+        $userIds = array_map(static fn($r) => (int)$r['id'], $rows);
+        $lastLoginMap = self::lastLoginMap($userIds);
+        $profileMap = self::profileMapByAdminIds($userIds);
+
+        $items = [];
+        foreach ($rows as $row) {
+            $items[] = self::mapEnterpriseUserRow($row, $lastLoginMap, $profileMap);
+        }
+
+        // 统计「通过」用全量过滤条件再数一遍
+        $approvedFilters = $filters;
+        $approvedParams = $params;
+        $approvedFilters[] = 'u.status=1';
+        $approvedTotal = (int)(DB::selectOne(
+            'SELECT COUNT(*) AS c ' . $from . ' WHERE ' . implode(' AND ', $approvedFilters),
+            $approvedParams
+        )['c'] ?? 0);
+
+        return [
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => $pages,
+            'stats' => [
+                'total' => $total,
+                'approved' => $approvedTotal,
+            ],
+        ];
+    }
+
+    /** @return array{items:list,total:int,page:int,pageSize:int,pages:int,stats:array} */
+    private static function emptyListPack(int $page, int $pageSize): array
+    {
+        return [
+            'items' => [],
+            'total' => 0,
+            'page' => max(1, $page),
+            'pageSize' => $pageSize,
+            'pages' => 1,
+            'stats' => ['total' => 0, 'approved' => 0],
+        ];
+    }
+
+    /** @param list<int> $userIds @return array<int,string> */
+    private static function lastLoginMap(array $userIds): array
+    {
+        $userIds = array_values(array_filter(array_map('intval', $userIds)));
+        if (!$userIds) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($userIds), '?'));
+        $out = [];
+        try {
+            $rows = DB::select(
+                "SELECT user_id, MAX(created_at) AS last_at
+                 FROM admin_sessions
+                 WHERE user_id IN ({$ph})
+                 GROUP BY user_id",
+                $userIds
+            ) ?: [];
+            foreach ($rows as $r) {
+                $out[(int)$r['user_id']] = (string)($r['last_at'] ?? '');
+            }
+        } catch (\Throwable $e) {
+        }
+        return $out;
+    }
+
+    /** @param list<int> $userIds @return array<int,array> */
+    private static function profileMapByAdminIds(array $userIds): array
+    {
+        $userIds = array_values(array_filter(array_map('intval', $userIds)));
+        if (!$userIds) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($userIds), '?'));
+        $rows = DB::select(
+            "SELECT * FROM video_delivery_clients WHERE admin_user_id IN ({$ph})",
+            $userIds
+        ) ?: [];
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(int)$r['admin_user_id']] = $r;
+        }
+        return $out;
+    }
+
+    /**
+     * 校验并返回企业客户管理用户；不可见则 null。
+     * @return array<string,mixed>|null
+     */
+    public static function findAccessibleEnterpriseUser(int $adminUserId): ?array
+    {
+        if ($adminUserId <= 0) {
+            return null;
+        }
+        CompanyService::ensureSchema();
+        $row = DB::selectOne(
+            "SELECT u.id, u.username, u.nickname, u.status, u.created_at, u.updated_at, u.company_id,
+                    r.name AS role_name,
+                    c.id AS company_id_resolved, c.name AS company_name,
+                    c.contact_phone AS company_phone, c.contact_name AS company_contact,
+                    c.status AS company_status
+             FROM admin_users u
+             INNER JOIN admin_roles r ON r.id = u.role_id
+             LEFT JOIN companies c ON c.id = COALESCE(
+               (SELECT cu.company_id FROM company_users cu WHERE cu.user_id=u.id ORDER BY cu.is_primary DESC, cu.company_id ASC LIMIT 1),
+               NULLIF(u.company_id,0)
+             )
+             WHERE u.id=? AND r.name LIKE ?
+             LIMIT 1",
+            [$adminUserId, '%企业客户%']
+        );
+        if (!$row) {
+            return null;
+        }
+        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
+            return $row;
+        }
+        if (DataScope::isEnterpriseCustomer()) {
+            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
+            return $selfId === $adminUserId ? $row : null;
+        }
+        if (DataScope::isOperator()) {
+            $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
+            $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
+            if (!$companyIds) {
+                return null;
+            }
+            $ph = implode(',', array_fill(0, count($companyIds), '?'));
+            $hit = DB::selectOne(
+                "SELECT 1 AS ok FROM company_users WHERE user_id=? AND company_id IN ({$ph}) LIMIT 1",
+                array_merge([$adminUserId], $companyIds)
+            );
+            return $hit ? $row : null;
+        }
+        return null;
+    }
+
+    /**
+     * 按企业客户管理用户确保交付档案（授权/积分存在本表）。
+     * @return array<string,mixed> profile row + display fields
+     */
+    public static function ensureProfileForAdminUser(int $adminUserId): array
+    {
+        self::ensureSchema();
+        $user = self::findAccessibleEnterpriseUser($adminUserId);
+        if (!$user) {
+            throw new \RuntimeException('企业客户不存在或无权访问');
+        }
+        $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE admin_user_id=?', [$adminUserId]);
+        $accountName = trim((string)($user['nickname'] ?? ''));
+        if ($accountName === '') {
+            $accountName = (string)($user['username'] ?? '');
+        }
+        $companyName = (string)($user['company_name'] ?? '');
+        $phone = (string)($user['company_phone'] ?? '');
+        $audit = ((int)($user['status'] ?? 1) === 1) ? 'approved' : 'rejected';
+        $registered = (string)($user['created_at'] ?? date('Y-m-d H:i:s'));
+        $lastLoginMap = self::lastLoginMap([$adminUserId]);
+        $lastLogin = $lastLoginMap[$adminUserId] ?? '';
+
+        if (!$profile) {
+            DB::query(
+                "INSERT INTO video_delivery_clients
+                  (admin_user_id, account_name, linkedin_company, phone, audit_status, registered_at, last_login_at, owner_id, points)
+                 VALUES (?,?,?,?,?,?,?,?,0)",
+                [
+                    $adminUserId,
+                    $accountName,
+                    $companyName,
+                    $phone,
+                    $audit,
+                    $registered !== '' ? $registered : null,
+                    $lastLogin !== '' ? $lastLogin : null,
+                    $adminUserId,
+                ]
+            );
+            $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE admin_user_id=?', [$adminUserId]);
+        } else {
+            // 同步展示字段（以管理用户/企业为准）
+            DB::query(
+                "UPDATE video_delivery_clients SET
+                  account_name=?, linkedin_company=?, phone=?, audit_status=?,
+                  registered_at=?, last_login_at=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?",
+                [
+                    $accountName,
+                    $companyName,
+                    $phone,
+                    $audit,
+                    $registered !== '' ? $registered : null,
+                    $lastLogin !== '' ? $lastLogin : null,
+                    (int)$profile['id'],
+                ]
+            );
+            $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$profile['id']]);
+        }
+
+        $mapped = self::mapClient($profile ?: []);
+        $mapped['id'] = $adminUserId; // 对外统一用管理用户 ID
+        $mapped['profileId'] = (int)($profile['id'] ?? 0);
+        $mapped['adminUserId'] = $adminUserId;
+        $mapped['username'] = (string)($user['username'] ?? '');
+        $mapped['nickname'] = (string)($user['nickname'] ?? '');
+        $mapped['roleName'] = (string)($user['role_name'] ?? '企业客户');
+        $mapped['companyId'] = (int)($user['company_id_resolved'] ?? $user['company_id'] ?? 0);
+        $mapped['companyName'] = $companyName;
+        $mapped['companyContact'] = (string)($user['company_contact'] ?? '');
+        $mapped['accountName'] = $accountName;
+        $mapped['linkedinCompany'] = $companyName;
+        $mapped['phone'] = $phone;
+        $mapped['auditStatus'] = $audit;
+        $mapped['registeredAt'] = $registered;
+        $mapped['lastLoginAt'] = $lastLogin;
+        return $mapped;
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     * @param array<int,string> $lastLoginMap
+     * @param array<int,array> $profileMap
+     */
+    public static function mapEnterpriseUserRow(array $row, array $lastLoginMap = [], array $profileMap = []): array
+    {
+        $uid = (int)($row['id'] ?? 0);
+        $accountName = trim((string)($row['nickname'] ?? ''));
+        if ($accountName === '') {
+            $accountName = (string)($row['username'] ?? '');
+        }
+        $companyName = (string)($row['company_name'] ?? '');
+        $phone = (string)($row['company_phone'] ?? '');
+        $audit = ((int)($row['status'] ?? 1) === 1) ? 'approved' : 'rejected';
+        $profile = $profileMap[$uid] ?? null;
+        $authStart = (string)($profile['auth_start'] ?? '');
+        $authEnd = (string)($profile['auth_end'] ?? '');
+        $version = self::normalizeVersion((string)($profile['service_version'] ?? 'standard'));
+        return [
+            'id' => $uid,
+            'adminUserId' => $uid,
+            'profileId' => (int)($profile['id'] ?? 0),
+            'accountName' => $accountName,
+            'username' => (string)($row['username'] ?? ''),
+            'nickname' => (string)($row['nickname'] ?? ''),
+            'linkedinCompany' => $companyName,
+            'companyId' => (int)($row['company_id_resolved'] ?? $row['company_id'] ?? 0),
+            'companyName' => $companyName,
+            'companyContact' => (string)($row['company_contact'] ?? ''),
+            'phone' => $phone,
+            'auditStatus' => $audit,
+            'registeredAt' => (string)($row['created_at'] ?? ''),
+            'lastLoginAt' => (string)($lastLoginMap[$uid] ?? ''),
+            'roleName' => (string)($row['role_name'] ?? '企业客户'),
+            'points' => (int)($profile['points'] ?? 0),
+            'pointsUpdatedAt' => (string)($profile['points_updated_at'] ?? ''),
+            'authStart' => $authStart,
+            'authEnd' => $authEnd,
+            'authToken' => (string)($profile['auth_token'] ?? ''),
+            'authorized' => $authStart !== '' && $authEnd !== '' && $authEnd >= date('Y-m-d'),
+            'serviceVersion' => $version,
+            'serviceVersionLabel' => self::versionLabel($version),
+            'videoIds' => [],
+            'videoCount' => 0,
+            'notes' => (string)($profile['notes'] ?? ''),
+            'ownerId' => $uid,
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+        ];
     }
 
     public static function storageDir(int $clientId = 0, int $orderId = 0): string

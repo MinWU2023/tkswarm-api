@@ -15,195 +15,62 @@ class VideoDeliveryController extends Controller
 {
     public function list(Request $request): Response
     {
-        VideoDeliveryService::ensureSchema();
         $page = max(1, (int)$request->get('page', 1));
         $pageSize = max(1, min(100, (int)$request->get('pageSize', 20)));
         $keyword = trim((string)$request->get('keyword', ''));
         $audit = trim((string)$request->get('auditStatus', $request->get('audit_status', '')));
 
-        $filters = [];
-        $params = [];
-        if ($keyword !== '') {
-            $filters[] = '(account_name LIKE ? OR linkedin_company LIKE ? OR phone LIKE ?)';
-            $like = '%' . $keyword . '%';
-            array_push($params, $like, $like, $like);
-        }
-        if ($audit !== '') {
-            $filters[] = 'audit_status=?';
-            $params[] = VideoDeliveryService::normalizeAudit($audit);
-        }
-        DataScope::applyOwnerFilter('owner_id', $filters, $params);
-        $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
-
-        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM video_delivery_clients {$where}", $params)['c'] ?? 0);
-        $pages = max(1, (int)ceil($total / max(1, $pageSize)));
-        $page = min($page, $pages);
-        $offset = ($page - 1) * $pageSize;
-
-        $rows = DB::select(
-            "SELECT * FROM video_delivery_clients {$where}
-             ORDER BY id DESC
-             LIMIT {$pageSize} OFFSET {$offset}",
-            $params
-        ) ?: [];
-
-        $items = array_map(static fn(array $r) => VideoDeliveryService::mapClient($r), $rows);
-
-        $statFilters = $filters;
-        $statParams = $params;
-        $statFilters[] = "audit_status='approved'";
-        $approved = (int)(DB::selectOne(
-            'SELECT COUNT(*) AS c FROM video_delivery_clients WHERE ' . implode(' AND ', $statFilters),
-            $statParams
-        )['c'] ?? 0);
-
-        return $this->success([
-            'items' => $items,
-            'page' => $page,
-            'pageSize' => $pageSize,
-            'pages' => $pages,
-            'total' => $total,
-            'stats' => [
-                'total' => $total,
-                'approved' => $approved,
-            ],
-            'meta' => [
-                'versions' => VideoDeliveryService::VERSIONS,
-                'orderStatuses' => VideoDeliveryService::ORDER_STATUSES,
-            ],
-        ]);
+        $pack = VideoDeliveryService::listEnterpriseCustomers($page, $pageSize, $keyword, $audit);
+        $pack['meta'] = [
+            'versions' => VideoDeliveryService::VERSIONS,
+            'orderStatuses' => VideoDeliveryService::ORDER_STATUSES,
+            'source' => 'enterprise_customers',
+        ];
+        return $this->success($pack);
     }
 
     public function show(Request $request, string $id): Response
     {
-        $client = $this->loadClient((int)$id);
-        if ($client instanceof Response) {
-            return $client;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
-        $mapped = VideoDeliveryService::mapClient($client);
-        $orderCount = (int)(DB::selectOne(
-            'SELECT COUNT(*) AS c FROM video_delivery_orders WHERE client_id=?',
-            [(int)$id]
-        )['c'] ?? 0);
+        $profileId = (int)($mapped['profileId'] ?? 0);
+        $orderCount = $profileId > 0
+            ? (int)(DB::selectOne('SELECT COUNT(*) AS c FROM video_delivery_orders WHERE client_id=?', [$profileId])['c'] ?? 0)
+            : 0;
         $mapped['orderCount'] = $orderCount;
         return $this->success($mapped);
     }
 
     public function create(Request $request): Response
     {
-        VideoDeliveryService::ensureSchema();
-        $accountName = trim((string)$request->input('accountName', $request->input('account_name', '')));
-        if ($accountName === '') {
-            return $this->error('请填写账户名称', 422);
-        }
-        $linkedin = trim((string)$request->input('linkedinCompany', $request->input('linkedin_company', '')));
-        $phone = trim((string)$request->input('phone', ''));
-        $audit = VideoDeliveryService::normalizeAudit(
-            (string)$request->input('auditStatus', $request->input('audit_status', 'approved'))
-        );
-        $notes = mb_substr(trim((string)$request->input('notes', '')), 0, 500);
-        $registeredAt = trim((string)$request->input('registeredAt', $request->input('registered_at', '')));
-        if ($registeredAt === '') {
-            $registeredAt = date('Y-m-d H:i:s');
-        }
-        $lastLogin = trim((string)$request->input('lastLoginAt', $request->input('last_login_at', '')));
-        $ownerId = DataScope::writeOwnerId();
-
-        DB::query(
-            "INSERT INTO video_delivery_clients
-              (account_name, linkedin_company, phone, audit_status, registered_at, last_login_at, notes, owner_id, points, points_updated_at)
-             VALUES (?,?,?,?,?,?,?,?,0,NULL)",
-            [
-                $accountName,
-                $linkedin,
-                $phone,
-                $audit,
-                $registeredAt,
-                $lastLogin !== '' ? $lastLogin : null,
-                $notes,
-                $ownerId,
-            ]
-        );
-        $newId = (int)DB::lastInsertId();
-        $row = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$newId]);
-        return $this->success(VideoDeliveryService::mapClient($row ?: ['id' => $newId]), '已创建');
+        return $this->error('视频交付客户来自「企业客户」角色管理用户及其关联企业，请在权限管理中维护', 422);
     }
 
     public function update(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
-        }
-        $all = $request->all();
-        $accountName = array_key_exists('accountName', $all) || array_key_exists('account_name', $all)
-            ? trim((string)$request->input('accountName', $request->input('account_name', '')))
-            : (string)($row['account_name'] ?? '');
-        if ($accountName === '') {
-            return $this->error('请填写账户名称', 422);
-        }
-        $linkedin = array_key_exists('linkedinCompany', $all) || array_key_exists('linkedin_company', $all)
-            ? trim((string)$request->input('linkedinCompany', $request->input('linkedin_company', '')))
-            : (string)($row['linkedin_company'] ?? '');
-        $phone = array_key_exists('phone', $all)
-            ? trim((string)$request->input('phone', ''))
-            : (string)($row['phone'] ?? '');
-        $audit = array_key_exists('auditStatus', $all) || array_key_exists('audit_status', $all)
-            ? VideoDeliveryService::normalizeAudit((string)$request->input('auditStatus', $request->input('audit_status', '')))
-            : (string)($row['audit_status'] ?? 'approved');
-        $notes = array_key_exists('notes', $all)
-            ? mb_substr(trim((string)$request->input('notes', '')), 0, 500)
-            : (string)($row['notes'] ?? '');
-        $registeredAt = array_key_exists('registeredAt', $all) || array_key_exists('registered_at', $all)
-            ? trim((string)$request->input('registeredAt', $request->input('registered_at', '')))
-            : (string)($row['registered_at'] ?? '');
-        $lastLogin = array_key_exists('lastLoginAt', $all) || array_key_exists('last_login_at', $all)
-            ? trim((string)$request->input('lastLoginAt', $request->input('last_login_at', '')))
-            : (string)($row['last_login_at'] ?? '');
-
-        DB::query(
-            "UPDATE video_delivery_clients SET
-              account_name=?, linkedin_company=?, phone=?, audit_status=?,
-              registered_at=?, last_login_at=?, notes=?,
-              updated_at=CURRENT_TIMESTAMP
-             WHERE id=?",
-            [
-                $accountName,
-                $linkedin,
-                $phone,
-                $audit,
-                $registeredAt !== '' ? $registeredAt : null,
-                $lastLogin !== '' ? $lastLogin : null,
-                $notes,
-                (int)$id,
-            ]
-        );
-        $fresh = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$id]);
-        return $this->success(VideoDeliveryService::mapClient($fresh ?: $row), '已更新');
+        return $this->error('客户账户/企业信息请在权限管理与企业数据中维护；本页仅维护授权、积分与交付单', 422);
     }
 
     public function delete(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
-        }
-        DB::query('DELETE FROM video_delivery_clients WHERE id=?', [(int)$id]);
-        return $this->success(null, '已删除');
+        return $this->error('不可在此删除企业客户，请到权限管理操作', 422);
     }
 
     public function saveService(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
+        $profileId = (int)$mapped['profileId'];
         $version = VideoDeliveryService::normalizeVersion(
-            (string)$request->input('serviceVersion', $request->input('service_version', $row['service_version'] ?? 'standard'))
+            (string)$request->input('serviceVersion', $request->input('service_version', $mapped['serviceVersion'] ?? 'standard'))
         );
-        $authStart = trim((string)$request->input('authStart', $request->input('auth_start', $row['auth_start'] ?? '')));
-        $authEnd = trim((string)$request->input('authEnd', $request->input('auth_end', $row['auth_end'] ?? '')));
-        $token = trim((string)$request->input('authToken', $request->input('auth_token', $row['auth_token'] ?? '')));
+        $authStart = trim((string)$request->input('authStart', $request->input('auth_start', $mapped['authStart'] ?? '')));
+        $authEnd = trim((string)$request->input('authEnd', $request->input('auth_end', $mapped['authEnd'] ?? '')));
+        $token = trim((string)$request->input('authToken', $request->input('auth_token', $mapped['authToken'] ?? '')));
 
         DB::query(
             "UPDATE video_delivery_clients SET
@@ -215,42 +82,39 @@ class VideoDeliveryController extends Controller
                 $authStart !== '' ? $authStart : null,
                 $authEnd !== '' ? $authEnd : null,
                 $token,
-                (int)$id,
+                $profileId,
             ]
         );
-        $fresh = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$id]);
-        return $this->success(VideoDeliveryService::mapClient($fresh ?: $row), '服务配置已保存');
+        return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '服务配置已保存');
     }
 
     public function generateToken(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
         $token = VideoDeliveryService::generateToken();
         DB::query(
             'UPDATE video_delivery_clients SET auth_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-            [$token, (int)$id]
+            [$token, (int)$mapped['profileId']]
         );
-        $fresh = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$id]);
-        return $this->success(VideoDeliveryService::mapClient($fresh ?: $row), '已生成授权 Token');
+        return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '已生成授权 Token');
     }
 
     public function checkLink(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
-        $mapped = VideoDeliveryService::mapClient($row);
-        $ok = $mapped['authToken'] !== '' && $mapped['authStart'] !== '' && $mapped['authEnd'] !== '';
+        $ok = ($mapped['authToken'] ?? '') !== '' && ($mapped['authStart'] ?? '') !== '' && ($mapped['authEnd'] ?? '') !== '';
         $msg = $ok
-            ? ($mapped['authorized'] ? '关联正常，授权有效期内' : '已配置 Token，但授权已过期或未生效')
+            ? (!empty($mapped['authorized']) ? '关联正常，授权有效期内' : '已配置 Token，但授权已过期或未生效')
             : '未完整配置服务版本 / 授权日期 / Token';
         return $this->success([
-            'ok' => $ok && $mapped['authorized'],
-            'authorized' => $mapped['authorized'],
+            'ok' => $ok && !empty($mapped['authorized']),
+            'authorized' => !empty($mapped['authorized']),
             'client' => $mapped,
             'message' => $msg,
         ], $msg);
@@ -258,29 +122,29 @@ class VideoDeliveryController extends Controller
 
     public function recharge(Request $request, string $id): Response
     {
-        $row = $this->loadClient((int)$id);
-        if ($row instanceof Response) {
-            return $row;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
         $amount = (int)$request->input('amount', $request->input('points', 0));
         if ($amount === 0) {
             return $this->error('请输入充值积分（可为负数表示扣减）', 422);
         }
-        $next = max(0, (int)($row['points'] ?? 0) + $amount);
+        $next = max(0, (int)($mapped['points'] ?? 0) + $amount);
         DB::query(
             'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW(), updated_at=CURRENT_TIMESTAMP WHERE id=?',
-            [$next, (int)$id]
+            [$next, (int)$mapped['profileId']]
         );
-        $fresh = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$id]);
-        return $this->success(VideoDeliveryService::mapClient($fresh ?: $row), '积分已更新');
+        return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '积分已更新');
     }
 
     public function listOrders(Request $request, string $id): Response
     {
-        $client = $this->loadClient((int)$id);
-        if ($client instanceof Response) {
-            return $client;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
+        $profileId = (int)$mapped['profileId'];
         $page = max(1, (int)$request->get('page', 1));
         $pageSize = max(1, min(100, (int)$request->get('pageSize', 20)));
         $keyword = trim((string)$request->get('keyword', ''));
@@ -288,7 +152,7 @@ class VideoDeliveryController extends Controller
         $version = trim((string)$request->get('serviceVersion', $request->get('version', '')));
 
         $filters = ['client_id=?'];
-        $params = [(int)$id];
+        $params = [$profileId];
         if ($keyword !== '') {
             $filters[] = '(title LIKE ? OR requirements LIKE ?)';
             $like = '%' . $keyword . '%';
@@ -347,7 +211,7 @@ class VideoDeliveryController extends Controller
             'pageSize' => $pageSize,
             'pages' => $pages,
             'total' => $total,
-            'client' => VideoDeliveryService::mapClient($client),
+            'client' => $mapped,
             'meta' => [
                 'versions' => VideoDeliveryService::VERSIONS,
                 'orderStatuses' => VideoDeliveryService::ORDER_STATUSES,
@@ -357,10 +221,12 @@ class VideoDeliveryController extends Controller
 
     public function createOrder(Request $request, string $id): Response
     {
-        $client = $this->loadClient((int)$id);
-        if ($client instanceof Response) {
-            return $client;
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
+        $profileId = (int)$mapped['profileId'];
+        $adminUserId = (int)$id;
         $title = trim((string)$request->input('title', ''));
         if ($title === '') {
             $title = '定制视频 ' . date('Ymd-His');
@@ -375,11 +241,11 @@ class VideoDeliveryController extends Controller
             (string)$request->input('status', 'completed')
         );
         $version = VideoDeliveryService::normalizeVersion(
-            (string)$request->input('serviceVersion', $request->input('service_version', $client['service_version'] ?? 'standard'))
+            (string)$request->input('serviceVersion', $request->input('service_version', $mapped['serviceVersion'] ?? 'standard'))
         );
         if ($requirements === '') {
-            $authStart = (string)($client['auth_start'] ?? '');
-            $authEnd = (string)($client['auth_end'] ?? '');
+            $authStart = (string)($mapped['authStart'] ?? '');
+            $authEnd = (string)($mapped['authEnd'] ?? '');
             $verLabel = VideoDeliveryService::versionLabel($version);
             $requirements = "服务版本：{$verLabel}";
             if ($authStart !== '' || $authEnd !== '') {
@@ -392,7 +258,7 @@ class VideoDeliveryController extends Controller
               (client_id, title, requirements, settle_type, points_cost, status, service_version, owner_id)
              VALUES (?,?,?,?,?,?,?,?)",
             [
-                (int)$id,
+                $profileId,
                 $title,
                 $requirements,
                 $settleType,
@@ -404,17 +270,17 @@ class VideoDeliveryController extends Controller
         );
         $orderId = (int)DB::lastInsertId();
 
-        $uploaded = $this->storeUploadedFiles((int)$id, $orderId);
+        $uploaded = $this->storeUploadedFiles($adminUserId, $orderId);
         if ($uploaded instanceof Response) {
             DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
             return $uploaded;
         }
 
         if ($pointsCost > 0) {
-            $pts = max(0, (int)($client['points'] ?? 0) - $pointsCost);
+            $pts = max(0, (int)($mapped['points'] ?? 0) - $pointsCost);
             DB::query(
                 'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
-                [$pts, (int)$id]
+                [$pts, $profileId]
             );
         }
 
@@ -533,18 +399,19 @@ class VideoDeliveryController extends Controller
         ]));
     }
 
-    /** @return array|Response */
-    private function loadClient(int $id)
+    /**
+     * 路径中的 id = 企业客户管理用户 ID。
+     * @return array|Response
+     */
+    private function loadClientMapped(int $adminUserId)
     {
-        VideoDeliveryService::ensureSchema();
-        $row = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$id]);
-        if (!$row) {
-            return $this->error('交付客户不存在', 404);
+        try {
+            return VideoDeliveryService::ensureProfileForAdminUser($adminUserId);
+        } catch (\RuntimeException $e) {
+            return $this->error($e->getMessage(), 404);
+        } catch (\Throwable $e) {
+            return $this->error('加载企业客户失败：' . $e->getMessage(), 500);
         }
-        if ($deny = $this->assertOwns($row, 'owner_id')) {
-            return $deny;
-        }
-        return $row;
     }
 
     /** @return array|Response */
@@ -555,9 +422,17 @@ class VideoDeliveryController extends Controller
         if (!$order) {
             return $this->error('交付单不存在', 404);
         }
-        $client = $this->loadClient((int)$order['client_id']);
-        if ($client instanceof Response) {
-            return $client;
+        $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [(int)$order['client_id']]);
+        if (!$profile) {
+            return $this->error('交付客户档案不存在', 404);
+        }
+        $adminUserId = (int)($profile['admin_user_id'] ?? 0);
+        if ($adminUserId <= 0) {
+            return $this->error('交付单未关联企业客户', 404);
+        }
+        $mapped = $this->loadClientMapped($adminUserId);
+        if ($mapped instanceof Response) {
+            return $mapped;
         }
         return $order;
     }

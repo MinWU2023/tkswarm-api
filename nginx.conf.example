@@ -8,7 +8,7 @@ server {
     # 若代码直接解压在站点根且含 public 子目录，请改成真实 public 绝对路径
     index index.php index.html;
     charset utf-8;
-    client_max_body_size 100m;
+    client_max_body_size 512m;
 
     # 跨域（always 保证 404/500 也带上）
     add_header Access-Control-Allow-Origin $http_origin always;

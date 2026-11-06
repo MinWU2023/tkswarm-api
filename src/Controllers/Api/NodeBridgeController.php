@@ -797,9 +797,14 @@ class NodeBridgeController extends Controller
         return $this->success($out, '系统通知已入库');
     }
 
-    /** 计划任务：到解封时间自动恢复账号状态；顺带补跑「有未判定违规通知」的账号 AI 判定 */
+    /** 计划任务：到解封时间自动恢复账号状态；顺带补跑「有未判定违规通知」的账号 AI 判定 + NoCaptchaAI 跨日重置/超30天报废 */
     public function maintenanceRestoreBans(Request $request): Response
     {
+        try {
+            NocaptchaKeyController::ensureDailyState();
+        } catch (\Throwable $e) {
+            // ignore nocaptcha maintenance error so ban restore stays unaffected
+        }
         $restored = AccountBanService::restoreExpired();
         $assessed = [];
         $limit = (int)$request->input('assessLimit', 3);
@@ -1400,35 +1405,46 @@ class NodeBridgeController extends Controller
         return $this->success($map);
     }
 
-    /** Node / LinuxBrowse 读取当前启用的 NoCaptchaAI 密钥记录（status=1 且未用完） */
+    /** Node / LinuxBrowse 读取当前启用的 NoCaptchaAI 密钥记录（status=1、未报废且当日未满 200） */
     public function nocaptchaKey(Request $request): Response
     {
         $row = NocaptchaKeyController::activeRecord();
-        $apiKey = trim((string)($row['api_key'] ?? ''));
-        $limit = max(1, (int)($row['quota_limit'] ?? NocaptchaKeyController::QUOTA_LIMIT));
-        $used = max(0, (int)($row['used_count'] ?? 0));
-        $isExhausted = $row ? (((int)($row['is_exhausted'] ?? 0) === 1 || $used >= $limit) ? 1 : 0) : 0;
-        return $this->success([
-            'enabled' => $row !== null && $apiKey !== '' && $isExhausted === 0,
-            'id' => (int)($row['id'] ?? 0),
-            'email' => (string)($row['email'] ?? ''),
-            'username' => (string)($row['username'] ?? ''),
-            'apiKey' => $apiKey,
-            'api_key' => $apiKey,
-            'status' => $row ? (int)($row['status'] ?? 0) : 0,
-            'isExhausted' => $isExhausted,
-            'is_exhausted' => $isExhausted,
-            'usedCount' => $used,
-            'used_count' => $used,
-            'quotaLimit' => $limit,
-            'quota_limit' => $limit,
-            'remainingCount' => max(0, $limit - $used),
-            'updatedAt' => (string)($row['updated_at'] ?? ''),
-        ]);
+        if (!$row) {
+            return $this->success([
+                'enabled' => false,
+                'id' => 0,
+                'email' => '',
+                'username' => '',
+                'apiKey' => '',
+                'api_key' => '',
+                'status' => 0,
+                'isExhausted' => 0,
+                'is_exhausted' => 0,
+                'isScrapped' => 0,
+                'is_scrapped' => 0,
+                'usedCount' => 0,
+                'used_count' => 0,
+                'quotaLimit' => NocaptchaKeyController::QUOTA_LIMIT,
+                'quota_limit' => NocaptchaKeyController::QUOTA_LIMIT,
+                'remainingCount' => 0,
+                'remainingDays' => 0,
+                'expiresAt' => '',
+                'updatedAt' => '',
+            ]);
+        }
+        $formatted = NocaptchaKeyController::formatRowStatic($row);
+        $apiKey = trim((string)($formatted['apiKey'] ?? ''));
+        $enabled = $apiKey !== ''
+            && (int)($formatted['status'] ?? 0) === 1
+            && (int)($formatted['isScrapped'] ?? 0) === 0
+            && (int)($formatted['isExhausted'] ?? 0) === 0;
+        $formatted['enabled'] = $enabled;
+        unset($formatted['password']);
+        return $this->success($formatted);
     }
 
     /**
-     * Node / LinuxBrowse 上报 NoCaptchaAI 用量或额度耗尽，达到 6000（或 exhausted=true）自动启用任意一条未使用完的密钥。
+     * Node / LinuxBrowse 上报 NoCaptchaAI 用量或额度耗尽，当日满 200（或超 30 天报废）自动切换启用下一个可用密钥。
      */
     public function nocaptchaReportUsage(Request $request): Response
     {
@@ -1438,14 +1454,16 @@ class NodeBridgeController extends Controller
         $increment = is_numeric($incRaw) ? max(0, (int)$incRaw) : 1;
         $exRaw = $request->input('exhausted', $request->input('isExhausted', false));
         $exhausted = ($exRaw === true || $exRaw === 1 || $exRaw === '1' || $exRaw === 'true');
+        $scRaw = $request->input('scrapped', $request->input('isScrapped', false));
+        $scrapped = ($scRaw === true || $scRaw === 1 || $scRaw === '1' || $scRaw === 'true');
         $remoteUsedRaw = $request->input('remoteUsed', $request->input('usedCount', null));
         $remoteUsed = ($remoteUsedRaw !== null && $remoteUsedRaw !== '' && is_numeric($remoteUsedRaw))
             ? max(0, (int)$remoteUsedRaw)
             : null;
 
         try {
-            $res = NocaptchaKeyController::recordUsage($apiKey, $id, $increment, $exhausted, $remoteUsed);
-            return $this->success($res, !empty($res['switched']) ? '已自动切换至下一个未使用完的密钥' : '已记录用量');
+            $res = NocaptchaKeyController::recordUsage($apiKey, $id, $increment, $exhausted, $remoteUsed, $scrapped);
+            return $this->success($res, !empty($res['switched']) ? '已自动切换至下一个可用密钥' : '已记录用量');
         } catch (\Throwable $e) {
             return $this->error('记录 NoCaptchaAI 用量失败：' . $e->getMessage(), 500);
         }

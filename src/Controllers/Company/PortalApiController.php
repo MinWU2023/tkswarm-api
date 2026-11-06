@@ -1167,7 +1167,7 @@ class PortalApiController extends Controller
         }
 
         if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            return $this->error('请上传视频文件（仅支持 MP4 / MOV / WebM，最大 60MB）', 422);
+            return $this->error('请上传视频文件（仅支持 MP4 / MOV / WebM，最大 500MB）', 422);
         }
 
         $title = trim((string)$request->input('title', $request->input('publishTitle', '')));
@@ -2092,7 +2092,7 @@ class PortalApiController extends Controller
 
     /** TikTok / YouTube 共同支持的视频格式 */
     private const COMPANY_VIDEO_EXTS = ['mp4', 'mov', 'webm'];
-    private const COMPANY_VIDEO_MAX_BYTES = 60 * 1024 * 1024;
+    private const COMPANY_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
     private const COMPANY_COVER_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
     private const COMPANY_COVER_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -2113,14 +2113,14 @@ class PortalApiController extends Controller
             $ext = 'mp4';
         }
         if (!in_array($ext, self::COMPANY_VIDEO_EXTS, true)) {
-            return $this->error('视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM（最大 60MB）', 415);
+            return $this->error('视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM（最大 500MB）', 415);
         }
         $size = (int)($file['size'] ?? 0);
         if ($size <= 0) {
             return $this->error('视频文件无效', 422);
         }
         if ($size > self::COMPANY_VIDEO_MAX_BYTES) {
-            return $this->error('视频过大：单文件最大 60MB（当前约 ' . round($size / 1048576, 1) . 'MB）', 413);
+            return $this->error('视频过大：单文件最大 500MB（当前约 ' . round($size / 1048576, 1) . 'MB）', 413);
         }
         $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
         $dir = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . 'materials';

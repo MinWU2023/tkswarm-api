@@ -1587,7 +1587,7 @@
   };
 
   var PUBLISH_VIDEO_EXTS = ['mp4', 'mov', 'webm'];
-  var PUBLISH_VIDEO_MAX = 60 * 1024 * 1024;
+  var PUBLISH_VIDEO_MAX = 500 * 1024 * 1024;
   var PUBLISH_COVER_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
   var PUBLISH_COVER_MAX = 5 * 1024 * 1024;
 
@@ -1675,10 +1675,10 @@
         var ext = this.fileExt(file.name);
         if (ext === 'm4v') ext = 'mp4';
         if (PUBLISH_VIDEO_EXTS.indexOf(ext) < 0) {
-          return '视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM；单文件最大 60MB';
+          return '视频格式不支持。仅支持 TikTok / YouTube 通用格式：MP4、MOV、WebM；单文件最大 500MB';
         }
         if ((file.size || 0) > PUBLISH_VIDEO_MAX) {
-          return '视频过大：单文件最大 60MB（当前约 ' + (file.size / 1048576).toFixed(1) + 'MB）';
+          return '视频过大：单文件最大 500MB（当前约 ' + (file.size / 1048576).toFixed(1) + 'MB）';
         }
         return '';
       },
@@ -1807,7 +1807,7 @@
           return;
         }
         if (!this.form.file) {
-          ElMessage.warning('请上传视频（仅支持 MP4 / MOV / WebM，最大 60MB）');
+          ElMessage.warning('请上传视频（仅支持 MP4 / MOV / WebM，最大 500MB）');
           return;
         }
         var verr = this.validateVideoFile(this.form.file);
@@ -1852,7 +1852,7 @@
             '仅支持 TikTok / YouTube 通用视频格式 ',
             h('code', 'MP4 / MOV / WebM'),
             '，单文件最大 ',
-            h('b', '60MB'),
+            h('b', '500MB'),
             '；封面可逐帧截取或自行上传（JPG / PNG / WebP，最大 5MB），提交后视频与封面都会上传到 GitHub CDN。'
           ]),
           h('div', { class: 'publish-form-grid' }, [
@@ -1906,7 +1906,7 @@
                     h('div', { class: 'el-upload__text' }, [
                       self.form.fileName
                         ? ('已选：' + self.form.fileName)
-                        : h('span', [h('em', '点击或拖拽'), ' MP4 / MOV / WebM（≤60MB）到此处'])
+                        : h('span', [h('em', '点击或拖拽'), ' MP4 / MOV / WebM（≤500MB）到此处'])
                     ])
                   ];
                 }

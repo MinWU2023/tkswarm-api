@@ -94,10 +94,14 @@ class RoutePermissionMap
             ['method' => 'POST', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'PUT', 'pattern' => '#^/api/settings#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
-            // SMTP：中间件放行已登录超管（*）；控制器再强制 isLoginSuper
+            // SMTP / NoCaptchaAI：中间件放行持码角色；控制器再强制 isLoginSuper
             ['method' => 'GET', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'PUT', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
+            ['method' => 'GET', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
+            ['method' => 'POST', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
+            ['method' => 'PUT', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
+            ['method' => 'DELETE', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => ['system.nocaptcha', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/system/backup#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/system/restore#', 'codes' => ['system.settings.update', 'system.view', 'rbac.manage']],
 
@@ -318,6 +322,11 @@ class RoutePermissionMap
             '/api/smtp-config' => [
                 'read' => ['system.smtp', 'admin'],
                 'write' => ['system.smtp', 'admin'],
+            ],
+            '/api/nocaptcha-keys' => [
+                'read' => ['system.nocaptcha', 'admin'],
+                'write' => ['system.nocaptcha', 'admin'],
+                'delete' => ['system.nocaptcha', 'admin'],
             ],
             '/api/help-' => ['read' => ['system.help', 'system.view', 'rbac.manage'], 'write' => ['system.help', 'rbac.manage']],
             '/api/tickets' => ['read' => ['system.tickets', 'system.view', 'rbac.manage'], 'write' => ['system.tickets', 'rbac.manage']],

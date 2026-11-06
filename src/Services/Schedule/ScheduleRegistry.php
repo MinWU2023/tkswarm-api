@@ -89,6 +89,15 @@ final class ScheduleRegistry
                 'args' => ['--limit=10'],
                 'defaultEnabled' => true,
             ],
+            [
+                'key' => 'nocaptcha_daily_reset',
+                'title' => 'NoCaptchaAI日额度重置与超期报废',
+                'description' => '每日零点重置未到期 NoCaptchaAI 账号当日 200 次额度，并将超过 30 天的账号永久标记报废（不可再启用）',
+                'command' => 'nocaptcha:daily-reset',
+                'cron' => '1 0 * * *',
+                'args' => [],
+                'defaultEnabled' => true,
+            ],
         ];
     }
 

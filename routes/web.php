@@ -189,14 +189,16 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/dm-weight-config', DmWeightConfigController::class . '@save');
     Router::post('/api/dm-weight-config/reset', DmWeightConfigController::class . '@reset');
 
-    // 开发管理 · NoCaptchaAI 密钥（仅超管，同一时间仅一条启用；满 6000 或标记用完自动切换）
+    // 开发管理 · NoCaptchaAI 密钥（仅超管，同一时间仅一条启用；日限 200 次日重置，超 30 天报废不可再启用）
     Router::get('/api/nocaptcha-keys', NocaptchaKeyController::class . '@list');
     Router::post('/api/nocaptcha-keys', NocaptchaKeyController::class . '@create');
+    Router::post('/api/nocaptcha-keys/daily-reset', NocaptchaKeyController::class . '@dailyReset');
     Router::put('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@update');
     Router::post('/api/nocaptcha-keys/{id}/enable', NocaptchaKeyController::class . '@enable');
     Router::post('/api/nocaptcha-keys/{id}/disable', NocaptchaKeyController::class . '@disable');
     Router::post('/api/nocaptcha-keys/{id}/mark-exhausted', NocaptchaKeyController::class . '@markExhausted');
     Router::post('/api/nocaptcha-keys/{id}/mark-available', NocaptchaKeyController::class . '@markAvailable');
+    Router::post('/api/nocaptcha-keys/{id}/scrap', NocaptchaKeyController::class . '@markScrapped');
     Router::delete('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@delete');
 
     Router::get('/api/meta', MetaController::class . '@index');
