@@ -216,32 +216,88 @@ class GithubReleaseCdnService
             rawurlencode($repo),
             rawurlencode($tag)
         );
-        $existing = self::httpJson('GET', $getUrl, $token);
-        if (!empty($existing['id'])) {
-            return $existing;
+        try {
+            $existing = self::httpJson('GET', $getUrl, $token);
+            if (!empty($existing['id'])) {
+                return $existing;
+            }
+        } catch (\Throwable $e) {
+            // 404：尚无该 tag 的 Release，继续创建
+            if (!str_contains($e->getMessage(), 'HTTP 404') && !str_contains($e->getMessage(), 'Not Found')) {
+                throw $e;
+            }
         }
         $createUrl = sprintf(
             'https://api.github.com/repos/%s/%s/releases',
             rawurlencode($owner),
             rawurlencode($repo)
         );
-        $created = self::httpJson('POST', $createUrl, $token, ['Content-Type' => 'application/json'], json_encode([
+        $payload = json_encode([
             'tag_name' => $tag,
             'name' => $tag,
             'body' => 'TkSwarm video CDN release ' . $tag,
             'draft' => false,
             'prerelease' => false,
-        ], JSON_UNESCAPED_UNICODE));
+        ], JSON_UNESCAPED_UNICODE);
+        try {
+            $created = self::httpJson('POST', $createUrl, $token, ['Content-Type' => 'application/json'], $payload);
+        } catch (\Throwable $e) {
+            $msg = $e->getMessage();
+            // tag 已存在：再取一次
+            if (str_contains($msg, 'already_exists') || str_contains($msg, 'Validation Failed')) {
+                try {
+                    $again = self::httpJson('GET', $getUrl, $token);
+                    if (!empty($again['id'])) {
+                        return $again;
+                    }
+                } catch (\Throwable $ignore) {
+                }
+            }
+            // 空仓库无法建 tag/release：自动写 README 初始化后再试
+            if (str_contains(strtolower($msg), 'repository is empty') || str_contains($msg, 'Validation Failed')) {
+                self::bootstrapEmptyRepo($owner, $repo, $token);
+                usleep(1200000);
+                $created = self::httpJson('POST', $createUrl, $token, ['Content-Type' => 'application/json'], $payload);
+            } else {
+                throw $e;
+            }
+        }
         if (empty($created['id'])) {
-            // 并发创建时再取一次
-            $again = self::httpJson('GET', $getUrl, $token);
-            if (!empty($again['id'])) {
-                return $again;
+            try {
+                $again = self::httpJson('GET', $getUrl, $token);
+                if (!empty($again['id'])) {
+                    return $again;
+                }
+            } catch (\Throwable $ignore) {
             }
             $msg = (string)($created['message'] ?? '创建 Release 失败');
             throw new \RuntimeException($msg);
         }
         return $created;
+    }
+
+    private static function bootstrapEmptyRepo(string $owner, string $repo, string $token): void
+    {
+        $url = sprintf(
+            'https://api.github.com/repos/%s/%s/contents/README.md',
+            rawurlencode($owner),
+            rawurlencode($repo)
+        );
+        $content = base64_encode("# {$repo}\n\nTkSwarm video CDN storage. Auto-initialized.\n");
+        try {
+            self::httpJson('PUT', $url, $token, ['Content-Type' => 'application/json'], json_encode([
+                'message' => 'chore: init repo for TkSwarm CDN releases',
+                'content' => $content,
+            ], JSON_UNESCAPED_UNICODE));
+        } catch (\Throwable $e) {
+            // 已有文件等冲突可忽略
+            if (!str_contains($e->getMessage(), 'already_exists') && !str_contains($e->getMessage(), '422')) {
+                throw new \RuntimeException(
+                    'GitHub 仓库可能是空的且自动初始化失败：' . $e->getMessage()
+                    . '。请先在仓库创建 README 或推送任意一次提交。'
+                );
+            }
+        }
     }
 
     /**
@@ -291,6 +347,32 @@ class GithubReleaseCdnService
             }
             if ($code >= 400 && empty($json['id'])) {
                 $msg = (string)($json['message'] ?? ('HTTP ' . $code));
+                $details = [];
+                if (!empty($json['errors']) && is_array($json['errors'])) {
+                    foreach ($json['errors'] as $errItem) {
+                        if (!is_array($errItem)) {
+                            continue;
+                        }
+                        if (!empty($errItem['message'])) {
+                            $details[] = (string)$errItem['message'];
+                            continue;
+                        }
+                        $parts = array_filter([
+                            (string)($errItem['resource'] ?? ''),
+                            (string)($errItem['field'] ?? ''),
+                            (string)($errItem['code'] ?? ''),
+                        ]);
+                        if ($parts) {
+                            $details[] = implode('.', $parts);
+                        }
+                    }
+                }
+                if ($details) {
+                    $msg .= '（' . implode('；', $details) . '）';
+                }
+                if ($code === 404) {
+                    $msg .= ' HTTP 404';
+                }
                 throw new \RuntimeException('GitHub API：' . $msg);
             }
             return $json;
