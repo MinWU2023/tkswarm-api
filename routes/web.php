@@ -293,6 +293,9 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@show');
     Router::put('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@update');
     Router::delete('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@delete');
+    Router::get('/api/video-delivery-orders/{id}', VideoDeliveryController::class . '@showOrder');
+    Router::put('/api/video-delivery-orders/{id}', VideoDeliveryController::class . '@updateOrder');
+    Router::post('/api/video-delivery-orders/{id}', VideoDeliveryController::class . '@updateOrder');
     Router::get('/api/video-delivery-orders/{id}/files', VideoDeliveryController::class . '@orderFiles');
     Router::post('/api/video-delivery-orders/{id}/notes', VideoDeliveryController::class . '@addNote');
     Router::get('/api/video-delivery-orders/{id}/downloads', VideoDeliveryController::class . '@downloadRecords');

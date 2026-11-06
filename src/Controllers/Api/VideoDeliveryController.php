@@ -363,6 +363,214 @@ class VideoDeliveryController extends Controller
         );
     }
 
+    public function showOrder(Request $request, string $orderId): Response
+    {
+        $order = $this->loadOrder((int)$orderId);
+        if ($order instanceof Response) {
+            return $order;
+        }
+        $oid = (int)$orderId;
+        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+        $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+        $notes = DB::select(
+            'SELECT * FROM video_delivery_notes WHERE order_id=? ORDER BY id DESC LIMIT 50',
+            [$oid]
+        ) ?: [];
+        $client = null;
+        $profileId = (int)($order['client_id'] ?? 0);
+        if ($profileId > 0) {
+            $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$profileId]);
+            if ($profile) {
+                $adminUserId = (int)($profile['admin_user_id'] ?? 0);
+                if ($adminUserId > 0) {
+                    try {
+                        $client = VideoDeliveryService::ensureProfileForAdminUser($adminUserId);
+                    } catch (\Throwable $e) {
+                        $client = VideoDeliveryService::mapClient($profile);
+                        $client['profileId'] = $profileId;
+                    }
+                } else {
+                    $client = VideoDeliveryService::mapClient($profile);
+                    $client['profileId'] = $profileId;
+                }
+            }
+        }
+        return $this->success([
+            'order' => VideoDeliveryService::mapOrder($order, $files, $notes, $assets),
+            'client' => $client,
+        ]);
+    }
+
+    public function updateOrder(Request $request, string $orderId): Response
+    {
+        $order = $this->loadOrder((int)$orderId);
+        if ($order instanceof Response) {
+            return $order;
+        }
+        $oid = (int)$orderId;
+        $prevStatus = VideoDeliveryService::normalizeOrderStatus((string)($order['status'] ?? 'pending'));
+
+        $title = trim((string)$request->input('title', $order['title'] ?? ''));
+        if ($title === '') {
+            return $this->error('请填写视频标题', 422);
+        }
+        $requirements = array_key_exists('requirements', $request->all() ?: [])
+            ? trim((string)$request->input('requirements', ''))
+            : (string)($order['requirements'] ?? '');
+        $cloudDrive = array_key_exists('cloudDriveInfo', $request->all() ?: [])
+            || array_key_exists('cloud_drive_info', $request->all() ?: [])
+            ? trim((string)$request->input('cloudDriveInfo', $request->input('cloud_drive_info', '')))
+            : (string)($order['cloud_drive_info'] ?? '');
+
+        $settleRaw = trim((string)$request->input('settleType', $request->input('settle_type', $order['settle_type'] ?? '')));
+        $settleCode = $settleRaw !== '' ? $settleRaw : (string)($order['settle_type'] ?? '');
+        $qty = max(1, (int)$request->input('quantity', $request->input('qty', 1)));
+        $manualPtsRaw = $request->input('pointsCost', $request->input('points_cost', null));
+        $manualPts = $manualPtsRaw === null || $manualPtsRaw === ''
+            ? (int)($order['points_cost'] ?? 0)
+            : (int)$manualPtsRaw;
+
+        CustomVideoTypeService::ensureSchema();
+        $quote = CustomVideoTypeService::quote($settleCode, $qty, $manualPts);
+        if (empty($quote['ok'])) {
+            // 兼容历史中文 settle_type：保留原值，积分用手工/原值
+            $settleCode = $settleRaw !== '' ? $settleRaw : (string)($order['settle_type'] ?? '');
+            $pointsCost = max(0, $manualPts);
+        } else {
+            $settleCode = (string)$quote['code'];
+            $pointsCost = max(0, (int)$quote['pointsCost']);
+        }
+
+        $status = VideoDeliveryService::normalizeOrderStatus(
+            (string)$request->input('status', $order['status'] ?? 'pending')
+        );
+        $version = VideoDeliveryService::normalizeVersion(
+            (string)$request->input(
+                'serviceVersion',
+                $request->input('service_version', $order['service_version'] ?? 'standard')
+            )
+        );
+
+        $deliveredAt = $order['delivered_at'] ?? null;
+        if ($status === 'completed' && empty($deliveredAt)) {
+            $deliveredAt = date('Y-m-d H:i:s');
+        }
+
+        DB::query(
+            "UPDATE video_delivery_orders SET
+              title=?, requirements=?, cloud_drive_info=?, settle_type=?, points_cost=?,
+              status=?, service_version=?, delivered_at=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [
+                mb_substr($title, 0, 255),
+                $requirements,
+                $cloudDrive,
+                $settleCode,
+                $pointsCost,
+                $status,
+                $version,
+                $deliveredAt,
+                $oid,
+            ]
+        );
+
+        $profileId = (int)($order['client_id'] ?? 0);
+        $adminUserId = 0;
+        if ($profileId > 0) {
+            $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$profileId]);
+            $adminUserId = (int)($profile['admin_user_id'] ?? 0);
+        }
+
+        $materialIds = $this->parseMaterialIds($request);
+        if ($materialIds && $adminUserId > 0) {
+            // 跳过已关联素材，避免重复插入
+            $existRows = DB::select(
+                'SELECT material_id FROM video_delivery_assets WHERE order_id=? AND material_id>0',
+                [$oid]
+            ) ?: [];
+            $existMap = [];
+            foreach ($existRows as $er) {
+                $existMap[(int)$er['material_id']] = true;
+            }
+            $materialIds = array_values(array_filter(
+                $materialIds,
+                static fn(int $mid) => empty($existMap[$mid])
+            ));
+            if ($materialIds) {
+                $linked = $this->attachMaterials($adminUserId, $oid, $materialIds);
+                if ($linked instanceof Response) {
+                    return $linked;
+                }
+            }
+        }
+        if ($adminUserId > 0) {
+            $uploaded = $this->storeUploadedFiles($adminUserId, $oid);
+            if ($uploaded instanceof Response) {
+                return $uploaded;
+            }
+        }
+
+        $note = mb_substr(trim((string)$request->input('internalNote', $request->input('note', ''))), 0, 1000);
+        if ($note !== '') {
+            DB::query(
+                'INSERT INTO video_delivery_notes (order_id, content, author_id, author_name) VALUES (?,?,?,?)',
+                [
+                    $oid,
+                    $note,
+                    VideoDeliveryService::currentUserId(),
+                    VideoDeliveryService::currentUserName(),
+                ]
+            );
+        }
+
+        // 首次变为已完成时扣积分（客户需求单创建时未扣）
+        if ($status === 'completed' && $prevStatus !== 'completed' && $pointsCost > 0 && $profileId > 0) {
+            try {
+                $ok = DB::transaction(static function () use ($profileId, $pointsCost) {
+                    $fresh = DB::selectOne(
+                        'SELECT points FROM video_delivery_clients WHERE id=? FOR UPDATE',
+                        [$profileId]
+                    );
+                    $cur = max(0, (int)($fresh['points'] ?? 0));
+                    if ($pointsCost > $cur) {
+                        return false;
+                    }
+                    DB::query(
+                        'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
+                        [$cur - $pointsCost, $profileId]
+                    );
+                    return true;
+                });
+            } catch (\Throwable $e) {
+                $ok = false;
+            }
+            if (!$ok) {
+                // 回滚状态，避免未扣积分却显示已完成
+                DB::query(
+                    'UPDATE video_delivery_orders SET status=?, delivered_at=?, points_cost=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$prevStatus, $order['delivered_at'] ?? null, (int)($order['points_cost'] ?? 0), $oid]
+                );
+                $cur = max(0, (int)(DB::selectOne(
+                    'SELECT points FROM video_delivery_clients WHERE id=?',
+                    [$profileId]
+                )['points'] ?? 0));
+                return $this->error("积分不足：本次需 {$pointsCost}，当前余额 {$cur}", 422);
+            }
+        }
+
+        $fresh = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$oid]) ?: $order;
+        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+        $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
+        $notes = DB::select(
+            'SELECT * FROM video_delivery_notes WHERE order_id=? ORDER BY id DESC LIMIT 50',
+            [$oid]
+        ) ?: [];
+        return $this->success(
+            VideoDeliveryService::mapOrder($fresh, $files, $notes, $assets),
+            '交付单已更新'
+        );
+    }
+
     public function orderFiles(Request $request, string $orderId): Response
     {
         $order = $this->loadOrder((int)$orderId);
