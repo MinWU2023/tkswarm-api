@@ -1547,6 +1547,42 @@ class NodeBridgeController extends Controller
         ]);
     }
 
+    /**
+     * 供本机 Node 直传 GitHub：返回当前启用 CDN 配置（含解密 Token）。
+     * Token 仅经已登录会话下发到发布机，不进浏览器。
+     */
+    public function githubCdnEnabledForNode(Request $request): Response
+    {
+        GithubReleaseCdnService::ensureSchema();
+        $config = GithubReleaseCdnService::getEnabledConfig();
+        if (!$config) {
+            return $this->error('未配置启用的 GitHub CDN，请先在「GitHub CDN」中启用一套配置', 422);
+        }
+        $token = GithubReleaseCdnService::decryptToken($config);
+        if ($token === '') {
+            return $this->error('GitHub 配置缺少有效 Token', 422);
+        }
+        $owner = trim((string)($config['owner'] ?? ''));
+        $repo = trim((string)($config['repo'] ?? ''));
+        if ($owner === '' || $repo === '') {
+            return $this->error('GitHub 配置缺少 owner/repo', 422);
+        }
+        return $this->success([
+            'id' => (int)($config['id'] ?? 0),
+            'configId' => (int)($config['id'] ?? 0),
+            'name' => (string)($config['name'] ?? ''),
+            'owner' => $owner,
+            'repo' => $repo,
+            'token' => $token,
+            'tagPrefix' => (string)($config['tag_prefix'] ?? 'videos'),
+            'tag_prefix' => (string)($config['tag_prefix'] ?? 'videos'),
+            'urlTemplate' => (string)($config['url_template'] ?? ''),
+            'url_template' => (string)($config['url_template'] ?? ''),
+            'cdnPrefix' => (string)($config['cdn_prefix'] ?? ''),
+            'cdn_prefix' => (string)($config['cdn_prefix'] ?? ''),
+        ]);
+    }
+
     public function materialForNode(Request $request, string $id): Response
     {
         DataScope::ensureColumns();

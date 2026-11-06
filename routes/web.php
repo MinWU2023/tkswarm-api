@@ -525,6 +525,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::put('/api/materials/{id}', MaterialController::class . '@update');
     Router::post('/api/materials/{id}/mark-published', MaterialController::class . '@markPublished');
     Router::post('/api/materials/{id}/github-upload', MaterialController::class . '@uploadGithubCdn');
+    Router::post('/api/materials/{id}/github-bind', MaterialController::class . '@bindGithubCdn');
     Router::put('/api/materials/{id}/rename', MaterialController::class . '@rename');
     Router::put('/api/materials/{id}/cover', MaterialController::class . '@setCover');
     Router::post('/api/materials/{id}/check', MaterialController::class . '@check');
@@ -650,6 +651,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/node/browser-env-quota/{userId}', NodeBridgeController::class . '@browserEnvQuota');
     Router::get('/api/node/monitor/config', NodeBridgeController::class . '@monitorConfig');
     Router::get('/api/node/materials/{id}', NodeBridgeController::class . '@materialForNode');
+    Router::get('/api/node/github-cdn/enabled', NodeBridgeController::class . '@githubCdnEnabledForNode');
     Router::post('/api/node/materials/{id}/mark-published', NodeBridgeController::class . '@markMaterialPublished');
     Router::get('/api/node/tasks/{id}/cdn-meta', NodeBridgeController::class . '@taskVideoCdnMeta');
     Router::get('/api/node/tasks/{id}/cdn-stream', NodeBridgeController::class . '@taskVideoCdnStream');

@@ -999,6 +999,7 @@ class MaterialController extends Controller
 
     /**
      * 将单个素材视频上传到启用中的 GitHub Release CDN（供交付提交前依次调用）。
+     * 线下素材文件在发布机本机时，应由 Node 拦截并直传 GitHub，再调 bindGithubCdn。
      */
     public function uploadGithubCdn(Request $request, string $id): Response
     {
@@ -1015,23 +1016,24 @@ class MaterialController extends Controller
         if ($cdnUrl !== '' || $githubAssetUrl !== '') {
             return $this->success($this->mapRow($row), '已有 GitHub/CDN 链接，无需重复上传');
         }
-        $path = (string)($row['file_path'] ?? '');
-        $abs = '';
-        if ($path !== '') {
-            if (is_file($path)) {
-                $abs = $path;
-            } else {
-                $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
-                $cand = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path), '/\\');
-                if (is_file($cand)) {
-                    $abs = $cand;
-                }
+        $abs = $this->resolveExistingPath($row);
+        // 兼容：Node 把本机文件 multipart 传到中心库时使用
+        if ($abs === '' && !empty($_FILES['file']) && ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            $tmp = (string)($_FILES['file']['tmp_name'] ?? '');
+            if ($tmp !== '' && is_file($tmp)) {
+                $abs = $tmp;
             }
         }
         if ($abs === '') {
-            return $this->error('本地视频文件不存在，无法上传 GitHub', 422);
+            return $this->error(
+                '本地视频文件不存在，无法上传 GitHub（线下素材请经本机 Node 上传）',
+                422
+            );
         }
         $orig = (string)($row['file_name'] ?? basename($abs));
+        if ($orig === '' && !empty($_FILES['file']['name'])) {
+            $orig = (string)$_FILES['file']['name'];
+        }
         try {
             $up = \App\Services\Github\GithubReleaseCdnService::uploadMaterialFile($abs, $orig !== '' ? $orig : basename($abs), $mid);
         } catch (\Throwable $e) {
@@ -1053,6 +1055,41 @@ class MaterialController extends Controller
         return $this->success(
             $this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$mid])),
             '已上传到 GitHub'
+        );
+    }
+
+    /**
+     * Node 本机直传 GitHub 后回写 CDN/Asset 链接。
+     */
+    public function bindGithubCdn(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        \App\Services\Github\GithubReleaseCdnService::ensureSchema();
+        $mid = (int)$id;
+        $row = DB::selectOne('SELECT * FROM materials WHERE id=?', [$mid]);
+        if ($err = $this->assertMaterialOwns($row)) {
+            return $err;
+        }
+        $cdnUrl = trim((string)$request->input('cdnUrl', $request->input('cdn_url', $row['cdn_url'] ?? '')));
+        $githubAssetUrl = trim((string)$request->input(
+            'githubAssetUrl',
+            $request->input('github_asset_url', $row['github_asset_url'] ?? '')
+        ));
+        $githubConfigId = (int)$request->input(
+            'githubConfigId',
+            $request->input('github_config_id', $row['github_config_id'] ?? 0)
+        );
+        if ($cdnUrl === '' && $githubAssetUrl === '') {
+            return $this->error('缺少 cdnUrl / githubAssetUrl', 422);
+        }
+        DB::query(
+            'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$cdnUrl, $githubAssetUrl, $githubConfigId, $mid]
+        );
+        return $this->success(
+            $this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$mid])),
+            '已绑定 GitHub 链接'
         );
     }
 
