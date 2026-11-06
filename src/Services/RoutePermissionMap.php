@@ -261,6 +261,11 @@ class RoutePermissionMap
                 'write' => ['ai.leads.create', 'ai.leads.update', 'ai.leads'],
                 'delete' => ['ai.leads.delete', 'ai.leads'],
             ],
+            '/api/video-boost-tasks' => [
+                'read' => ['publish.tasks.view', 'publish.tasks', 'matrix.publish', 'account.view'],
+                'write' => ['publish.tasks.create', 'publish.tasks.update', 'publish.tasks', 'matrix.publish', 'account.create'],
+                'delete' => ['publish.tasks.delete', 'publish.tasks', 'matrix.publish', 'account.create'],
+            ],
             '/api/interaction-templates' => [
                 'read' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],
                 'write' => ['account.msg_template.comment', 'account.msg_template.dm', 'chat.manage'],

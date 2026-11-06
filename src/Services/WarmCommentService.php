@@ -114,7 +114,8 @@ class WarmCommentService
         if (!preg_match('/\benglish\b/i', $rendered)) {
             $user .= "\n\nWrite the comment in English only.";
         }
-        $user .= "\n\nVideo description: " . ($vars['video_desc'] ?: '(none)')
+        $user .= "\n\n" . (($vars['video_title'] ?? '') !== '' ? ('Video title: ' . $vars['video_title'] . "\n") : '')
+            . 'Video description: ' . ($vars['video_desc'] ?: '(none)')
             . "\nAuthor: " . ($vars['author'] ?: '(unknown)');
 
         $result = AiClient::chat(
@@ -201,7 +202,7 @@ class WarmCommentService
     private static function normalizeVideoVars(array $variables): array
     {
         $keys = [
-            'video_desc', 'author', 'author_id', 'like_count', 'comment_count',
+            'video_title', 'video_desc', 'author', 'author_id', 'like_count', 'comment_count',
             'video_url', 'video_id', 'nickname', 'bio', 'comment_text', 'message_text',
         ];
         $out = [];

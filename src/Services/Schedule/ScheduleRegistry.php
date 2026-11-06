@@ -36,6 +36,15 @@ final class ScheduleRegistry
                 'defaultEnabled' => true,
             ],
             [
+                'key' => 'video_boost_dispatch',
+                'title' => '视频增值到期入队',
+                'description' => '按明细的具体执行时间，把视频增值任务推送给创建该任务的管理用户的账号会话总任务',
+                'command' => 'video-boost:dispatch',
+                'cron' => '* * * * *',
+                'args' => ['--limit=50'],
+                'defaultEnabled' => true,
+            ],
+            [
                 'key' => 'pull_analysis',
                 'title' => '拉取数据 AI 分析',
                 'description' => '处理拉取数据成功后的 AI 分析与邮件发送',

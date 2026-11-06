@@ -37,6 +37,7 @@ use App\Controllers\Api\AccountWorkController;
 use App\Controllers\Api\HumanVerifyController;
 use App\Controllers\Api\PullCommentController;
 use App\Controllers\Api\AutoFollowController;
+use App\Controllers\Api\VideoBoostController;
 use App\Controllers\Api\AiLeadController;
 use App\Controllers\Api\AiLeadClueController;
 use App\Controllers\Api\IndustryDataController;
@@ -89,8 +90,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     // 运维审计：查 proxies 表缺密码记录
     Router::get('/api/debug/proxies-missing-password', ProxyController::class . '@missingPasswordAudit');
 
-    // 服务器浏览器 / Node 执行器读取当前启用的 NoCaptchaAI 密钥
+    // 服务器浏览器 / Node 执行器读取当前启用的 NoCaptchaAI 密钥与上报用量/切换
     Router::get('/api/node/nocaptcha-key', NodeBridgeController::class . '@nocaptchaKey');
+    Router::post('/api/node/nocaptcha-key/report-usage', NodeBridgeController::class . '@nocaptchaReportUsage');
 
     // 运营控制台 SPA（静态资源走 public/admin，深链回落）
     Router::get('/admin', ConsoleController::class . '@spa');
@@ -186,12 +188,14 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/dm-weight-config', DmWeightConfigController::class . '@save');
     Router::post('/api/dm-weight-config/reset', DmWeightConfigController::class . '@reset');
 
-    // 开发管理 · NoCaptchaAI 密钥（仅超管，同一时间仅一条启用）
+    // 开发管理 · NoCaptchaAI 密钥（仅超管，同一时间仅一条启用；满 6000 或标记用完自动切换）
     Router::get('/api/nocaptcha-keys', NocaptchaKeyController::class . '@list');
     Router::post('/api/nocaptcha-keys', NocaptchaKeyController::class . '@create');
     Router::put('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@update');
     Router::post('/api/nocaptcha-keys/{id}/enable', NocaptchaKeyController::class . '@enable');
     Router::post('/api/nocaptcha-keys/{id}/disable', NocaptchaKeyController::class . '@disable');
+    Router::post('/api/nocaptcha-keys/{id}/mark-exhausted', NocaptchaKeyController::class . '@markExhausted');
+    Router::post('/api/nocaptcha-keys/{id}/mark-available', NocaptchaKeyController::class . '@markAvailable');
     Router::delete('/api/nocaptcha-keys/{id}', NocaptchaKeyController::class . '@delete');
 
     Router::get('/api/meta', MetaController::class . '@index');
@@ -243,6 +247,18 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::patch('/api/auto-follow-tasks/{id}/dispatch', AutoFollowController::class . '@patchDispatch');
     Router::post('/api/auto-follow-tasks/{id}/cancel', AutoFollowController::class . '@cancel');
     Router::delete('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@delete');
+
+    // 视频增值（视频向导）：固定路径必须在 {id} 之前
+    Router::get('/api/video-boost-tasks', VideoBoostController::class . '@list');
+    Router::post('/api/video-boost-tasks', VideoBoostController::class . '@create');
+    Router::get('/api/video-boost-tasks/videos', VideoBoostController::class . '@videos');
+    Router::get('/api/video-boost-tasks/templates', VideoBoostController::class . '@templates');
+    Router::get('/api/video-boost-tasks/eligible-count', VideoBoostController::class . '@eligibleCount');
+    Router::get('/api/video-boost-tasks/{id}', VideoBoostController::class . '@detail');
+    Router::put('/api/video-boost-tasks/{id}', VideoBoostController::class . '@update');
+    Router::patch('/api/video-boost-tasks/{id}/dispatch', VideoBoostController::class . '@patchDispatch');
+    Router::post('/api/video-boost-tasks/{id}/cancel', VideoBoostController::class . '@cancel');
+    Router::delete('/api/video-boost-tasks/{id}', VideoBoostController::class . '@delete');
 
     Router::get('/api/ai-lead-clues', AiLeadClueController::class . '@list');
     Router::get('/api/ai-lead-clues/share-users', AiLeadClueController::class . '@shareRoleUsers');
@@ -663,6 +679,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/pull-comment-tasks/{id}/ingest', NodeBridgeController::class . '@pullCommentIngest');
     Router::post('/api/node/pull-comment-tasks/{id}/finish', NodeBridgeController::class . '@pullCommentFinish');
     Router::post('/api/node/auto-follow-items/{id}/finish', NodeBridgeController::class . '@autoFollowItemFinish');
+    Router::post('/api/node/video-boost-items/{id}/finish', NodeBridgeController::class . '@videoBoostItemFinish');
 
     Router::get('/admin/rbac', PermissionController::class . '@index');
     Router::get('/admin/permissions/data', PermissionController::class . '@permissions');

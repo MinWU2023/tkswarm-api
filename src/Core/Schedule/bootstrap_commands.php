@@ -13,6 +13,7 @@ function tkswarm_register_commands(Scheduler $scheduler): Scheduler
     $scheduler->register(new App\Commands\DmSyncCommand());
     $scheduler->register(new App\Commands\WarmRecurringCommand());
     $scheduler->register(new App\Commands\AutoFollowDispatchCommand());
+    $scheduler->register(new App\Commands\VideoBoostDispatchCommand());
     $scheduler->register(new App\Commands\AiLeadDailyQuotaCommand());
     $scheduler->register(new App\Commands\AiLeadDmDispatchCommand());
     $scheduler->register(new App\Commands\AiLeadBackfillCommand());

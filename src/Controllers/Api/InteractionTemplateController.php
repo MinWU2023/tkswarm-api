@@ -22,6 +22,7 @@ class InteractionTemplateController extends Controller
         'comment_reply' => '回复评论',
         'dm' => '私信',
         'dm_reply' => '回复私信',
+        'video_boost' => '视频增量',
     ];
 
     public const CONTENT_MODES = [
@@ -58,7 +59,7 @@ class InteractionTemplateController extends Controller
         }
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         $rows = DB::select(
-            "SELECT * FROM interaction_templates {$where} ORDER BY FIELD(type,'comment','comment_reply','dm','dm_reply'), FIELD(content_mode,'fixed','ai'), sort_order ASC, id DESC",
+            "SELECT * FROM interaction_templates {$where} ORDER BY FIELD(type,'comment','comment_reply','dm','dm_reply','video_boost'), FIELD(content_mode,'fixed','ai'), sort_order ASC, id DESC",
             $params
         ) ?: [];
         $counts = [];
@@ -102,7 +103,7 @@ class InteractionTemplateController extends Controller
         $this->ensureSchema();
         DataScope::ensureColumns();
         $type = strtolower(trim((string)$request->input('type', 'comment')));
-        if (!in_array($type, ['comment', 'comment_reply'], true)) {
+        if (!in_array($type, ['comment', 'comment_reply', 'video_boost'], true)) {
             $type = 'comment';
         }
         $templateId = (int)$request->input('templateId', $request->input('template_id', 0));
@@ -414,6 +415,7 @@ class InteractionTemplateController extends Controller
         }
         $this->migrateContentColumns();
         $this->seedDefaults();
+        \App\Services\VideoBoostService::ensureDefaultTemplate();
         $done = true;
     }
 

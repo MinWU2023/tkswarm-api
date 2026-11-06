@@ -1400,21 +1400,55 @@ class NodeBridgeController extends Controller
         return $this->success($map);
     }
 
-    /** Node / LinuxBrowse 读取当前启用的 NoCaptchaAI 密钥记录（status=1） */
+    /** Node / LinuxBrowse 读取当前启用的 NoCaptchaAI 密钥记录（status=1 且未用完） */
     public function nocaptchaKey(Request $request): Response
     {
         $row = NocaptchaKeyController::activeRecord();
         $apiKey = trim((string)($row['api_key'] ?? ''));
+        $limit = max(1, (int)($row['quota_limit'] ?? NocaptchaKeyController::QUOTA_LIMIT));
+        $used = max(0, (int)($row['used_count'] ?? 0));
+        $isExhausted = $row ? (((int)($row['is_exhausted'] ?? 0) === 1 || $used >= $limit) ? 1 : 0) : 0;
         return $this->success([
-            'enabled' => $row !== null && $apiKey !== '',
+            'enabled' => $row !== null && $apiKey !== '' && $isExhausted === 0,
             'id' => (int)($row['id'] ?? 0),
             'email' => (string)($row['email'] ?? ''),
             'username' => (string)($row['username'] ?? ''),
             'apiKey' => $apiKey,
             'api_key' => $apiKey,
             'status' => $row ? (int)($row['status'] ?? 0) : 0,
+            'isExhausted' => $isExhausted,
+            'is_exhausted' => $isExhausted,
+            'usedCount' => $used,
+            'used_count' => $used,
+            'quotaLimit' => $limit,
+            'quota_limit' => $limit,
+            'remainingCount' => max(0, $limit - $used),
             'updatedAt' => (string)($row['updated_at'] ?? ''),
         ]);
+    }
+
+    /**
+     * Node / LinuxBrowse 上报 NoCaptchaAI 用量或额度耗尽，达到 6000（或 exhausted=true）自动启用任意一条未使用完的密钥。
+     */
+    public function nocaptchaReportUsage(Request $request): Response
+    {
+        $apiKey = trim((string)$request->input('apiKey', $request->input('api_key', '')));
+        $id = (int)$request->input('id', 0);
+        $incRaw = $request->input('increment', 1);
+        $increment = is_numeric($incRaw) ? max(0, (int)$incRaw) : 1;
+        $exRaw = $request->input('exhausted', $request->input('isExhausted', false));
+        $exhausted = ($exRaw === true || $exRaw === 1 || $exRaw === '1' || $exRaw === 'true');
+        $remoteUsedRaw = $request->input('remoteUsed', $request->input('usedCount', null));
+        $remoteUsed = ($remoteUsedRaw !== null && $remoteUsedRaw !== '' && is_numeric($remoteUsedRaw))
+            ? max(0, (int)$remoteUsedRaw)
+            : null;
+
+        try {
+            $res = NocaptchaKeyController::recordUsage($apiKey, $id, $increment, $exhausted, $remoteUsed);
+            return $this->success($res, !empty($res['switched']) ? '已自动切换至下一个未使用完的密钥' : '已记录用量');
+        } catch (\Throwable $e) {
+            return $this->error('记录 NoCaptchaAI 用量失败：' . $e->getMessage(), 500);
+        }
     }
 
     /** Node 基础设置：可选已健康检测成功的服务器浏览器列表 */
@@ -3248,6 +3282,18 @@ class NodeBridgeController extends Controller
         AutoFollowService::ensureSchema();
         try {
             $out = AutoFollowService::finishItem((int)$id, $request->all());
+            return $this->success($out);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /** Node：视频增值明细完成（回写结果 + 更新计数） */
+    public function videoBoostItemFinish(Request $request, string $id): Response
+    {
+        \App\Services\VideoBoostService::ensureSchema();
+        try {
+            $out = \App\Services\VideoBoostService::finishItem((int)$id, $request->all());
             return $this->success($out);
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);

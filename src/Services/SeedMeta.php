@@ -102,6 +102,7 @@ class SeedMeta
             ['aiLeadClues', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['aiLeadClueData', ['ai.leads', 'ai.leads.view', 'account.view']],
             ['autoFollow', ['ai.leads', 'ai.leads.view', 'account.create', 'publish.tasks', 'account.view']],
+            ['videoBoost', ['publish.tasks', 'publish.tasks.view', 'matrix.publish', 'account.create', 'account.view']],
         ];
         foreach ($rows as [$view, $codes]) {
             DB::query(

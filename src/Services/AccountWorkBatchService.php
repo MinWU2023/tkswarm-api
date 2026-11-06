@@ -55,6 +55,7 @@ class AccountWorkBatchService
         'ai_lead' => 45,        // AI拓客
         'ai_lead_dm' => 46,     // AI拓客·私信测试（独立）
         'auto_follow' => 48,    // 自动增粉
+        'video_boost' => 49,    // 视频增值（搜索发布者→找视频→看完→点赞/评论/转发）
         'warm' => 50,           // 养号操作
         'diagnose' => 55,       // 账号诊断截图（养号后可选）
         'dm_sync' => 60,
@@ -68,7 +69,7 @@ class AccountWorkBatchService
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
         'cs_login', 'cs_logout', 'cs_detect',
-        'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'warm',
+        'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'video_boost', 'warm',
         'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile', 'env_pack_upload',
     ];
 
@@ -2106,6 +2107,9 @@ class AccountWorkBatchService
         if ($type === 'auto_follow') {
             self::syncAutoFollowWorkItem($item, $status, $result, $errorMessage);
         }
+        if ($type === 'video_boost') {
+            self::syncVideoBoostWorkItem($item, $status, $result, $errorMessage);
+        }
 
         if ($status === 'completed' && $type === 'pull_stats') {
             try {
@@ -3271,7 +3275,36 @@ class AccountWorkBatchService
     }
 
     /** 独立主任务表类型，task_ref_id 不指向 legacy tasks 表 */
-    private const STANDALONE_TASK_TYPES = ['auto_follow', 'pull_comments'];
+    private const STANDALONE_TASK_TYPES = ['auto_follow', 'video_boost', 'pull_comments'];
+
+    /**
+     * 视频增值分项完成 → 回写 video_boost_task_items（幂等：Node 可能已回写）。
+     * @param array<string,mixed> $item
+     * @param array<string,mixed>|null $result
+     */
+    private static function syncVideoBoostWorkItem(array $item, string $status, ?array $result, string $errorMessage): void
+    {
+        $payload = json_decode((string)($item['payload_json'] ?? '{}'), true) ?: [];
+        $vbItemId = (int)($payload['itemId'] ?? $payload['item_id'] ?? 0);
+        if ($vbItemId < 1) {
+            return;
+        }
+        $inner = is_array($result['result'] ?? null) ? $result['result'] : (is_array($result) ? $result : []);
+        try {
+            $cur = DB::selectOne('SELECT status FROM video_boost_task_items WHERE id=?', [$vbItemId]);
+            // Node 已回写成功/失败则不覆盖，只在仍停留在 enqueued/running 时收口
+            if (!$cur || !in_array((string)$cur['status'], ['enqueued', 'running'], true)) {
+                return;
+            }
+            VideoBoostService::finishItem($vbItemId, [
+                'success' => $status === 'completed',
+                'error' => $errorMessage !== '' ? $errorMessage : (string)($inner['error'] ?? ''),
+                'result' => $inner,
+            ]);
+        } catch (\Throwable $e) {
+            // 不阻断账号总任务分项完成
+        }
+    }
 
     /**
      * @param array<string,mixed> $item
@@ -3406,6 +3439,7 @@ class AccountWorkBatchService
             'pull_comments' => '拉取视频详情',
             'pull_video_list' => '拉取视频列表',
             'auto_follow' => '自动增粉',
+            'video_boost' => '视频增值',
             'dm_reply' => '回复私信',
             'dm_sync' => '同步私信',
             'sync_fans' => '同步粉丝/关注',
@@ -3420,7 +3454,7 @@ class AccountWorkBatchService
                 return $base . ' #' . $leadId;
             }
         }
-        if ($type === 'auto_follow') {
+        if ($type === 'auto_follow' || $type === 'video_boost') {
             $payload = json_decode((string)($first['payload_json'] ?? '{}'), true) ?: [];
             $taskId = (int)($payload['taskId'] ?? $payload['task_id'] ?? $first['task_ref_id'] ?? 0);
             if ($taskId > 0) {
