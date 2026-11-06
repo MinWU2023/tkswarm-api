@@ -363,13 +363,13 @@ class VideoDeliveryController extends Controller
         );
     }
 
-    public function showOrder(Request $request, string $orderId): Response
+    public function showOrder(Request $request, string $id): Response
     {
-        $order = $this->loadOrder((int)$orderId);
+        $order = $this->loadOrder((int)$id);
         if ($order instanceof Response) {
             return $order;
         }
-        $oid = (int)$orderId;
+        $oid = (int)$id;
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         $notes = DB::select(
@@ -401,13 +401,13 @@ class VideoDeliveryController extends Controller
         ]);
     }
 
-    public function updateOrder(Request $request, string $orderId): Response
+    public function updateOrder(Request $request, string $id): Response
     {
-        $order = $this->loadOrder((int)$orderId);
+        $order = $this->loadOrder((int)$id);
         if ($order instanceof Response) {
             return $order;
         }
-        $oid = (int)$orderId;
+        $oid = (int)$id;
         $prevStatus = VideoDeliveryService::normalizeOrderStatus((string)($order['status'] ?? 'pending'));
 
         $title = trim((string)$request->input('title', $order['title'] ?? ''));
@@ -571,26 +571,28 @@ class VideoDeliveryController extends Controller
         );
     }
 
-    public function orderFiles(Request $request, string $orderId): Response
+    public function orderFiles(Request $request, string $id): Response
     {
-        $order = $this->loadOrder((int)$orderId);
+        $order = $this->loadOrder((int)$id);
         if ($order instanceof Response) {
             return $order;
         }
-        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [(int)$orderId]) ?: [];
+        $oid = (int)$id;
+        $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         return $this->success([
-            'orderId' => (int)$orderId,
+            'orderId' => $oid,
             'title' => (string)($order['title'] ?? ''),
             'files' => array_map([VideoDeliveryService::class, 'mapFile'], $files),
         ]);
     }
 
-    public function addNote(Request $request, string $orderId): Response
+    public function addNote(Request $request, string $id): Response
     {
-        $order = $this->loadOrder((int)$orderId);
+        $order = $this->loadOrder((int)$id);
         if ($order instanceof Response) {
             return $order;
         }
+        $oid = (int)$id;
         $content = mb_substr(trim((string)$request->input('content', $request->input('note', ''))), 0, 1000);
         if ($content === '') {
             return $this->error('请填写备注内容', 422);
@@ -598,7 +600,7 @@ class VideoDeliveryController extends Controller
         DB::query(
             'INSERT INTO video_delivery_notes (order_id, content, author_id, author_name) VALUES (?,?,?,?)',
             [
-                (int)$orderId,
+                $oid,
                 $content,
                 VideoDeliveryService::currentUserId(),
                 VideoDeliveryService::currentUserName(),
@@ -606,34 +608,35 @@ class VideoDeliveryController extends Controller
         );
         $notes = DB::select(
             'SELECT * FROM video_delivery_notes WHERE order_id=? ORDER BY id DESC LIMIT 50',
-            [(int)$orderId]
+            [$oid]
         ) ?: [];
         return $this->success([
-            'orderId' => (int)$orderId,
+            'orderId' => $oid,
             'notes' => array_map([VideoDeliveryService::class, 'mapNote'], $notes),
         ], '备注已添加');
     }
 
-    public function downloadRecords(Request $request, string $orderId): Response
+    public function downloadRecords(Request $request, string $id): Response
     {
-        $order = $this->loadOrder((int)$orderId);
+        $order = $this->loadOrder((int)$id);
         if ($order instanceof Response) {
             return $order;
         }
+        $oid = (int)$id;
         $rows = DB::select(
             'SELECT * FROM video_delivery_downloads WHERE order_id=? ORDER BY id DESC LIMIT 100',
-            [(int)$orderId]
+            [$oid]
         ) ?: [];
         return $this->success([
-            'orderId' => (int)$orderId,
+            'orderId' => $oid,
             'downloadCount' => (int)($order['download_count'] ?? 0),
             'items' => array_map([VideoDeliveryService::class, 'mapDownload'], $rows),
         ]);
     }
 
-    public function streamFile(Request $request, string $fileId): Response
+    public function streamFile(Request $request, string $id): Response
     {
-        $file = $this->loadFile((int)$fileId);
+        $file = $this->loadFile((int)$id);
         if ($file instanceof Response) {
             return $file;
         }
@@ -658,18 +661,19 @@ class VideoDeliveryController extends Controller
         ]));
     }
 
-    public function downloadFile(Request $request, string $fileId): Response
+    public function downloadFile(Request $request, string $id): Response
     {
-        $file = $this->loadFile((int)$fileId);
+        $file = $this->loadFile((int)$id);
         if ($file instanceof Response) {
             return $file;
         }
+        $fileId = (int)$id;
         $orderId = (int)($file['order_id'] ?? 0);
         DB::query(
             'INSERT INTO video_delivery_downloads (order_id, file_id, operator_id, operator_name) VALUES (?,?,?,?)',
             [
                 $orderId,
-                (int)$fileId,
+                $fileId,
                 VideoDeliveryService::currentUserId(),
                 VideoDeliveryService::currentUserName(),
             ]
