@@ -425,6 +425,7 @@ class VideoDeliveryController extends Controller
             DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
             return $linked;
         }
+        $this->syncMaterialGithubLinks($orderId);
 
         $uploaded = $this->storeUploadedFiles($adminUserId, $orderId);
         if ($uploaded instanceof Response) {
@@ -453,6 +454,8 @@ class VideoDeliveryController extends Controller
             return $order;
         }
         $oid = (int)$id;
+        // 素材侧已有 GitHub 链接时，回写到交付文件（历史单可能未同步）
+        $this->syncMaterialGithubLinks($oid);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         $notes = DB::select(
@@ -575,17 +578,19 @@ class VideoDeliveryController extends Controller
             foreach ($existRows as $er) {
                 $existMap[(int)$er['material_id']] = true;
             }
-            $materialIds = array_values(array_filter(
+            $newMaterialIds = array_values(array_filter(
                 $materialIds,
                 static fn(int $mid) => empty($existMap[$mid])
             ));
-            if ($materialIds) {
-                $linked = $this->attachMaterials($adminUserId, $oid, $materialIds);
+            if ($newMaterialIds) {
+                $linked = $this->attachMaterials($adminUserId, $oid, $newMaterialIds);
                 if ($linked instanceof Response) {
                     return $linked;
                 }
             }
         }
+        // 已关联素材：把 materials 上最新 GitHub/CDN 链接同步到交付文件
+        $this->syncMaterialGithubLinks($oid);
         if ($adminUserId > 0) {
             $uploaded = $this->storeUploadedFiles($adminUserId, $oid);
             if ($uploaded instanceof Response) {
@@ -628,6 +633,7 @@ class VideoDeliveryController extends Controller
             return $order;
         }
         $oid = (int)$id;
+        $this->syncMaterialGithubLinks($oid);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
         return $this->success([
             'orderId' => $oid,
@@ -842,6 +848,87 @@ class VideoDeliveryController extends Controller
             }
         }
         return array_values($ids);
+    }
+
+    /**
+     * 将 materials 上的 GitHub/CDN 链接回写到本单 assets/files。
+     * 编辑保存会跳过已关联素材，导致历史交付文件拿不到后来上传的链接。
+     */
+    private function syncMaterialGithubLinks(int $orderId): int
+    {
+        GithubReleaseCdnService::ensureSchema();
+        $assets = DB::select(
+            "SELECT id, file_id, material_id,
+                    IFNULL(cdn_url,'') AS cdn_url,
+                    IFNULL(github_asset_url,'') AS github_asset_url,
+                    IFNULL(github_config_id,0) AS github_config_id
+             FROM video_delivery_assets
+             WHERE order_id=? AND material_id>0",
+            [$orderId]
+        ) ?: [];
+        if (!$assets) {
+            return 0;
+        }
+        $mids = [];
+        foreach ($assets as $a) {
+            $mid = (int)($a['material_id'] ?? 0);
+            if ($mid > 0) {
+                $mids[$mid] = true;
+            }
+        }
+        $mids = array_keys($mids);
+        if (!$mids) {
+            return 0;
+        }
+        $ph = implode(',', array_fill(0, count($mids), '?'));
+        $mats = DB::select(
+            "SELECT id,
+                    IFNULL(cdn_url,'') AS cdn_url,
+                    IFNULL(github_asset_url,'') AS github_asset_url,
+                    IFNULL(github_config_id,0) AS github_config_id
+             FROM materials WHERE id IN ({$ph})",
+            $mids
+        ) ?: [];
+        $byId = [];
+        foreach ($mats as $m) {
+            $byId[(int)$m['id']] = $m;
+        }
+        $updated = 0;
+        foreach ($assets as $a) {
+            $mid = (int)($a['material_id'] ?? 0);
+            $mat = $byId[$mid] ?? null;
+            if (!$mat) {
+                continue;
+            }
+            $cdn = trim((string)($mat['cdn_url'] ?? ''));
+            $gh = trim((string)($mat['github_asset_url'] ?? ''));
+            $cfg = (int)($mat['github_config_id'] ?? 0);
+            if ($cdn === '' && $gh === '') {
+                continue;
+            }
+            $curCdn = trim((string)($a['cdn_url'] ?? ''));
+            $curGh = trim((string)($a['github_asset_url'] ?? ''));
+            $curCfg = (int)($a['github_config_id'] ?? 0);
+            if ($curCdn === $cdn && $curGh === $gh && $curCfg === $cfg) {
+                continue;
+            }
+            $aid = (int)($a['id'] ?? 0);
+            $fid = (int)($a['file_id'] ?? 0);
+            if ($aid > 0) {
+                DB::query(
+                    'UPDATE video_delivery_assets SET cdn_url=?, github_asset_url=?, github_config_id=? WHERE id=?',
+                    [$cdn, $gh, $cfg, $aid]
+                );
+            }
+            if ($fid > 0) {
+                DB::query(
+                    'UPDATE video_delivery_files SET cdn_url=?, github_asset_url=?, github_config_id=? WHERE id=?',
+                    [$cdn, $gh, $cfg, $fid]
+                );
+            }
+            $updated++;
+        }
+        return $updated;
     }
 
     /**
