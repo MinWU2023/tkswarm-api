@@ -28,9 +28,14 @@ class VideoDeliveryAutoConfirmCommand extends Command
                 $days = max(1, (int)substr((string)$a, 7));
             }
         }
-        $this->info('视频交付自动确认（>' . $days . ' 日未确认）');
+        $this->info('视频交付自动确认（>' . $days . ' 日未确认，并扣除积分）');
         $res = VideoDeliveryService::autoConfirmExpired($days);
-        $this->info(sprintf('scanned=%d confirmed=%d', $res['scanned'], $res['confirmed']));
+        $this->info(sprintf(
+            'scanned=%d confirmed=%d deductFailed=%d',
+            $res['scanned'],
+            $res['confirmed'],
+            $res['deductFailed'] ?? 0
+        ));
         return 0;
     }
 }

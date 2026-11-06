@@ -116,6 +116,9 @@ class MaterialController extends Controller
                 m.sha256, m.share_title, m.share_caption, m.owner_id, m.created_at, m.updated_at,
                 m.platform_video_id, m.platform_video_url, m.view_count, m.like_count, m.comment_count,
                 m.platform_published_at, m.last_comment_pulled_at, m.origin,
+                IFNULL(m.cdn_url,'') AS cdn_url,
+                IFNULL(m.github_asset_url,'') AS github_asset_url,
+                IFNULL(m.github_config_id,0) AS github_config_id,
                 {$coverCol},
                 u.username AS owner_name, a.username AS publish_account_name";
     }
@@ -988,7 +991,69 @@ class MaterialController extends Controller
         $row['streamUrl'] = $id > 0 ? '/api/local-materials/' . $id . '/stream' : '';
         $row['playUrl'] = $row['streamUrl'];
         $row['coverUrl'] = ($id > 0 && $row['hasCover']) ? ('/api/materials/' . $id . '/cover') : '';
+        $row['cdnUrl'] = trim((string)($row['cdn_url'] ?? ''));
+        $row['githubAssetUrl'] = trim((string)($row['github_asset_url'] ?? ''));
+        $row['githubConfigId'] = (int)($row['github_config_id'] ?? 0);
         return $row;
+    }
+
+    /**
+     * 将单个素材视频上传到启用中的 GitHub Release CDN（供交付提交前依次调用）。
+     */
+    public function uploadGithubCdn(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        \App\Services\Github\GithubReleaseCdnService::ensureSchema();
+        $mid = (int)$id;
+        $row = DB::selectOne('SELECT * FROM materials WHERE id=?', [$mid]);
+        if ($err = $this->assertMaterialOwns($row)) {
+            return $err;
+        }
+        $cdnUrl = trim((string)($row['cdn_url'] ?? ''));
+        $githubAssetUrl = trim((string)($row['github_asset_url'] ?? ''));
+        if ($cdnUrl !== '' || $githubAssetUrl !== '') {
+            return $this->success($this->mapRow($row), '已有 GitHub/CDN 链接，无需重复上传');
+        }
+        $path = (string)($row['file_path'] ?? '');
+        $abs = '';
+        if ($path !== '') {
+            if (is_file($path)) {
+                $abs = $path;
+            } else {
+                $base = getenv('DATA_DIR') ?: (dirname(__DIR__, 3) . '/data');
+                $cand = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path), '/\\');
+                if (is_file($cand)) {
+                    $abs = $cand;
+                }
+            }
+        }
+        if ($abs === '') {
+            return $this->error('本地视频文件不存在，无法上传 GitHub', 422);
+        }
+        $orig = (string)($row['file_name'] ?? basename($abs));
+        try {
+            $up = \App\Services\Github\GithubReleaseCdnService::uploadMaterialFile($abs, $orig !== '' ? $orig : basename($abs), $mid);
+        } catch (\Throwable $e) {
+            return $this->error('GitHub 上传失败：' . $e->getMessage(), 500);
+        }
+        if (!$up) {
+            return $this->error('未配置启用的 GitHub CDN，请先在「GitHub CDN」中启用一套配置', 422);
+        }
+        $cdnUrl = (string)($up['cdnUrl'] ?? '');
+        $githubAssetUrl = (string)($up['githubAssetUrl'] ?? '');
+        $githubConfigId = (int)($up['configId'] ?? 0);
+        if ($cdnUrl === '' && $githubAssetUrl === '') {
+            return $this->error('GitHub 上传未返回有效链接', 500);
+        }
+        DB::query(
+            'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$cdnUrl, $githubAssetUrl, $githubConfigId, $mid]
+        );
+        return $this->success(
+            $this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$mid])),
+            '已上传到 GitHub'
+        );
     }
 
     /** 列表缩略图：按需读单条封面，不进列表 JSON */
@@ -1602,6 +1667,10 @@ class MaterialController extends Controller
         }
         try {
             DB::query("UPDATE materials SET file_ext=LOWER(SUBSTRING_INDEX(file_name,'.',-1)) WHERE (file_ext IS NULL OR file_ext='') AND file_name LIKE '%.%'");
+        } catch (\Throwable $e) {
+        }
+        try {
+            \App\Services\Github\GithubReleaseCdnService::ensureSchema();
         } catch (\Throwable $e) {
         }
     }

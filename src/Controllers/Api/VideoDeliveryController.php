@@ -98,10 +98,21 @@ class VideoDeliveryController extends Controller
         }
         $token = VideoDeliveryService::generateToken();
         DB::query(
-            'UPDATE video_delivery_clients SET auth_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            "UPDATE video_delivery_clients SET
+              auth_token=?,
+              token_bound=0,
+              remote_company_id='',
+              remote_company_name='',
+              last_token_check_at=NULL,
+              last_token_error=NULL,
+              updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
             [$token, (int)$mapped['profileId']]
         );
-        return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '已生成授权 Token');
+        return $this->success(
+            VideoDeliveryService::ensureProfileForAdminUser((int)$id),
+            '已生成企业授权 Token，请在守护者后台绑定后点击「检测关联」'
+        );
     }
 
     public function checkLink(Request $request, string $id): Response
@@ -110,34 +121,143 @@ class VideoDeliveryController extends Controller
         if ($mapped instanceof Response) {
             return $mapped;
         }
-        $ok = ($mapped['authToken'] ?? '') !== '' && ($mapped['authStart'] ?? '') !== '' && ($mapped['authEnd'] ?? '') !== '';
-        $msg = $ok
-            ? (!empty($mapped['authorized']) ? '关联正常，授权有效期内' : '已配置 Token，但授权已过期或未生效')
-            : '未完整配置服务版本 / 授权日期 / Token';
+        // 先保存可能未落库的 token/日期（前端会先 save；此处再兜底读取）
+        $token = trim((string)$request->input('authToken', $request->input('auth_token', $mapped['authToken'] ?? '')));
+        if ($token !== '' && $token !== (string)($mapped['authToken'] ?? '')) {
+            DB::query(
+                'UPDATE video_delivery_clients SET auth_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$token, (int)$mapped['profileId']]
+            );
+        }
+        $sync = VideoDeliveryService::syncTokenBinding((int)$mapped['profileId']);
+        $client = $sync['client'] ?? VideoDeliveryService::ensureProfileForAdminUser((int)$id);
+        $dateOk = ($client['authStart'] ?? '') !== '' && ($client['authEnd'] ?? '') !== '';
+        $ok = !empty($sync['ok']) && !empty($client['authorized']) && $dateOk;
+        $msg = !empty($sync['ok'])
+            ? ($ok ? $sync['message'] : ($sync['message'] . '（请检查授权日期）'))
+            : (string)($sync['message'] ?? '检测未通过');
         return $this->success([
-            'ok' => $ok && !empty($mapped['authorized']),
-            'authorized' => !empty($mapped['authorized']),
-            'client' => $mapped,
+            'ok' => $ok,
+            'authorized' => !empty($client['authorized']),
+            'tokenBound' => !empty($client['tokenBound']),
+            'authToken' => (string)($client['authToken'] ?? ''),
+            'client' => $client,
             'message' => $msg,
         ], $msg);
     }
 
+    /**
+     * 充值：对接守护者 video/payment-login，返回充值登录页。
+     * 可选 sync=1 同步远程余额；mode=local 时仍支持本地调账（会写积分记录）。
+     */
     public function recharge(Request $request, string $id): Response
     {
         $mapped = $this->loadClientMapped((int)$id);
         if ($mapped instanceof Response) {
             return $mapped;
         }
-        $amount = (int)$request->input('amount', $request->input('points', 0));
-        if ($amount === 0) {
-            return $this->error('请输入充值积分（可为负数表示扣减）', 422);
+        $profileId = (int)$mapped['profileId'];
+        $mode = trim((string)$request->input('mode', 'payment'));
+        $token = trim((string)($mapped['authToken'] ?? ''));
+
+        if ($mode === 'sync' || $request->input('sync')) {
+            $sync = VideoDeliveryService::syncTokenBinding($profileId);
+            if (empty($sync['ok'])) {
+                return $this->error((string)($sync['message'] ?? '同步失败'), 422);
+            }
+            return $this->success($sync['client'] ?? VideoDeliveryService::ensureProfileForAdminUser((int)$id), $sync['message']);
         }
-        $next = max(0, (int)($mapped['points'] ?? 0) + $amount);
-        DB::query(
-            'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW(), updated_at=CURRENT_TIMESTAMP WHERE id=?',
-            [$next, (int)$mapped['profileId']]
-        );
-        return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '积分已更新');
+
+        if ($mode === 'local') {
+            $amount = (int)$request->input('amount', $request->input('points', 0));
+            if ($amount === 0) {
+                return $this->error('请输入充值积分（可为负数表示扣减）', 422);
+            }
+            $cur = max(0, (int)($mapped['points'] ?? 0));
+            $next = max(0, $cur + $amount);
+            DB::query(
+                'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW(), updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$next, $profileId]
+            );
+            VideoDeliveryService::writePointRecord([
+                'client_id' => $profileId,
+                'order_id' => 0,
+                'operator_user_id' => VideoDeliveryService::currentUserId(),
+                'operator_name' => VideoDeliveryService::currentUserName(),
+                'direction' => $amount > 0 ? 'recharge' : 'deduct',
+                'points' => abs($amount),
+                'balance_after' => $next,
+                'title' => '本地调账',
+                'points_note' => (string)$request->input('note', 'Node 本地积分调账'),
+                'source' => 'local_adjust',
+            ]);
+            return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '本地积分已更新');
+        }
+
+        // 默认：远程充值登录页
+        if ($token === '') {
+            return $this->error('请先生成并绑定授权 Token 后再充值', 422);
+        }
+        if (empty($mapped['tokenBound'])) {
+            $sync = VideoDeliveryService::syncTokenBinding($profileId);
+            if (empty($sync['ok'])) {
+                return $this->error('Token 未绑定守护者企业：' . ($sync['message'] ?? ''), 422);
+            }
+            $mapped = $sync['client'] ?? $mapped;
+        }
+        $pay = \App\Services\ShouhuzheVideoApiService::paymentLogin($token);
+        if (empty($pay['status'])) {
+            return $this->error((string)($pay['error_msg'] ?? $pay['message'] ?? '获取充值页面失败'), 422);
+        }
+        $data = is_array($pay['data'] ?? null) ? $pay['data'] : [];
+        $loginUrl = trim((string)($data['login_url'] ?? ''));
+        if ($loginUrl === '') {
+            return $this->error('充值接口未返回登录地址', 422);
+        }
+        VideoDeliveryService::applyRemoteBalance($profileId, $data);
+        $client = VideoDeliveryService::ensureProfileForAdminUser((int)$id);
+        return $this->success([
+            'loginUrl' => $loginUrl,
+            'client' => $client,
+            'authToken' => $token,
+        ], '请前往守护者页面完成充值');
+    }
+
+    public function pointRecords(Request $request, string $id): Response
+    {
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
+        }
+        $limit = max(1, min(200, (int)$request->get('limit', 50)));
+        return $this->success([
+            'clientId' => (int)$mapped['profileId'],
+            'items' => VideoDeliveryService::listPointRecords((int)$mapped['profileId'], $limit),
+        ]);
+    }
+
+    /** 获取企业 Token（本地存储 + 可选远程校验） */
+    public function getToken(Request $request, string $id): Response
+    {
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
+        }
+        $syncRemote = (int)$request->get('sync', $request->input('sync', 0)) === 1;
+        if ($syncRemote && trim((string)($mapped['authToken'] ?? '')) !== '') {
+            $sync = VideoDeliveryService::syncTokenBinding((int)$mapped['profileId']);
+            if (!empty($sync['client'])) {
+                $mapped = $sync['client'];
+            }
+        }
+        return $this->success([
+            'authToken' => (string)($mapped['authToken'] ?? ''),
+            'tokenBound' => !empty($mapped['tokenBound']),
+            'remoteCompanyId' => (string)($mapped['remoteCompanyId'] ?? ''),
+            'remoteCompanyName' => (string)($mapped['remoteCompanyName'] ?? ''),
+            'points' => (int)($mapped['points'] ?? 0),
+            'client' => $mapped,
+        ]);
     }
 
     public function listOrders(Request $request, string $id): Response
@@ -257,14 +377,7 @@ class VideoDeliveryController extends Controller
         // 落库存英文 code，列表展示时再解析标题
         $settleType = $settleTypeCode;
 
-        $balance = max(0, (int)($mapped['points'] ?? 0));
-        if ($pointsCost > $balance) {
-            return $this->error(
-                "积分不足：本次需 {$pointsCost}，当前余额 {$balance}",
-                422
-            );
-        }
-
+        // 积分在客户确认 / 自动确认时扣除，此处仅记录预估消耗
         $status = VideoDeliveryService::normalizeOrderStatus(
             (string)$request->input('status', 'completed')
         );
@@ -324,42 +437,12 @@ class VideoDeliveryController extends Controller
             return $this->error('请至少选择一个视频素材或上传文件', 422);
         }
 
-        if ($pointsCost > 0) {
-            try {
-                $ok = DB::transaction(static function () use ($profileId, $pointsCost) {
-                    $fresh = DB::selectOne(
-                        'SELECT points FROM video_delivery_clients WHERE id=? FOR UPDATE',
-                        [$profileId]
-                    );
-                    $cur = max(0, (int)($fresh['points'] ?? 0));
-                    if ($pointsCost > $cur) {
-                        return false;
-                    }
-                    DB::query(
-                        'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
-                        [$cur - $pointsCost, $profileId]
-                    );
-                    return true;
-                });
-            } catch (\Throwable $e) {
-                $ok = false;
-            }
-            if (!$ok) {
-                DB::query('DELETE FROM video_delivery_orders WHERE id=?', [$orderId]);
-                $cur = max(0, (int)(DB::selectOne(
-                    'SELECT points FROM video_delivery_clients WHERE id=?',
-                    [$profileId]
-                )['points'] ?? 0));
-                return $this->error("积分不足：本次需 {$pointsCost}，当前余额 {$cur}", 422);
-            }
-        }
-
         $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         return $this->success(
             VideoDeliveryService::mapOrder($order ?: ['id' => $orderId], $files, [], $assets),
-            '已上传并创建交付单'
+            '已上传并创建交付单（积分将在客户确认后扣除）'
         );
     }
 
@@ -523,40 +606,7 @@ class VideoDeliveryController extends Controller
             );
         }
 
-        // 首次变为已完成时扣积分（客户需求单创建时未扣）
-        if ($status === 'completed' && $prevStatus !== 'completed' && $pointsCost > 0 && $profileId > 0) {
-            try {
-                $ok = DB::transaction(static function () use ($profileId, $pointsCost) {
-                    $fresh = DB::selectOne(
-                        'SELECT points FROM video_delivery_clients WHERE id=? FOR UPDATE',
-                        [$profileId]
-                    );
-                    $cur = max(0, (int)($fresh['points'] ?? 0));
-                    if ($pointsCost > $cur) {
-                        return false;
-                    }
-                    DB::query(
-                        'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW() WHERE id=?',
-                        [$cur - $pointsCost, $profileId]
-                    );
-                    return true;
-                });
-            } catch (\Throwable $e) {
-                $ok = false;
-            }
-            if (!$ok) {
-                // 回滚状态，避免未扣积分却显示已完成
-                DB::query(
-                    'UPDATE video_delivery_orders SET status=?, delivered_at=?, points_cost=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-                    [$prevStatus, $order['delivered_at'] ?? null, (int)($order['points_cost'] ?? 0), $oid]
-                );
-                $cur = max(0, (int)(DB::selectOne(
-                    'SELECT points FROM video_delivery_clients WHERE id=?',
-                    [$profileId]
-                )['points'] ?? 0));
-                return $this->error("积分不足：本次需 {$pointsCost}，当前余额 {$cur}", 422);
-            }
-        }
+        // 积分改在客户确认 / 自动确认时通过守护者接口扣除
 
         $fresh = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$oid]) ?: $order;
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$oid]) ?: [];
@@ -848,23 +898,28 @@ class VideoDeliveryController extends Controller
             $cdnUrl = trim((string)($mat['cdn_url'] ?? ''));
             $githubAssetUrl = trim((string)($mat['github_asset_url'] ?? ''));
             $githubConfigId = (int)($mat['github_config_id'] ?? 0);
-            if ($cdnUrl === '' && $githubAssetUrl === '' && $abs !== '') {
+            if ($cdnUrl === '' && $githubAssetUrl === '') {
+                if ($abs === '') {
+                    return $this->error('素材 #' . $mid . ' 无本地文件且未上传 GitHub，请先完成 GitHub 上传', 422);
+                }
                 try {
                     $up = GithubReleaseCdnService::uploadMaterialFile($abs, $orig !== '' ? $orig : basename($abs), $mid);
-                    if ($up) {
-                        $cdnUrl = (string)($up['cdnUrl'] ?? '');
-                        $githubAssetUrl = (string)($up['githubAssetUrl'] ?? '');
-                        $githubConfigId = (int)($up['configId'] ?? 0);
-                        if ($cdnUrl !== '' || $githubAssetUrl !== '') {
-                            DB::query(
-                                'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-                                [$cdnUrl, $githubAssetUrl, $githubConfigId, $mid]
-                            );
-                        }
-                    }
                 } catch (\Throwable $e) {
-                    // CDN 失败不阻断交付关联
+                    return $this->error('素材 #' . $mid . ' GitHub 上传失败：' . $e->getMessage(), 500);
                 }
+                if (!$up) {
+                    return $this->error('未配置启用的 GitHub CDN，无法交付视频', 422);
+                }
+                $cdnUrl = (string)($up['cdnUrl'] ?? '');
+                $githubAssetUrl = (string)($up['githubAssetUrl'] ?? '');
+                $githubConfigId = (int)($up['configId'] ?? 0);
+                if ($cdnUrl === '' && $githubAssetUrl === '') {
+                    return $this->error('素材 #' . $mid . ' GitHub 上传未返回有效链接', 500);
+                }
+                DB::query(
+                    'UPDATE materials SET cdn_url=?, github_asset_url=?, github_config_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$cdnUrl, $githubAssetUrl, $githubConfigId, $mid]
+                );
             }
             $mime = (string)($mat['mime_type'] ?? '');
             $size = (int)($mat['size_bytes'] ?? 0);

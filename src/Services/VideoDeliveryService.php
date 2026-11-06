@@ -142,10 +142,45 @@ class VideoDeliveryService
 
         self::ensureOrderColumns();
         self::ensureFileColumns();
+        self::ensurePointRecordsSchema();
         try {
             CustomVideoTypeService::ensureSchema();
         } catch (\Throwable $e) {
         }
+        try {
+            ShouhuzheVideoApiService::ensureSettingsSchema();
+        } catch (\Throwable $e) {
+        }
+    }
+
+    public static function ensurePointRecordsSchema(): void
+    {
+        DB::query(
+            "CREATE TABLE IF NOT EXISTS video_delivery_point_records (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              client_id INT NOT NULL DEFAULT 0,
+              order_id INT NOT NULL DEFAULT 0,
+              operator_user_id INT NOT NULL DEFAULT 0,
+              operator_name VARCHAR(120) NOT NULL DEFAULT '',
+              direction VARCHAR(16) NOT NULL DEFAULT 'deduct',
+              points INT NOT NULL DEFAULT 0,
+              balance_after INT NULL,
+              title VARCHAR(255) NOT NULL DEFAULT '',
+              settle_type VARCHAR(64) NOT NULL DEFAULT '',
+              points_note TEXT NULL,
+              remote_company_id VARCHAR(64) NOT NULL DEFAULT '',
+              remote_company_name VARCHAR(255) NOT NULL DEFAULT '',
+              remote_available_point INT NULL,
+              remote_deducted_points INT NULL,
+              remote_already_deducted TINYINT NULL,
+              remote_response TEXT NULL,
+              source VARCHAR(32) NOT NULL DEFAULT 'confirm',
+              deducted_at DATETIME NULL,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_vdpr_client (client_id, id),
+              KEY idx_vdpr_order (order_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
     }
 
     private static function ensureOrderColumns(): void
@@ -161,6 +196,8 @@ class VideoDeliveryService
             'delivered_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN delivered_at DATETIME NULL AFTER customer_confirmed_at',
             'source' => "ALTER TABLE video_delivery_orders ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'ops' AFTER settle_type",
             'cloud_drive_info' => "ALTER TABLE video_delivery_orders ADD COLUMN cloud_drive_info TEXT NULL AFTER requirements",
+            'points_deducted_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN points_deducted_at DATETIME NULL AFTER delivered_at',
+            'points_deduct_error' => 'ALTER TABLE video_delivery_orders ADD COLUMN points_deduct_error VARCHAR(500) NULL AFTER points_deducted_at',
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {
@@ -204,6 +241,11 @@ class VideoDeliveryService
             'auth_token' => "ALTER TABLE video_delivery_clients ADD COLUMN auth_token VARCHAR(128) NOT NULL DEFAULT ''",
             'points' => 'ALTER TABLE video_delivery_clients ADD COLUMN points INT NOT NULL DEFAULT 0',
             'points_updated_at' => 'ALTER TABLE video_delivery_clients ADD COLUMN points_updated_at DATETIME NULL',
+            'token_bound' => 'ALTER TABLE video_delivery_clients ADD COLUMN token_bound TINYINT NOT NULL DEFAULT 0',
+            'remote_company_id' => "ALTER TABLE video_delivery_clients ADD COLUMN remote_company_id VARCHAR(64) NOT NULL DEFAULT ''",
+            'remote_company_name' => "ALTER TABLE video_delivery_clients ADD COLUMN remote_company_name VARCHAR(255) NOT NULL DEFAULT ''",
+            'last_token_check_at' => 'ALTER TABLE video_delivery_clients ADD COLUMN last_token_check_at DATETIME NULL',
+            'last_token_error' => 'ALTER TABLE video_delivery_clients ADD COLUMN last_token_error VARCHAR(500) NULL',
         ];
         foreach ($cols as $name => $sql) {
             try {
@@ -726,6 +768,11 @@ class VideoDeliveryService
             'authEnd' => $authEnd,
             'authToken' => (string)($row['auth_token'] ?? ''),
             'authorized' => $authorized,
+            'tokenBound' => !empty($row['token_bound']),
+            'remoteCompanyId' => (string)($row['remote_company_id'] ?? ''),
+            'remoteCompanyName' => (string)($row['remote_company_name'] ?? ''),
+            'lastTokenCheckAt' => (string)($row['last_token_check_at'] ?? ''),
+            'lastTokenError' => (string)($row['last_token_error'] ?? ''),
             'points' => (int)($row['points'] ?? 0),
             'pointsUpdatedAt' => (string)($row['points_updated_at'] ?? ''),
             'ownerId' => (int)($row['owner_id'] ?? 0),
@@ -858,6 +905,8 @@ class VideoDeliveryService
             'customerConfirmStatusLabel' => self::confirmStatusLabel($confirm),
             'customerConfirmedAt' => (string)($row['customer_confirmed_at'] ?? ''),
             'deliveredAt' => (string)($row['delivered_at'] ?? $row['created_at'] ?? ''),
+            'pointsDeductedAt' => (string)($row['points_deducted_at'] ?? ''),
+            'pointsDeductError' => (string)($row['points_deduct_error'] ?? ''),
             'fileCount' => count($files),
             'files' => array_map([self::class, 'mapFile'], $files),
             'assets' => array_map([self::class, 'mapAsset'], $assets),
@@ -869,38 +918,310 @@ class VideoDeliveryService
     }
 
     /**
-     * 三日未确认自动确认。
-     * @return array{scanned:int,confirmed:int}
+     * 三日未确认自动确认，并扣除对应积分。
+     * @return array{scanned:int,confirmed:int,deductFailed:int}
      */
     public static function autoConfirmExpired(int $days = 3): array
     {
         self::ensureSchema();
         $days = max(1, $days);
         $rows = DB::select(
-            "SELECT id FROM video_delivery_orders
+            "SELECT * FROM video_delivery_orders
              WHERE customer_confirm_status='pending'
-               AND COALESCE(delivered_at, created_at) <= DATE_SUB(NOW(), INTERVAL ? DAY)",
+               AND status IN ('completed','processing')
+               AND COALESCE(delivered_at, created_at) <= DATE_SUB(NOW(), INTERVAL ? DAY)
+             ORDER BY id ASC
+             LIMIT 200",
             [$days]
         ) ?: [];
         $n = 0;
+        $failed = 0;
         foreach ($rows as $row) {
+            $res = self::confirmOrderAndDeduct($row, 'auto_confirmed', 'auto_confirm', 0, '系统');
+            if (!empty($res['ok'])) {
+                $n++;
+            } else {
+                $failed++;
+            }
+        }
+        return ['scanned' => count($rows), 'confirmed' => $n, 'deductFailed' => $failed];
+    }
+
+    /**
+     * 客户确认 / 自动确认：更新确认状态并按 points_cost 调用守护者扣积分。
+     *
+     * @param array $order video_delivery_orders 行
+     * @return array{ok:bool,message:string,order?:array,error?:string}
+     */
+    public static function confirmOrderAndDeduct(
+        array $order,
+        string $confirmStatus = 'confirmed',
+        string $source = 'confirm',
+        int $operatorId = 0,
+        string $operatorName = ''
+    ): array {
+        self::ensureSchema();
+        $orderId = (int)($order['id'] ?? 0);
+        if ($orderId <= 0) {
+            return ['ok' => false, 'message' => '交付单无效', 'error' => 'invalid_order'];
+        }
+        $confirmStatus = self::normalizeConfirmStatus($confirmStatus) === 'auto_confirmed'
+            ? 'auto_confirmed'
+            : 'confirmed';
+
+        $pointsCost = max(0, (int)($order['points_cost'] ?? 0));
+        $alreadyDeducted = !empty($order['points_deducted_at']);
+        $profileId = (int)($order['client_id'] ?? 0);
+        $profile = $profileId > 0
+            ? DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$profileId])
+            : null;
+
+        if ($pointsCost > 0 && !$alreadyDeducted) {
+            $token = trim((string)($profile['auth_token'] ?? ''));
+            if ($token === '') {
+                $msg = '企业未配置授权 Token，无法扣除积分';
+                DB::query(
+                    'UPDATE video_delivery_orders SET points_deduct_error=? WHERE id=?',
+                    [mb_substr($msg, 0, 500), $orderId]
+                );
+                return ['ok' => false, 'message' => $msg, 'error' => 'token_missing'];
+            }
+            $deduct = ShouhuzheVideoApiService::deduct(
+                $token,
+                $pointsCost,
+                $orderId,
+                (string)($order['title'] ?? ('交付#' . $orderId)),
+                '视频交付确认扣积分'
+            );
+            if (empty($deduct['status'])) {
+                $msg = (string)($deduct['error_msg'] ?? $deduct['message'] ?? '远程积分扣除失败');
+                DB::query(
+                    'UPDATE video_delivery_orders SET points_deduct_error=? WHERE id=?',
+                    [mb_substr($msg, 0, 500), $orderId]
+                );
+                return ['ok' => false, 'message' => $msg, 'error' => 'deduct_failed'];
+            }
+            $remote = is_array($deduct['data'] ?? null) ? $deduct['data'] : [];
+            self::applyRemoteBalance($profileId, $remote);
+            self::writePointRecord([
+                'client_id' => $profileId,
+                'order_id' => $orderId,
+                'operator_user_id' => $operatorId,
+                'operator_name' => $operatorName !== '' ? $operatorName : ($source === 'auto_confirm' ? '系统' : '客户'),
+                'direction' => 'deduct',
+                'points' => $pointsCost,
+                'balance_after' => isset($remote['available_point']) ? (int)$remote['available_point'] : null,
+                'title' => (string)($order['title'] ?? ''),
+                'settle_type' => (string)($order['settle_type'] ?? ''),
+                'points_note' => '确认交付扣积分',
+                'remote_company_id' => (string)($remote['company_id'] ?? $profile['remote_company_id'] ?? ''),
+                'remote_company_name' => (string)($remote['company_name'] ?? $profile['remote_company_name'] ?? ''),
+                'remote_available_point' => isset($remote['available_point']) ? (int)$remote['available_point'] : null,
+                'remote_deducted_points' => isset($remote['deducted_points']) ? (int)$remote['deducted_points'] : $pointsCost,
+                'remote_already_deducted' => !empty($remote['already_deducted']) ? 1 : 0,
+                'remote_response' => json_encode([
+                    'status' => $deduct['status'] ?? null,
+                    'data' => [
+                        'available_point' => $remote['available_point'] ?? null,
+                        'deducted_points' => $remote['deducted_points'] ?? null,
+                        'already_deducted' => $remote['already_deducted'] ?? null,
+                    ],
+                ], JSON_UNESCAPED_UNICODE),
+                'source' => $source,
+            ]);
+            DB::query(
+                'UPDATE video_delivery_orders SET points_deducted_at=NOW(), points_deduct_error=NULL WHERE id=?',
+                [$orderId]
+            );
+        }
+
+        $status = self::normalizeOrderStatus((string)($order['status'] ?? 'pending'));
+        if ($status !== 'completed' && $status !== 'cancelled') {
             DB::query(
                 "UPDATE video_delivery_orders
-                 SET customer_confirm_status='auto_confirmed', customer_confirmed_at=NOW()
+                 SET status='completed',
+                     delivered_at=COALESCE(delivered_at, NOW()),
+                     customer_confirm_status=?,
+                     customer_confirmed_at=NOW()
                  WHERE id=? AND customer_confirm_status='pending'",
-                [(int)$row['id']]
+                [$confirmStatus, $orderId]
             );
-            $n++;
+        } else {
+            DB::query(
+                "UPDATE video_delivery_orders
+                 SET customer_confirm_status=?, customer_confirmed_at=NOW()
+                 WHERE id=? AND customer_confirm_status='pending'",
+                [$confirmStatus, $orderId]
+            );
         }
-        return ['scanned' => count($rows), 'confirmed' => $n];
+
+        $fresh = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]) ?: $order;
+        return [
+            'ok' => true,
+            'message' => $confirmStatus === 'auto_confirmed' ? '已自动确认并结算积分' : '已确认并结算积分',
+            'order' => $fresh,
+        ];
+    }
+
+    /** @param array<string,mixed> $remote */
+    public static function applyRemoteBalance(int $profileId, array $remote): void
+    {
+        if ($profileId <= 0) {
+            return;
+        }
+        if (!array_key_exists('available_point', $remote)) {
+            return;
+        }
+        $pts = max(0, (int)$remote['available_point']);
+        DB::query(
+            'UPDATE video_delivery_clients SET points=?, points_updated_at=NOW(), updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$pts, $profileId]
+        );
+        $sets = [];
+        $params = [];
+        if (isset($remote['company_id'])) {
+            $sets[] = 'remote_company_id=?';
+            $params[] = (string)$remote['company_id'];
+        }
+        if (isset($remote['company_name'])) {
+            $sets[] = 'remote_company_name=?';
+            $params[] = (string)$remote['company_name'];
+        }
+        if ($sets) {
+            $params[] = $profileId;
+            DB::query(
+                'UPDATE video_delivery_clients SET ' . implode(', ', $sets) . ' WHERE id=?',
+                $params
+            );
+        }
+    }
+
+    /**
+     * 用企业 Token 检测绑定并同步积分（获取企业 token 绑定信息）。
+     * @return array{ok:bool,message:string,client?:array}
+     */
+    public static function syncTokenBinding(int $profileId): array
+    {
+        self::ensureSchema();
+        $profile = DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$profileId]);
+        if (!$profile) {
+            return ['ok' => false, 'message' => '交付客户档案不存在'];
+        }
+        $token = trim((string)($profile['auth_token'] ?? ''));
+        if ($token === '') {
+            return ['ok' => false, 'message' => '请先生成授权 Token'];
+        }
+        $result = ShouhuzheVideoApiService::checkBinding($token);
+        if (empty($result['status'])) {
+            $msg = (string)($result['error_msg'] ?? $result['message'] ?? '授权检测失败');
+            DB::query(
+                "UPDATE video_delivery_clients
+                 SET token_bound=0, last_token_check_at=NOW(), last_token_error=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?",
+                [mb_substr($msg, 0, 500), $profileId]
+            );
+            return ['ok' => false, 'message' => $msg];
+        }
+        $data = is_array($result['data'] ?? null) ? $result['data'] : [];
+        $pts = isset($data['available_point']) ? max(0, (int)$data['available_point']) : (int)($profile['points'] ?? 0);
+        DB::query(
+            "UPDATE video_delivery_clients SET
+              token_bound=1,
+              remote_company_id=?,
+              remote_company_name=?,
+              points=?,
+              points_updated_at=NOW(),
+              last_token_check_at=NOW(),
+              last_token_error=NULL,
+              updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [
+                (string)($data['company_id'] ?? ''),
+                (string)($data['company_name'] ?? ''),
+                $pts,
+                $profileId,
+            ]
+        );
+        $adminUserId = (int)($profile['admin_user_id'] ?? 0);
+        $client = $adminUserId > 0
+            ? self::ensureProfileForAdminUser($adminUserId)
+            : self::mapClient(DB::selectOne('SELECT * FROM video_delivery_clients WHERE id=?', [$profileId]) ?: $profile);
+        return ['ok' => true, 'message' => '授权关联成功，已同步远程积分', 'client' => $client];
+    }
+
+    /** @param array<string,mixed> $row */
+    public static function writePointRecord(array $row): void
+    {
+        self::ensurePointRecordsSchema();
+        DB::query(
+            "INSERT INTO video_delivery_point_records
+              (client_id, order_id, operator_user_id, operator_name, direction, points, balance_after,
+               title, settle_type, points_note, remote_company_id, remote_company_name,
+               remote_available_point, remote_deducted_points, remote_already_deducted,
+               remote_response, source, deducted_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())",
+            [
+                (int)($row['client_id'] ?? 0),
+                (int)($row['order_id'] ?? 0),
+                (int)($row['operator_user_id'] ?? 0),
+                mb_substr((string)($row['operator_name'] ?? ''), 0, 120),
+                (string)($row['direction'] ?? 'deduct'),
+                (int)($row['points'] ?? 0),
+                $row['balance_after'] ?? null,
+                mb_substr((string)($row['title'] ?? ''), 0, 255),
+                mb_substr((string)($row['settle_type'] ?? ''), 0, 64),
+                $row['points_note'] ?? null,
+                mb_substr((string)($row['remote_company_id'] ?? ''), 0, 64),
+                mb_substr((string)($row['remote_company_name'] ?? ''), 0, 255),
+                $row['remote_available_point'] ?? null,
+                $row['remote_deducted_points'] ?? null,
+                $row['remote_already_deducted'] ?? null,
+                $row['remote_response'] ?? null,
+                mb_substr((string)($row['source'] ?? 'confirm'), 0, 32),
+            ]
+        );
+    }
+
+    /** @return list<array<string,mixed>> */
+    public static function listPointRecords(int $profileId, int $limit = 50): array
+    {
+        self::ensurePointRecordsSchema();
+        $limit = max(1, min(200, $limit));
+        $rows = DB::select(
+            "SELECT * FROM video_delivery_point_records WHERE client_id=? ORDER BY id DESC LIMIT {$limit}",
+            [$profileId]
+        ) ?: [];
+        return array_map(static function (array $r): array {
+            return [
+                'id' => (int)($r['id'] ?? 0),
+                'clientId' => (int)($r['client_id'] ?? 0),
+                'orderId' => (int)($r['order_id'] ?? 0),
+                'operatorUserId' => (int)($r['operator_user_id'] ?? 0),
+                'operatorName' => (string)($r['operator_name'] ?? ''),
+                'direction' => (string)($r['direction'] ?? 'deduct'),
+                'points' => (int)($r['points'] ?? 0),
+                'balanceAfter' => isset($r['balance_after']) ? (int)$r['balance_after'] : null,
+                'title' => (string)($r['title'] ?? ''),
+                'settleType' => (string)($r['settle_type'] ?? ''),
+                'pointsNote' => (string)($r['points_note'] ?? ''),
+                'remoteCompanyId' => (string)($r['remote_company_id'] ?? ''),
+                'remoteCompanyName' => (string)($r['remote_company_name'] ?? ''),
+                'remoteAvailablePoint' => isset($r['remote_available_point']) ? (int)$r['remote_available_point'] : null,
+                'remoteDeductedPoints' => isset($r['remote_deducted_points']) ? (int)$r['remote_deducted_points'] : null,
+                'source' => (string)($r['source'] ?? ''),
+                'deductedAt' => (string)($r['deducted_at'] ?? ''),
+                'createdAt' => (string)($r['created_at'] ?? ''),
+            ];
+        }, $rows);
     }
 
     public static function generateToken(): string
     {
         try {
-            return bin2hex(random_bytes(24));
+            // 对齐 dyyweb：64 位随机串作为企业视频授权 Token
+            return bin2hex(random_bytes(32));
         } catch (\Throwable $e) {
-            return sha1(uniqid((string)mt_rand(), true) . microtime(true));
+            return sha1(uniqid((string)mt_rand(), true) . microtime(true)) . bin2hex(random_bytes(8));
         }
     }
 

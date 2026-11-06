@@ -2479,33 +2479,25 @@ class PortalApiController extends Controller
             [$orderId]
         )['c'] ?? 0);
         if ($status !== 'completed' && $fileCnt <= 0 && $assetCnt <= 0) {
-            return $this->error('交付尚未完成，暂不可确认收货', 422);
+            return $this->error('交付尚未完成，暂不可确认', 422);
         }
-        // 已有交付文件但状态未改完时，确认收货一并标记完成
-        if ($status !== 'completed') {
-            DB::query(
-                "UPDATE video_delivery_orders
-                 SET status='completed',
-                     delivered_at=COALESCE(delivered_at, NOW()),
-                     customer_confirm_status='confirmed',
-                     customer_confirmed_at=NOW()
-                 WHERE id=? AND customer_confirm_status='pending'",
-                [$orderId]
-            );
-        } else {
-            DB::query(
-                "UPDATE video_delivery_orders
-                 SET customer_confirm_status='confirmed', customer_confirmed_at=NOW()
-                 WHERE id=? AND customer_confirm_status='pending'",
-                [$orderId]
-            );
+
+        $res = VideoDeliveryService::confirmOrderAndDeduct(
+            $order,
+            'confirmed',
+            'customer_confirm',
+            $userId,
+            (string)(($GLOBALS['auth_user']['nickname'] ?? '') ?: ($GLOBALS['auth_user']['username'] ?? '客户'))
+        );
+        if (empty($res['ok'])) {
+            return $this->error((string)($res['message'] ?? '确认失败'), 422);
         }
-        $updated = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]) ?: $order;
+        $updated = $res['order'] ?? (DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]) ?: $order);
         $files = DB::select('SELECT * FROM video_delivery_files WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         $assets = DB::select('SELECT * FROM video_delivery_assets WHERE order_id=? ORDER BY id ASC', [$orderId]) ?: [];
         return $this->success(
             VideoDeliveryService::mapOrder($updated, $files, [], $assets),
-            '已确认收货'
+            (string)($res['message'] ?? '已确认')
         );
     }
 

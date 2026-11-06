@@ -288,8 +288,10 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/video-delivery-clients/{id}/orders', VideoDeliveryController::class . '@createOrder');
     Router::put('/api/video-delivery-clients/{id}/service', VideoDeliveryController::class . '@saveService');
     Router::post('/api/video-delivery-clients/{id}/token', VideoDeliveryController::class . '@generateToken');
+    Router::get('/api/video-delivery-clients/{id}/token', VideoDeliveryController::class . '@getToken');
     Router::post('/api/video-delivery-clients/{id}/check-link', VideoDeliveryController::class . '@checkLink');
     Router::post('/api/video-delivery-clients/{id}/recharge', VideoDeliveryController::class . '@recharge');
+    Router::get('/api/video-delivery-clients/{id}/point-records', VideoDeliveryController::class . '@pointRecords');
     Router::get('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@show');
     Router::put('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@update');
     Router::delete('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@delete');
@@ -522,6 +524,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/materials/{id}/cover', MaterialController::class . '@cover');
     Router::put('/api/materials/{id}', MaterialController::class . '@update');
     Router::post('/api/materials/{id}/mark-published', MaterialController::class . '@markPublished');
+    Router::post('/api/materials/{id}/github-upload', MaterialController::class . '@uploadGithubCdn');
     Router::put('/api/materials/{id}/rename', MaterialController::class . '@rename');
     Router::put('/api/materials/{id}/cover', MaterialController::class . '@setCover');
     Router::post('/api/materials/{id}/check', MaterialController::class . '@check');
