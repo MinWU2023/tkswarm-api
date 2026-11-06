@@ -2568,8 +2568,44 @@
         client: null,
         previewVisible: false,
         previewUrl: '',
-        previewTitle: ''
+        previewTitle: '',
+        submitVisible: false,
+        submitLoading: false,
+        typeLoading: false,
+        types: [],
+        pointsBalance: 0,
+        changeWindowDays: 3,
+        confirmWindowDays: 3,
+        form: {
+          title: '',
+          settleType: '',
+          requirements: '',
+          cloudDriveInfo: ''
+        }
       };
+    },
+    computed: {
+      selectedType: function () {
+        var code = this.form.settleType;
+        if (!code) return null;
+        for (var i = 0; i < this.types.length; i++) {
+          if (String(this.types[i].code) === String(code)) return this.types[i];
+        }
+        return null;
+      },
+      estimatedPoints: function () {
+        var t = this.selectedType;
+        if (!t) return 0;
+        if (t.unitPrice == null || t.unitPrice === '') return 0;
+        return Number(t.unitPrice) || 0;
+      },
+      typeHint: function () {
+        var t = this.selectedType;
+        if (!t) return '请选择视频需求类型。更多需求或者不确定需求类型可选择「其他需求」，实际积分将根据制作内容及修改范围按对应规则处理完扣除。';
+        var base = String(t.description || '').trim();
+        var extra = '更多需求或者不确定需求类型可选择「其他需求」，实际积分将根据制作内容及修改范围按对应规则处理完扣除。';
+        return base ? (base + ' ' + extra) : extra;
+      }
     },
     mounted: function () { this.load(); },
     methods: {
@@ -2581,6 +2617,10 @@
         if (s === 'confirmed') return 'success';
         if (s === 'auto_confirmed') return 'warning';
         return 'info';
+      },
+      statusLabel: function (s) {
+        var m = { pending: '待处理', processing: '制作中', completed: '已完成', cancelled: '已取消' };
+        return m[s] || s || '-';
       },
       playUrlOf: function (item) {
         var assets = (item.assets && item.assets.length) ? item.assets : (item.files || []);
@@ -2606,6 +2646,7 @@
           this.items = d.items || [];
           this.total = d.total || 0;
           this.client = d.client || null;
+          if (d.client && d.client.points != null) this.pointsBalance = Number(d.client.points) || 0;
         } catch (e) {
           ElMessage.error(e.message || '加载交付列表失败');
         } finally {
@@ -2637,13 +2678,70 @@
         } catch (e) {
           ElMessage.error(e.message || '确认失败');
         }
+      },
+      openSubmit: async function () {
+        this.form = { title: '', settleType: '', requirements: '', cloudDriveInfo: '' };
+        this.submitVisible = true;
+        this.typeLoading = true;
+        try {
+          var pack = await CompanyAPI.videoDeliveryTypes();
+          this.types = (pack.items || []).filter(function (t) {
+            return t && t.code && t.code !== 'delivery';
+          });
+          this.pointsBalance = Number(pack.points != null ? pack.points : (pack.client && pack.client.points) || 0) || 0;
+          this.changeWindowDays = Number(pack.changeWindowBusinessDays || 3) || 3;
+          this.confirmWindowDays = Number(pack.confirmationWindowBusinessDays || 3) || 3;
+        } catch (e) {
+          ElMessage.error(e.message || '加载需求类型失败');
+        } finally {
+          this.typeLoading = false;
+        }
+      },
+      submitRequest: async function () {
+        var f = this.form;
+        if (!String(f.title || '').trim()) {
+          ElMessage.warning('请填写视频标题');
+          return;
+        }
+        if (!String(f.settleType || '').trim()) {
+          ElMessage.warning('请选择视频需求类型');
+          return;
+        }
+        if (!String(f.requirements || '').trim()) {
+          ElMessage.warning('请填写视频要求');
+          return;
+        }
+        if (!String(f.cloudDriveInfo || '').trim()) {
+          ElMessage.warning('请填写网盘信息');
+          return;
+        }
+        this.submitLoading = true;
+        try {
+          await CompanyAPI.videoDeliverySubmit({
+            title: String(f.title || '').trim(),
+            settleType: String(f.settleType || '').trim(),
+            requirements: String(f.requirements || '').trim(),
+            cloudDriveInfo: String(f.cloudDriveInfo || '').trim()
+          });
+          ElMessage.success('需求已提交');
+          this.submitVisible = false;
+          this.page = 1;
+          this.load();
+        } catch (e) {
+          ElMessage.error(e.message || '提交失败');
+        } finally {
+          this.submitLoading = false;
+        }
       }
     },
     render: function () {
       var self = this;
       var h = Vue.h;
+      var fmtPts = function (n) {
+        return Number(n || 0).toLocaleString();
+      };
       return h('div', { class: 'vd-company-page' }, [
-        pageHead('视频交付', '查看运营交付给你的定制视频，可确认收货并预览'),
+        pageHead('视频交付', '提交定制视频需求，或查看运营交付给你的视频并确认收货'),
         h('div', { class: 'panel' }, [
           panelHead('交付列表', h('div', { class: 'vd-company-filters' }, [
             h(ElementPlus.ElInput, {
@@ -2669,28 +2767,44 @@
                 ];
               }
             }),
-            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.search(); } }, function () { return '搜索'; })
+            h(ElementPlus.ElButton, { onClick: function () { self.search(); } }, function () { return '搜索'; }),
+            h(ElementPlus.ElButton, { type: 'primary', onClick: function () { self.openSubmit(); } }, function () { return '提交需求'; })
           ])),
           h(ElementPlus.ElTable, { data: self.items, vLoading: self.loading, stripe: true, style: 'width:100%' }, function () {
             return [
               h(ElementPlus.ElTableColumn, { prop: 'id', label: 'ID', width: 80 }),
-              h(ElementPlus.ElTableColumn, { prop: 'title', label: '标题', minWidth: 180, showOverflowTooltip: true }),
-              h(ElementPlus.ElTableColumn, { prop: 'settleType', label: '结算类型', width: 120 }),
-              h(ElementPlus.ElTableColumn, { prop: 'pointsCost', label: '消耗积分', width: 100 }),
+              h(ElementPlus.ElTableColumn, { prop: 'title', label: '标题', minWidth: 160, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { label: '来源', width: 100 }, {
+                default: function (scope) {
+                  var customer = scope.row.source === 'customer';
+                  return h(ElementPlus.ElTag, { type: customer ? 'warning' : 'info', size: 'small' },
+                    function () { return scope.row.sourceLabel || (customer ? '客户需求' : '运营交付'); });
+                }
+              }),
+              h(ElementPlus.ElTableColumn, { prop: 'settleType', label: '需求类型', width: 140, showOverflowTooltip: true }),
+              h(ElementPlus.ElTableColumn, { prop: 'pointsCost', label: '预估积分', width: 100 }),
+              h(ElementPlus.ElTableColumn, { label: '状态', width: 100 }, {
+                default: function (scope) {
+                  return h('span', self.statusLabel(scope.row.status));
+                }
+              }),
               h(ElementPlus.ElTableColumn, { label: '确认状态', width: 110 }, {
                 default: function (scope) {
                   return h(ElementPlus.ElTag, { type: self.confirmType(scope.row.customerConfirmStatus), size: 'small' },
                     function () { return self.confirmLabel(scope.row.customerConfirmStatus); });
                 }
               }),
-              h(ElementPlus.ElTableColumn, { prop: 'deliveredAt', label: '交付时间', width: 170 }),
+              h(ElementPlus.ElTableColumn, { prop: 'createdAt', label: '提交/交付时间', width: 170 }),
               h(ElementPlus.ElTableColumn, { label: '操作', width: 240, fixed: 'right' }, {
                 default: function (scope) {
                   var row = scope.row;
+                  var canPreview = !!self.playUrlOf(row);
                   return h('div', { class: 'vd-company-ops' }, [
                     h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openDetail(row); } }, function () { return '详情'; }),
-                    h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openPreview(row); } }, function () { return '预览'; }),
-                    row.customerConfirmStatus === 'pending'
+                    canPreview
+                      ? h(ElementPlus.ElButton, { link: true, type: 'primary', onClick: function () { self.openPreview(row); } }, function () { return '预览'; })
+                      : null,
+                    row.status === 'completed' && row.customerConfirmStatus === 'pending'
                       ? h(ElementPlus.ElButton, { link: true, type: 'success', onClick: function () { self.confirmOne(row); } }, function () { return '确认'; })
                       : null
                   ]);
@@ -2726,6 +2840,96 @@
                 style: 'width:100%;max-height:70vh;background:#000;border-radius:8px'
               })
               : h('div', { class: 'empty' }, '暂无视频');
+          }
+        }),
+        h(ElementPlus.ElDialog, {
+          modelValue: self.submitVisible,
+          'onUpdate:modelValue': function (v) { self.submitVisible = v; },
+          title: '提交视频要求',
+          width: '640px',
+          destroyOnClose: true,
+          closeOnClickModal: false
+        }, {
+          default: function () {
+            return h('div', { class: 'vd-req-dialog', vLoading: self.typeLoading }, [
+              h('div', { class: 'vd-req-field' }, [
+                h('label', '视频标题'),
+                h(ElementPlus.ElInput, {
+                  modelValue: self.form.title,
+                  'onUpdate:modelValue': function (v) { self.form.title = v; },
+                  placeholder: '请输入视频标题',
+                  maxlength: 120,
+                  showWordLimit: true
+                })
+              ]),
+              h('div', { class: 'vd-req-field' }, [
+                h('label', '视频需求类型'),
+                h(ElementPlus.ElSelect, {
+                  modelValue: self.form.settleType,
+                  'onUpdate:modelValue': function (v) { self.form.settleType = v; },
+                  placeholder: '请选择需求类型',
+                  filterable: true,
+                  style: 'width:100%'
+                }, {
+                  default: function () {
+                    return self.types.map(function (t) {
+                      var price = t.priced ? (fmtPts(t.unitPrice) + (t.unit ? ' ' + t.unit : '')) : '按实际结算';
+                      return h(ElementPlus.ElOption, {
+                        key: t.code,
+                        label: t.title + '（' + price + '）',
+                        value: t.code
+                      });
+                    });
+                  }
+                }),
+                h('div', { class: 'vd-req-type-hint' }, self.typeHint)
+              ]),
+              h('div', { class: 'vd-req-field' }, [
+                h('label', '视频要求'),
+                h(ElementPlus.ElInput, {
+                  type: 'textarea',
+                  rows: 4,
+                  modelValue: self.form.requirements,
+                  'onUpdate:modelValue': function (v) { self.form.requirements = v; },
+                  placeholder: '请填写视频用途、内容方向、素材说明等要求'
+                })
+              ]),
+              h('div', { class: 'vd-req-notice' }, [
+                h('b', '注意事项'),
+                h('ul', [
+                  h('li', '请一次性提交完整素材网盘链接（含提取码）及说明，避免反复补件影响制作周期。'),
+                  h('li', '提交后 ' + self.changeWindowDays + ' 个工作日内可联系运营取消或修改；超过后将进入制作，调整可能按规则扣除积分。'),
+                  h('li', '工单一般在 2～4 个工作日内完成制作并交付。'),
+                  h('li', '交付后 ' + self.confirmWindowDays + ' 个工作日内可确认或反馈修改；超时将自动确认完成。')
+                ])
+              ]),
+              h('div', { class: 'vd-req-field' }, [
+                h('label', '网盘信息'),
+                h(ElementPlus.ElInput, {
+                  type: 'textarea',
+                  rows: 3,
+                  modelValue: self.form.cloudDriveInfo,
+                  'onUpdate:modelValue': function (v) { self.form.cloudDriveInfo = v; },
+                  placeholder: '请填写网盘链接、提取码、有效期等（百度/夸克/阿里云盘等）'
+                }),
+                h('div', { class: 'vd-req-subhint' }, '请勿上传本地附件；把素材放到网盘后，把链接与提取码贴在这里即可。')
+              ]),
+              h('div', { class: 'vd-req-points' }, [
+                h('div', { class: 'vd-req-points-label' }, '预计消耗积分'),
+                h('div', { class: 'vd-req-points-value' }, fmtPts(self.estimatedPoints) + ' 积分'),
+                h('div', { class: 'vd-req-subhint' }, '当前余额 ' + fmtPts(self.pointsBalance) + '；最终积分将根据实际制作内容进行结算')
+              ])
+            ]);
+          },
+          footer: function () {
+            return h('div', { class: 'vd-req-foot' }, [
+              h(ElementPlus.ElButton, { onClick: function () { self.submitVisible = false; } }, function () { return '取消'; }),
+              h(ElementPlus.ElButton, {
+                type: 'primary',
+                loading: self.submitLoading,
+                onClick: function () { self.submitRequest(); }
+              }, function () { return '提交视频要求'; })
+            ]);
           }
         })
       ]);
@@ -2813,17 +3017,22 @@
           o.title || ''
         ),
         h('div', { class: 'panel' }, [
-          panelHead('基本信息', o.customerConfirmStatus === 'pending'
+          panelHead('基本信息', o.status === 'completed' && o.customerConfirmStatus === 'pending'
             ? h(ElementPlus.ElButton, { type: 'success', onClick: function () { self.confirm(); } }, function () { return '确认收货'; })
-            : h(ElementPlus.ElTag, { type: 'success' }, function () { return self.confirmLabel(o.customerConfirmStatus); })),
+            : h(ElementPlus.ElTag, { type: o.source === 'customer' ? 'warning' : 'success' }, function () {
+              return o.sourceLabel || (o.source === 'customer' ? '客户需求' : self.confirmLabel(o.customerConfirmStatus));
+            })),
           h('div', { class: 'detail-kv-grid' }, [
             h('div', { class: 'detail-kv' }, [h('small', '标题'), h('div', o.title || '-')]),
-            h('div', { class: 'detail-kv' }, [h('small', '结算类型'), h('div', o.settleType || '-')]),
-            h('div', { class: 'detail-kv' }, [h('small', '消耗积分'), h('div', String(o.pointsCost || 0))]),
+            h('div', { class: 'detail-kv' }, [h('small', '来源'), h('div', o.sourceLabel || (o.source === 'customer' ? '客户需求' : '运营交付'))]),
+            h('div', { class: 'detail-kv' }, [h('small', '需求类型'), h('div', o.settleType || '-')]),
+            h('div', { class: 'detail-kv' }, [h('small', '预估/消耗积分'), h('div', String(o.pointsCost || 0))]),
+            h('div', { class: 'detail-kv' }, [h('small', '制作状态'), h('div', o.statusLabel || o.status || '-')]),
             h('div', { class: 'detail-kv' }, [h('small', '确认状态'), h('div', self.confirmLabel(o.customerConfirmStatus))]),
-            h('div', { class: 'detail-kv' }, [h('small', '交付时间'), h('div', o.deliveredAt || o.createdAt || '-')]),
-            h('div', { class: 'detail-kv' }, [h('small', '确认时间'), h('div', o.customerConfirmedAt || '-')]),
-            h('div', { class: 'detail-kv', style: 'grid-column:1 / -1' }, [h('small', '交付说明'), h('div', o.requirements || '-')])
+            h('div', { class: 'detail-kv' }, [h('small', '提交时间'), h('div', o.createdAt || '-')]),
+            h('div', { class: 'detail-kv' }, [h('small', '交付时间'), h('div', o.deliveredAt || '-')]),
+            h('div', { class: 'detail-kv', style: 'grid-column:1 / -1' }, [h('small', '视频要求'), h('div', { style: 'white-space:pre-wrap' }, o.requirements || '-')]),
+            h('div', { class: 'detail-kv', style: 'grid-column:1 / -1' }, [h('small', '网盘信息'), h('div', { style: 'white-space:pre-wrap' }, o.cloudDriveInfo || '-')])
           ])
         ]),
         h('div', { class: 'panel', style: 'margin-top:14px' }, [

@@ -161,6 +161,8 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/ops/published-materials', CompanyPortalApiController::class . '@publishedMaterials');
     Router::post('/api/company/ops/pull-video-detail/tasks', CompanyPortalApiController::class . '@createPullCommentsTask');
     Router::get('/api/company/ops/video-delivery', CompanyPortalApiController::class . '@videoDeliveryList');
+    Router::get('/api/company/ops/video-delivery/types', CompanyPortalApiController::class . '@videoDeliveryTypes');
+    Router::post('/api/company/ops/video-delivery', CompanyPortalApiController::class . '@videoDeliverySubmit');
     Router::get('/api/company/ops/video-delivery/{id}', CompanyPortalApiController::class . '@videoDeliveryDetail');
     Router::post('/api/company/ops/video-delivery/{id}/confirm', CompanyPortalApiController::class . '@videoDeliveryConfirm');
     Router::get('/api/company/ops/video-delivery-files/{id}/stream', CompanyPortalApiController::class . '@videoDeliveryStream');

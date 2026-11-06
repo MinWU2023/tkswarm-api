@@ -108,6 +108,12 @@
     videoDeliveryList: function (params) {
       return request('/api/company/ops/video-delivery' + qs(params), { method: 'GET' });
     },
+    videoDeliveryTypes: function () {
+      return request('/api/company/ops/video-delivery/types', { method: 'GET' });
+    },
+    videoDeliverySubmit: function (body) {
+      return request('/api/company/ops/video-delivery', { method: 'POST', body: body || {} });
+    },
     videoDeliveryDetail: function (id) {
       return request('/api/company/ops/video-delivery/' + id, { method: 'GET' });
     },

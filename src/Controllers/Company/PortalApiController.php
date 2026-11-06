@@ -14,6 +14,7 @@ use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\PullCommentService;
 use App\Services\TikTokVideoScreenshotService;
+use App\Services\CustomVideoTypeService;
 use App\Services\VideoDeliveryService;
 
 /**
@@ -2213,6 +2214,120 @@ class PortalApiController extends Controller
             'cover_github_asset_url' => '',
             'owner_id' => $ownerId,
         ];
+    }
+
+    /**
+     * 企业客户：可用交付类型 + 计价说明（提交需求弹框）
+     */
+    public function videoDeliveryTypes(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        CustomVideoTypeService::ensureSchema();
+        VideoDeliveryService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        $mapped = null;
+        if ($userId > 0) {
+            try {
+                DataScope::bootFromGlobals();
+                $mapped = VideoDeliveryService::ensureProfileForAdminUser($userId);
+            } catch (\Throwable $e) {
+                $mapped = null;
+            }
+        }
+        $windows = CustomVideoTypeService::businessWindows();
+        return $this->success([
+            'items' => CustomVideoTypeService::listTypes(true),
+            'pointsMultiplier' => CustomVideoTypeService::pointsMultiplier(),
+            'guideGroups' => CustomVideoTypeService::guideGroupOptions(),
+            'changeWindowBusinessDays' => $windows['changeWindowBusinessDays'],
+            'confirmationWindowBusinessDays' => $windows['confirmationWindowBusinessDays'],
+            'client' => $mapped,
+            'points' => (int)($mapped['points'] ?? 0),
+        ]);
+    }
+
+    /**
+     * 企业客户：提交视频制作需求（标题/类型/说明/网盘信息 → 待处理交付单）
+     */
+    public function videoDeliverySubmit(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        VideoDeliveryService::ensureSchema();
+        CustomVideoTypeService::ensureSchema();
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+
+        $title = trim((string)$request->input('title', ''));
+        if ($title === '') {
+            return $this->error('请填写视频标题', 422);
+        }
+        $settleType = trim((string)$request->input('settleType', $request->input('settle_type', '')));
+        if ($settleType === '') {
+            return $this->error('请选择视频需求类型', 422);
+        }
+        $requirements = trim((string)$request->input('requirements', ''));
+        if ($requirements === '') {
+            return $this->error('请填写视频要求', 422);
+        }
+        $cloudDrive = trim((string)$request->input(
+            'cloudDriveInfo',
+            $request->input('cloud_drive_info', $request->input('attachmentLinks', ''))
+        ));
+        if ($cloudDrive === '') {
+            return $this->error('请填写网盘信息（链接/提取码等）', 422);
+        }
+
+        $quote = CustomVideoTypeService::quote($settleType, 1, null);
+        if (empty($quote['ok'])) {
+            return $this->error((string)($quote['message'] ?? '无效的需求类型'), 422);
+        }
+        // 客户提交：预估积分入库，正式扣减在运营交付时处理
+        $pointsCost = max(0, (int)$quote['pointsCost']);
+        try {
+            DataScope::bootFromGlobals();
+            $mapped = VideoDeliveryService::ensureProfileForAdminUser($userId);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage() ?: '客户档案未就绪，请联系运营开通视频交付服务', 422);
+        }
+        $profileId = (int)($mapped['profileId'] ?? 0);
+        if ($profileId <= 0) {
+            return $this->error('客户档案未就绪，请联系运营开通视频交付服务', 422);
+        }
+        $balance = max(0, (int)($mapped['points'] ?? 0));
+        if ($pointsCost > 0 && $pointsCost > $balance) {
+            return $this->error("积分不足：预计需 {$pointsCost}，当前余额 {$balance}", 422);
+        }
+
+        $version = VideoDeliveryService::normalizeVersion((string)($mapped['serviceVersion'] ?? 'standard'));
+        $ownerId = (int)($mapped['ownerId'] ?? 0);
+        DB::query(
+            "INSERT INTO video_delivery_orders
+              (client_id, title, requirements, cloud_drive_info, settle_type, source, points_cost, status,
+               service_version, owner_id, customer_confirm_status, delivered_at)
+             VALUES (?,?,?,?,?,'customer',?,'pending',?,?,'pending', NULL)",
+            [
+                $profileId,
+                mb_substr($title, 0, 255),
+                $requirements,
+                $cloudDrive,
+                (string)$quote['code'],
+                $pointsCost,
+                $version,
+                $ownerId,
+            ]
+        );
+        $orderId = (int)DB::lastInsertId();
+        $order = DB::selectOne('SELECT * FROM video_delivery_orders WHERE id=?', [$orderId]);
+        return $this->success(
+            VideoDeliveryService::mapOrder($order ?: ['id' => $orderId]),
+            '需求已提交，等待运营处理'
+        );
     }
 
     /**

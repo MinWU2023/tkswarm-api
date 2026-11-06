@@ -159,6 +159,8 @@ class VideoDeliveryService
             'customer_confirm_status' => "ALTER TABLE video_delivery_orders ADD COLUMN customer_confirm_status VARCHAR(32) NOT NULL DEFAULT 'pending' AFTER download_count",
             'customer_confirmed_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN customer_confirmed_at DATETIME NULL AFTER customer_confirm_status',
             'delivered_at' => 'ALTER TABLE video_delivery_orders ADD COLUMN delivered_at DATETIME NULL AFTER customer_confirmed_at',
+            'source' => "ALTER TABLE video_delivery_orders ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'ops' AFTER settle_type",
+            'cloud_drive_info' => "ALTER TABLE video_delivery_orders ADD COLUMN cloud_drive_info TEXT NULL AFTER requirements",
         ];
         foreach ($alters as $col => $sql) {
             if (!in_array($col, $cols, true)) {
@@ -418,6 +420,11 @@ class VideoDeliveryService
         if (!$row) {
             return null;
         }
+        // 企业客户门户：允许访问本人档案（提交需求 / 查看交付）
+        $loginId = (int)(DataScope::loginUser()['id'] ?? 0);
+        if ($loginId > 0 && $loginId === $adminUserId) {
+            return $row;
+        }
         if (DataScope::isSuper()) {
             return $row;
         }
@@ -644,6 +651,17 @@ class VideoDeliveryService
         return $code;
     }
 
+    public static function normalizeSource(string $raw): string
+    {
+        $s = strtolower(trim($raw));
+        return $s === 'customer' ? 'customer' : 'ops';
+    }
+
+    public static function sourceLabel(string $raw): string
+    {
+        return self::normalizeSource($raw) === 'customer' ? '客户需求' : '运营交付';
+    }
+
     public static function versionLabel(string $code): string
     {
         return self::VERSIONS[$code] ?? ($code !== '' ? $code : '标准版');
@@ -825,8 +843,11 @@ class VideoDeliveryService
             'clientId' => (int)($row['client_id'] ?? 0),
             'title' => (string)($row['title'] ?? ''),
             'requirements' => (string)($row['requirements'] ?? ''),
+            'cloudDriveInfo' => (string)($row['cloud_drive_info'] ?? ''),
             'settleType' => self::resolveSettleTypeLabel((string)($row['settle_type'] ?? '')),
             'settleTypeCode' => (string)($row['settle_type'] ?? ''),
+            'source' => self::normalizeSource((string)($row['source'] ?? 'ops')),
+            'sourceLabel' => self::sourceLabel((string)($row['source'] ?? 'ops')),
             'pointsCost' => (int)($row['points_cost'] ?? 0),
             'status' => $status,
             'statusLabel' => self::statusLabel($status),

@@ -337,6 +337,16 @@ class CustomVideoTypeService
         return $out;
     }
 
+    /** @return array{changeWindowBusinessDays:int,confirmationWindowBusinessDays:int} */
+    public static function businessWindows(): array
+    {
+        $cfg = self::loadPhpConfig();
+        return [
+            'changeWindowBusinessDays' => max(1, (int)($cfg['change_window_business_days'] ?? 3)),
+            'confirmationWindowBusinessDays' => max(1, (int)($cfg['confirmation_window_business_days'] ?? 3)),
+        ];
+    }
+
     private static function normalizePoints(mixed $raw): ?int
     {
         if ($raw === null || $raw === '' || $raw === false) {

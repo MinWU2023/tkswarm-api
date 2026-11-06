@@ -9,6 +9,10 @@ declare(strict_types=1);
 return [
     'points_multiplier' => (int)(getenv('CUSTOM_VIDEO_POINTS_MULTIPLIER') ?: 50) ?: 50,
 
+    // 客户提交后可修改/取消窗口；交付后客户确认窗口（工作日）
+    'change_window_business_days' => (int)(getenv('CUSTOM_VIDEO_CHANGE_WINDOW_BUSINESS_DAYS') ?: 3) ?: 3,
+    'confirmation_window_business_days' => (int)(getenv('CUSTOM_VIDEO_CONFIRMATION_WINDOW_BUSINESS_DAYS') ?: 3) ?: 3,
+
     'types' => [
         'cover' => [
             'title' => '视频封面',
