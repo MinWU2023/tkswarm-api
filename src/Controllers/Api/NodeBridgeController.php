@@ -321,7 +321,9 @@ class NodeBridgeController extends Controller
                 ]
             );
             $nick = trim((string)($profile['displayName'] ?? $profile['display_name'] ?? ''));
-            if ($nick !== '') {
+            $handleCmp = ltrim(trim((string)($profile['handle'] ?? $profile['username'] ?? '')), '@');
+            // 抓取兜底值（昵称恰好等于账号名，多为页面标题/用户名兜底）不覆盖系统昵称，避免把刚改好的昵称写回旧值/兜底值
+            if ($nick !== '' && ($handleCmp === '' || strcasecmp($nick, $handleCmp) !== 0)) {
                 DB::query('UPDATE accounts SET nickname=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$nick, $aid]);
             }
         }

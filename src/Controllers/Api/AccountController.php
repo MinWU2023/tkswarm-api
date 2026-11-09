@@ -740,6 +740,18 @@ class AccountController extends Controller
             $sets[] = 'nickname=?';
             $bind[] = $nick;
         }
+        // 改资料成功后把 TikTok 上实际生效的签名 / 头像写回系统库，避免后续「同步资料」按旧值推回去
+        if (array_key_exists('profileBio', $all) || array_key_exists('bio', $all)) {
+            $sets[] = 'profile_bio=?';
+            $bind[] = trim((string)$request->input('profileBio', $request->input('bio', '')));
+        }
+        if (array_key_exists('profileAvatar', $all)) {
+            $avatarVal = trim((string)$request->input('profileAvatar', ''));
+            if ($avatarVal !== '') {
+                $sets[] = 'profile_avatar=?';
+                $bind[] = $avatarVal;
+            }
+        }
         $markNickChanged = filter_var($request->input('markNicknameChanged', false), FILTER_VALIDATE_BOOLEAN)
             || filter_var($request->input('nicknameLocked', false), FILTER_VALIDATE_BOOLEAN)
             || filter_var($request->input('nicknameSuccess', false), FILTER_VALIDATE_BOOLEAN);
