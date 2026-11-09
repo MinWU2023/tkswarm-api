@@ -1945,7 +1945,10 @@ class NodeBridgeController extends Controller
             }
             $videoId = trim((string)($row['videoId'] ?? $row['video_id'] ?? ''));
             $videoUrl = trim((string)($row['videoUrl'] ?? $row['video_url'] ?? ''));
-            if ($videoId === '' && preg_match('#/video/(\d{8,})#', $videoUrl, $vm)) {
+            $isImage = in_array(strtolower((string)($row['mediaType'] ?? $row['media_type'] ?? $request->input('mediaType', ''))), ['image', 'photo'], true)
+                || str_contains($videoUrl, '/photo/');
+            $urlSeg = $isImage ? 'photo' : 'video';
+            if ($videoId === '' && preg_match('#/(?:video|photo)/(\d{8,})#', $videoUrl, $vm)) {
                 $videoId = $vm[1];
             }
             // 归属校验：URL / 显式作者句柄必须是本账号，避免推荐视频被改写成 @本号
@@ -1965,9 +1968,9 @@ class NodeBridgeController extends Controller
             }
             if ($videoId !== '' && $accName !== '') {
                 // 一律存 @user/video/id；裸 /video/{id} 在拉评论直开时常跳到 /404?fromUrl=
-                $videoUrl = 'https://www.tiktok.com/@' . rawurlencode($accName) . '/video/' . $videoId;
+                $videoUrl = 'https://www.tiktok.com/@' . rawurlencode($accName) . '/' . $urlSeg . '/' . $videoId;
             } elseif ($videoUrl === '' && $videoId !== '') {
-                $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
+                $videoUrl = 'https://www.tiktok.com/' . $urlSeg . '/' . $videoId;
             }
             if ($videoId === '' && $videoUrl === '') {
                 $skipped += 1;
@@ -1976,7 +1979,7 @@ class NodeBridgeController extends Controller
             // materials.name 多为 VARCHAR(255)；share_title 多为 500。分开截断避免 1406
             $titleRaw = trim((string)($row['title'] ?? $row['shareTitle'] ?? $row['share_title'] ?? ''));
             if ($titleRaw === '') {
-                $titleRaw = $videoId !== '' ? ('视频 ' . $videoId) : '线上视频';
+                $titleRaw = $videoId !== '' ? (($isImage ? '图片 ' : '视频 ') . $videoId) : ($isImage ? '线上图片' : '线上视频');
             }
             $name = mb_substr($titleRaw, 0, 191);
             $shareTitle = mb_substr($titleRaw, 0, 500);
@@ -2054,7 +2057,8 @@ class NodeBridgeController extends Controller
                 }
 
                 // 新建线上素材：无本机文件，素材库默认隐藏（显式写 path/type，避免旧库缺默认值）
-                $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.mp4';
+                $fileExt = $isImage ? 'jpg' : 'mp4';
+                $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.' . $fileExt;
                 DB::query(
                     "INSERT INTO materials(
                         name, path, type, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
@@ -2065,14 +2069,14 @@ class NodeBridgeController extends Controller
                     [
                         $name,
                         '',
-                        'video',
+                        $isImage ? 'image' : 'video',
                         '',
                         mb_substr($fileName, 0, 255),
-                        'mp4',
-                        'video/mp4',
+                        $fileExt,
+                        $isImage ? 'image/jpeg' : 'video/mp4',
                         0,
-                        'Studio 线上视频',
-                        'online-studio',
+                        $isImage ? 'Studio 线上图片' : 'Studio 线上视频',
+                        $isImage ? 'online-studio,image' : 'online-studio',
                         'ready',
                         'published',
                         $aid,

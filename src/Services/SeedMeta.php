@@ -658,7 +658,10 @@ class SeedMeta
                      VALUES
                       (460, 400, '图片向导', 'image', '', 'publish', 'image_wizard', 1, 1),
                       (461, 460, '发布图片', 'send', '', 'publish', 'create_publish_images', 1, 1),
-                      (462, 460, '图片删除', 'trash-2', '', 'publish', 'create_delete_images', 2, 1)
+                      (462, 460, '图片删除', 'trash-2', '', 'publish', 'create_delete_images', 2, 1),
+                      (463, 460, '回复图片评论', 'message-circle', '', 'publish', 'create_comment_reply_images', 3, 1),
+                      (464, 460, '拉取图片列表', 'list', '', 'publish', 'pull_image_list', 4, 1),
+                      (465, 460, '拉取图片详情', 'download', '', 'publish', 'pull_image_details', 5, 1)
                      ON DUPLICATE KEY UPDATE parent_id=VALUES(parent_id), title=VALUES(title), icon=VALUES(icon), view='publish', subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
                 );
                 // 权限节点 menu.460/461/462 由 PermissionCatalog::ensureImageWizardPerms 同步并按角色授权

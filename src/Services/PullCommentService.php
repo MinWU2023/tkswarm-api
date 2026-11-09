@@ -377,7 +377,7 @@ class PullCommentService
                 }
             }
 
-            if ($vid === '' && $url !== '' && preg_match('#/video/(\d{8,})#', $url, $vm)) {
+            if ($vid === '' && $url !== '' && preg_match('#/(?:video|photo)/(\d{8,})#', $url, $vm)) {
                 $vid = $vm[1];
                 $r['platform_video_id'] = $vid;
             }

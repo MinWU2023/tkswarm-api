@@ -381,6 +381,9 @@ class PermissionCatalog
             ['id' => 460, 'parent_id' => 400, 'title' => '图片向导', 'icon' => 'image', 'view' => 'publish', 'subview' => 'image_wizard', 'sort' => 1],
             ['id' => 461, 'parent_id' => 460, 'title' => '发布图片', 'icon' => 'send', 'view' => 'publish', 'subview' => 'create_publish_images', 'sort' => 1],
             ['id' => 462, 'parent_id' => 460, 'title' => '图片删除', 'icon' => 'trash-2', 'view' => 'publish', 'subview' => 'create_delete_images', 'sort' => 2],
+            ['id' => 463, 'parent_id' => 460, 'title' => '回复图片评论', 'icon' => 'message-circle', 'view' => 'publish', 'subview' => 'create_comment_reply_images', 'sort' => 3],
+            ['id' => 464, 'parent_id' => 460, 'title' => '拉取图片列表', 'icon' => 'list', 'view' => 'publish', 'subview' => 'pull_image_list', 'sort' => 4],
+            ['id' => 465, 'parent_id' => 460, 'title' => '拉取图片详情', 'icon' => 'download', 'view' => 'publish', 'subview' => 'pull_image_details', 'sort' => 5],
         ];
         $codes = [];
         foreach ($menus as $m) {

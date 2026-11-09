@@ -165,6 +165,12 @@ class PullCommentController extends Controller
             $like = '%' . $keyword . '%';
             array_push($params, $like, $like, $like, $like, $like);
         }
+        // 图片向导：mediaType=image 只列线上图片；默认（视频向导）排除线上图片
+        if (strtolower(trim((string)$request->input('mediaType', $request->input('media_type', '')))) === 'image') {
+            $filters[] = "m.type='image'";
+        } else {
+            $filters[] = "NOT (m.origin='online' AND IFNULL(m.type,'')='image')";
+        }
         $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
         if ($accountId > 0) {
             $filters[] = 'm.publish_account_id=?';
