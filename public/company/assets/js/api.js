@@ -70,6 +70,12 @@
     dashboardCharts: function (params) {
       return request('/api/company/dashboard/charts' + qs(params), { method: 'GET' });
     },
+    pointsRecharge: function () {
+      return request('/api/company/points/recharge', { method: 'POST', body: {} });
+    },
+    pointsSync: function () {
+      return request('/api/company/points/sync', { method: 'POST', body: {} });
+    },
     notifications: function () { return request('/api/company/notifications', { method: 'GET' }); },
     accounts: function (params) { return request('/api/company/accounts' + qs(params), { method: 'GET' }); },
     accountDetail: function (id) { return request('/api/company/accounts/' + id, { method: 'GET' }); },

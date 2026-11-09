@@ -92,6 +92,9 @@ class CompanyController extends Controller
                 'contact_email' => $request->input('contactEmail', $request->input('contact_email')),
                 'industry_id' => $request->input('industryId', $request->input('industry_id')),
                 'status' => $request->input('status', 1),
+                'service_version' => $request->input('serviceVersion', $request->input('service_version', 'standard')),
+                'auth_start' => $request->input('authStart', $request->input('auth_start', '')),
+                'auth_end' => $request->input('authEnd', $request->input('auth_end', '')),
             ]);
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage());
@@ -158,6 +161,9 @@ class CompanyController extends Controller
                 'contact_email' => $request->input('contactEmail', $request->input('contact_email')),
                 'industry_id' => $request->input('industryId', $request->input('industry_id')),
                 'status' => $request->input('status'),
+                'service_version' => $request->input('serviceVersion', $request->input('service_version')),
+                'auth_start' => $request->input('authStart', $request->input('auth_start')),
+                'auth_end' => $request->input('authEnd', $request->input('auth_end')),
             ]);
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage());

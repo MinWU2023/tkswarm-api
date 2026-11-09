@@ -143,6 +143,8 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/dashboard', CompanyPortalApiController::class . '@dashboard');
     Router::get('/api/company/dashboard/publishes', CompanyPortalApiController::class . '@dashboardPublishes');
     Router::get('/api/company/dashboard/charts', CompanyPortalApiController::class . '@dashboardCharts');
+    Router::post('/api/company/points/recharge', CompanyPortalApiController::class . '@pointsRecharge');
+    Router::post('/api/company/points/sync', CompanyPortalApiController::class . '@pointsSync');
     Router::get('/api/company/notifications', CompanyPortalApiController::class . '@notifications');
     Router::get('/api/company/accounts', CompanyPortalApiController::class . '@accounts');
     Router::get('/api/company/accounts/{id}', CompanyPortalApiController::class . '@accountDetail');

@@ -8,6 +8,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
 use App\Middlewares\CorsMiddleware;
+use App\Services\CompanyService;
 use App\Services\CustomVideoTypeService;
 use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
@@ -84,8 +85,14 @@ class VideoDeliveryController extends Controller
         );
         $authStart = trim((string)$request->input('authStart', $request->input('auth_start', $mapped['authStart'] ?? '')));
         $authEnd = trim((string)$request->input('authEnd', $request->input('auth_end', $mapped['authEnd'] ?? '')));
-        $token = trim((string)$request->input('authToken', $request->input('auth_token', $mapped['authToken'] ?? '')));
+        $tokenRaw = $request->input('authToken', $request->input('auth_token', null));
+        $token = $tokenRaw !== null
+            ? trim((string)$tokenRaw)
+            : trim((string)($mapped['authToken'] ?? ''));
 
+        if ($authStart !== '' && $authEnd !== '' && $authEnd < $authStart) {
+            return $this->error('服务结束日期不能早于开始日期', 422);
+        }
         DB::query(
             "UPDATE video_delivery_clients SET
               service_version=?, auth_start=?, auth_end=?, auth_token=?,
@@ -99,6 +106,22 @@ class VideoDeliveryController extends Controller
                 $profileId,
             ]
         );
+        $companyId = (int)($mapped['companyId'] ?? 0);
+        if ($companyId > 0) {
+            try {
+                CompanyService::ensureSchema();
+                DB::query(
+                    'UPDATE companies SET service_version=?, auth_start=?, auth_end=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [
+                        $version,
+                        $authStart !== '' ? $authStart : null,
+                        $authEnd !== '' ? $authEnd : null,
+                        $companyId,
+                    ]
+                );
+            } catch (\Throwable $e) {
+            }
+        }
         return $this->success(VideoDeliveryService::ensureProfileForAdminUser((int)$id), '服务配置已保存');
     }
 

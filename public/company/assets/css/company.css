@@ -767,6 +767,70 @@ html { color-scheme: light; }
   background: var(--cx-amber-soft);
   color: #b45309;
 }
+.dash-service-panel {
+  margin-bottom: 16px;
+}
+.dash-service-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) minmax(120px, .9fr) minmax(180px, 1.2fr) auto;
+  gap: 16px 20px;
+  align-items: center;
+}
+.dash-service-item {
+  min-width: 0;
+}
+.dash-service-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--cx-muted);
+  margin-bottom: 4px;
+}
+.dash-service-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--cx-ink);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.dash-service-points .dash-service-value {
+  color: #047857;
+  font-variant-numeric: tabular-nums;
+}
+.dash-service-version {
+  font-size: 20px;
+}
+.dash-service-expire {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.dash-service-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--cx-faint);
+}
+.dash-service-hint.is-ok { color: var(--cx-ok); }
+.dash-service-hint.is-warn { color: var(--cx-warn); }
+.dash-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+@media (max-width: 960px) {
+  .dash-service-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .dash-service-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 560px) {
+  .dash-service-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .dash-pub-toolbar {
   display: flex;
   flex-wrap: wrap;

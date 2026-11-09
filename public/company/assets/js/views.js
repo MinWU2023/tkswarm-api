@@ -307,6 +307,17 @@
         pubLoading: false,
         chartLoading: false,
         stats: {},
+        service: {
+          points: 0,
+          pointsUpdatedAt: '',
+          serviceVersion: 'standard',
+          serviceVersionLabel: '标准版',
+          authStart: '',
+          authEnd: '',
+          authorized: false,
+          tokenBound: false
+        },
+        pointsBusy: false,
         welcome: '',
         publishTab: 'success',
         accountId: '',
@@ -331,16 +342,53 @@
       this.loadCharts();
     },
     methods: {
+      applyService: function (svc) {
+        if (!svc || typeof svc !== 'object') return;
+        this.service = Object.assign({}, this.service, svc);
+      },
       load: async function () {
         this.loading = true;
         try {
           var d = await CompanyAPI.dashboard();
           this.stats = d.stats || {};
           this.welcome = d.welcome || '';
+          this.applyService(d.service || {});
         } catch (e) {
           ElMessage.error(e.message);
         } finally {
           this.loading = false;
+        }
+      },
+      rechargePoints: async function () {
+        if (this.pointsBusy) return;
+        this.pointsBusy = true;
+        try {
+          var d = await CompanyAPI.pointsRecharge();
+          this.applyService(d.service || { points: d.points, pointsUpdatedAt: d.pointsUpdatedAt });
+          var url = d.loginUrl || d.login_url;
+          if (!url) {
+            ElMessage.error('未返回充值地址');
+            return;
+          }
+          window.open(url, '_blank', 'noopener');
+          ElMessage.success('已打开充值页面，完成后可点「拉取积分」同步余额');
+        } catch (e) {
+          ElMessage.error(e.message || '打开充值页失败');
+        } finally {
+          this.pointsBusy = false;
+        }
+      },
+      syncPoints: async function () {
+        if (this.pointsBusy) return;
+        this.pointsBusy = true;
+        try {
+          var d = await CompanyAPI.pointsSync();
+          this.applyService(d.service || { points: d.points, pointsUpdatedAt: d.pointsUpdatedAt });
+          ElMessage.success('积分已同步：' + Number(this.service.points || 0).toLocaleString());
+        } catch (e) {
+          ElMessage.error(e.message || '拉取积分失败');
+        } finally {
+          this.pointsBusy = false;
         }
       },
       loadPublishes: async function () {
@@ -461,6 +509,51 @@
             h('div', { class: 'hint' }, c.hint)
           ]);
         })),
+        (function () {
+          var svc = self.service || {};
+          var expireText = (svc.authStart || svc.authEnd)
+            ? ((svc.authStart || '—') + ' ~ ' + (svc.authEnd || '—'))
+            : '未设置';
+          var authCls = svc.authorized ? 'is-ok' : 'is-warn';
+          return h('div', { class: 'panel dash-service-panel' }, [
+            h('div', { class: 'dash-service-grid' }, [
+              h('div', { class: 'dash-service-item dash-service-points' }, [
+                h('div', { class: 'dash-service-label' }, '当前积分'),
+                h('div', { class: 'dash-service-value' }, Number(svc.points || 0).toLocaleString()),
+                h('div', { class: 'dash-service-hint' },
+                  svc.pointsUpdatedAt
+                    ? ('更新于 ' + String(svc.pointsUpdatedAt).slice(0, 19).replace('T', ' '))
+                    : (svc.tokenBound ? '已绑定守护者' : '未绑定 Token'))
+              ]),
+              h('div', { class: 'dash-service-item' }, [
+                h('div', { class: 'dash-service-label' }, '服务版本'),
+                h('div', { class: 'dash-service-value dash-service-version' }, svc.serviceVersionLabel || '标准版'),
+                h('div', { class: 'dash-service-hint ' + authCls }, svc.authorized ? '服务有效' : '未授权 / 已到期')
+              ]),
+              h('div', { class: 'dash-service-item' }, [
+                h('div', { class: 'dash-service-label' }, '服务到期时间'),
+                h('div', { class: 'dash-service-value dash-service-expire' }, expireText),
+                h('div', { class: 'dash-service-hint' }, '开始 ~ 结束')
+              ]),
+              h('div', { class: 'dash-service-actions' }, [
+                h(ElementPlus.ElButton, {
+                  type: 'primary',
+                  loading: self.pointsBusy,
+                  onClick: function () { self.rechargePoints(); }
+                }, function () { return '充值积分'; }),
+                h(ElementPlus.ElButton, {
+                  loading: self.pointsBusy,
+                  onClick: function () { self.syncPoints(); }
+                }, function () { return '拉取积分'; }),
+                h(ElementPlus.ElButton, {
+                  text: true,
+                  type: 'primary',
+                  onClick: function () { self.$router.push('/ops/video-delivery'); }
+                }, function () { return '视频交付'; })
+              ])
+            ])
+          ]);
+        })(),
         h('div', { class: 'panel' }, [
           panelHead('最近发布视频', h(ElementPlus.ElButton, {
             text: true, type: 'primary',

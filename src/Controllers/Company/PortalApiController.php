@@ -102,6 +102,39 @@ class PortalApiController extends Controller
         ) ?: [];
 
         $user = $GLOBALS['auth_user'] ?? [];
+        $userId = (int)($user['id'] ?? 0);
+        $service = [
+            'points' => 0,
+            'pointsUpdatedAt' => '',
+            'serviceVersion' => 'standard',
+            'serviceVersionLabel' => VideoDeliveryService::versionLabel('standard'),
+            'authStart' => '',
+            'authEnd' => '',
+            'authorized' => false,
+            'tokenBound' => false,
+            'adminUserId' => $userId,
+        ];
+        if ($userId > 0) {
+            try {
+                VideoDeliveryService::ensureSchema();
+                $mapped = VideoDeliveryService::ensureProfileForAdminUser($userId);
+                $service = [
+                    'points' => (int)($mapped['points'] ?? 0),
+                    'pointsUpdatedAt' => (string)($mapped['pointsUpdatedAt'] ?? ''),
+                    'serviceVersion' => (string)($mapped['serviceVersion'] ?? 'standard'),
+                    'serviceVersionLabel' => (string)($mapped['serviceVersionLabel'] ?? VideoDeliveryService::versionLabel('standard')),
+                    'authStart' => (string)($mapped['authStart'] ?? ''),
+                    'authEnd' => (string)($mapped['authEnd'] ?? ''),
+                    'authorized' => !empty($mapped['authorized']),
+                    'tokenBound' => !empty($mapped['tokenBound']),
+                    'adminUserId' => $userId,
+                    'profileId' => (int)($mapped['profileId'] ?? 0),
+                ];
+            } catch (\Throwable $e) {
+                // 无交付档案时保留默认值
+            }
+        }
+
         return $this->success([
             'stats' => [
                 'accounts' => $accountTotal,
@@ -111,6 +144,7 @@ class PortalApiController extends Controller
                 'comments' => $commentTotal,
                 'clues' => $clueTotal,
             ],
+            'service' => $service,
             'recentAccounts' => array_map(static function ($r) {
                 return [
                     'id' => (int)$r['id'],
@@ -122,6 +156,98 @@ class PortalApiController extends Controller
             }, $recentAccounts),
             'welcome' => (string)($user['nickname'] ?? $user['username'] ?? '企业客户'),
         ]);
+    }
+
+    /** 企业门户：打开守护者充值页 */
+    public function pointsRecharge(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        try {
+            $mapped = VideoDeliveryService::ensureProfileForAdminUser($userId);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $profileId = (int)($mapped['profileId'] ?? 0);
+        $token = trim((string)($mapped['authToken'] ?? ''));
+        if ($token === '') {
+            return $this->error('尚未配置企业授权 Token，请联系运营开通后再充值', 422);
+        }
+        if (empty($mapped['tokenBound'])) {
+            $sync = VideoDeliveryService::syncTokenBinding($profileId);
+            if (empty($sync['ok'])) {
+                return $this->error('Token 未绑定守护者企业：' . ($sync['message'] ?? ''), 422);
+            }
+            $mapped = $sync['client'] ?? $mapped;
+        }
+        $pay = \App\Services\ShouhuzheVideoApiService::paymentLogin($token);
+        if (empty($pay['status'])) {
+            return $this->error((string)($pay['error_msg'] ?? $pay['message'] ?? '获取充值页面失败'), 422);
+        }
+        $data = is_array($pay['data'] ?? null) ? $pay['data'] : [];
+        $loginUrl = trim((string)($data['login_url'] ?? ''));
+        if ($loginUrl === '') {
+            return $this->error('充值接口未返回登录地址', 422);
+        }
+        VideoDeliveryService::applyRemoteBalance($profileId, $data);
+        $client = VideoDeliveryService::ensureProfileForAdminUser($userId);
+        return $this->success([
+            'loginUrl' => $loginUrl,
+            'points' => (int)($client['points'] ?? 0),
+            'pointsUpdatedAt' => (string)($client['pointsUpdatedAt'] ?? ''),
+            'service' => [
+                'points' => (int)($client['points'] ?? 0),
+                'pointsUpdatedAt' => (string)($client['pointsUpdatedAt'] ?? ''),
+                'serviceVersion' => (string)($client['serviceVersion'] ?? 'standard'),
+                'serviceVersionLabel' => (string)($client['serviceVersionLabel'] ?? ''),
+                'authStart' => (string)($client['authStart'] ?? ''),
+                'authEnd' => (string)($client['authEnd'] ?? ''),
+                'authorized' => !empty($client['authorized']),
+                'tokenBound' => !empty($client['tokenBound']),
+            ],
+        ], '请前往守护者页面完成充值');
+    }
+
+    /** 企业门户：拉取/同步远程积分 */
+    public function pointsSync(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return $this->error('未登录', 401);
+        }
+        try {
+            $mapped = VideoDeliveryService::ensureProfileForAdminUser($userId);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $profileId = (int)($mapped['profileId'] ?? 0);
+        $sync = VideoDeliveryService::syncTokenBinding($profileId);
+        if (empty($sync['ok'])) {
+            return $this->error((string)($sync['message'] ?? '同步失败'), 422);
+        }
+        $client = $sync['client'] ?? VideoDeliveryService::ensureProfileForAdminUser($userId);
+        return $this->success([
+            'points' => (int)($client['points'] ?? 0),
+            'pointsUpdatedAt' => (string)($client['pointsUpdatedAt'] ?? ''),
+            'service' => [
+                'points' => (int)($client['points'] ?? 0),
+                'pointsUpdatedAt' => (string)($client['pointsUpdatedAt'] ?? ''),
+                'serviceVersion' => (string)($client['serviceVersion'] ?? 'standard'),
+                'serviceVersionLabel' => (string)($client['serviceVersionLabel'] ?? ''),
+                'authStart' => (string)($client['authStart'] ?? ''),
+                'authEnd' => (string)($client['authEnd'] ?? ''),
+                'authorized' => !empty($client['authorized']),
+                'tokenBound' => !empty($client['tokenBound']),
+            ],
+        ], (string)($sync['message'] ?? '积分已同步'));
     }
 
     /**

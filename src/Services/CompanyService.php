@@ -43,6 +43,20 @@ class CompanyService
                   ADD COLUMN `company_id` INT NULL DEFAULT NULL COMMENT '所属企业 companies.id' AFTER `role_id`");
                 DB::query("ALTER TABLE `admin_users` ADD KEY `idx_admin_users_company` (`company_id`)");
             }
+            $companyAlters = [
+                'service_version' => "ALTER TABLE `companies` ADD COLUMN `service_version` VARCHAR(32) NOT NULL DEFAULT 'standard' COMMENT '服务版本 standard/pro/enterprise' AFTER `status`",
+                'auth_start' => "ALTER TABLE `companies` ADD COLUMN `auth_start` DATE NULL COMMENT '服务开始日期' AFTER `service_version`",
+                'auth_end' => "ALTER TABLE `companies` ADD COLUMN `auth_end` DATE NULL COMMENT '服务结束日期' AFTER `auth_start`",
+            ];
+            foreach ($companyAlters as $col => $sql) {
+                $exists = DB::select("SHOW COLUMNS FROM companies LIKE '{$col}'");
+                if (!$exists) {
+                    try {
+                        DB::query($sql);
+                    } catch (\Throwable $e) {
+                    }
+                }
+            }
         } catch (\Throwable $e) {
         }
     }
@@ -73,6 +87,9 @@ class CompanyService
             } catch (\Throwable $e) {
             }
         }
+        $version = VideoDeliveryService::normalizeVersion((string)($row['service_version'] ?? 'standard'));
+        $authStart = (string)($row['auth_start'] ?? '');
+        $authEnd = (string)($row['auth_end'] ?? '');
         return [
             'id' => (int)$row['id'],
             'name' => (string)($row['name'] ?? ''),
@@ -83,6 +100,10 @@ class CompanyService
             'industryName' => $industryName,
             'industryPath' => $industryPath,
             'status' => (int)($row['status'] ?? 1),
+            'serviceVersion' => $version,
+            'serviceVersionLabel' => VideoDeliveryService::versionLabel($version),
+            'authStart' => $authStart,
+            'authEnd' => $authEnd,
             'createdAt' => $row['created_at'] ?? null,
             'updatedAt' => $row['updated_at'] ?? null,
         ];
@@ -91,7 +112,7 @@ class CompanyService
     /**
      * @param array<string,mixed> $data
      * @param array<string,mixed>|null $fallback
-     * @return array{name:string,contact_name:string,contact_phone:string,contact_email:string,industry_id:int,status:int}
+     * @return array{name:string,contact_name:string,contact_phone:string,contact_email:string,industry_id:int,status:int,service_version:string,auth_start:?string,auth_end:?string}
      */
     private static function normalizePayload(array $data, ?array $fallback = null): array
     {
@@ -103,6 +124,10 @@ class CompanyService
         $contactEmail = trim((string)($data['contact_email'] ?? $fb['contact_email'] ?? ''));
         $industryId = isset($data['industry_id']) ? (int)$data['industry_id'] : (int)($fb['industry_id'] ?? 0);
         $status = isset($data['status']) ? (int)$data['status'] : (int)($fb['status'] ?? 1);
+        $versionRaw = $data['service_version'] ?? $data['serviceVersion'] ?? $fb['service_version'] ?? 'standard';
+        $version = VideoDeliveryService::normalizeVersion((string)$versionRaw);
+        $authStart = trim((string)($data['auth_start'] ?? $data['authStart'] ?? $fb['auth_start'] ?? ''));
+        $authEnd = trim((string)($data['auth_end'] ?? $data['authEnd'] ?? $fb['auth_end'] ?? ''));
 
         if ($name === '') {
             throw new \InvalidArgumentException('公司名称不能为空');
@@ -114,6 +139,9 @@ class CompanyService
         if (!$industry) {
             throw new \InvalidArgumentException('所选行业不存在');
         }
+        if ($authStart !== '' && $authEnd !== '' && $authEnd < $authStart) {
+            throw new \InvalidArgumentException('服务结束日期不能早于开始日期');
+        }
 
         return [
             'name' => mb_substr($name, 0, 128),
@@ -122,6 +150,9 @@ class CompanyService
             'contact_email' => mb_substr($contactEmail, 0, 128),
             'industry_id' => $industryId,
             'status' => $status ? 1 : 0,
+            'service_version' => $version,
+            'auth_start' => $authStart !== '' ? $authStart : null,
+            'auth_end' => $authEnd !== '' ? $authEnd : null,
         ];
     }
 
@@ -135,16 +166,21 @@ class CompanyService
         self::ensureSchema();
         $payload = self::normalizePayload($data);
         $now = date('Y-m-d H:i:s');
-        return (int)DB::table('companies')->insert([
+        $companyId = (int)DB::table('companies')->insert([
             'name' => $payload['name'],
             'contact_name' => $payload['contact_name'],
             'contact_phone' => $payload['contact_phone'],
             'contact_email' => $payload['contact_email'],
             'industry_id' => $payload['industry_id'],
             'status' => $payload['status'],
+            'service_version' => $payload['service_version'],
+            'auth_start' => $payload['auth_start'],
+            'auth_end' => $payload['auth_end'],
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+        self::syncServiceToDeliveryProfiles($companyId, $payload);
+        return $companyId;
     }
 
     /**
@@ -169,8 +205,54 @@ class CompanyService
             'contact_email' => $payload['contact_email'],
             'industry_id' => $payload['industry_id'],
             'status' => $payload['status'],
+            'service_version' => $payload['service_version'],
+            'auth_start' => $payload['auth_start'],
+            'auth_end' => $payload['auth_end'],
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
+        self::syncServiceToDeliveryProfiles($id, $payload);
+    }
+
+    /**
+     * 将企业服务版本/授权日期同步到绑定企业客户的视频交付档案。
+     *
+     * @param array{service_version?:string,auth_start?:?string,auth_end?:?string} $payload
+     */
+    public static function syncServiceToDeliveryProfiles(int $companyId, array $payload): void
+    {
+        if ($companyId <= 0) {
+            return;
+        }
+        $version = VideoDeliveryService::normalizeVersion((string)($payload['service_version'] ?? 'standard'));
+        $authStart = $payload['auth_start'] ?? null;
+        $authEnd = $payload['auth_end'] ?? null;
+        try {
+            $rows = DB::select(
+                'SELECT user_id FROM company_users WHERE company_id=? ORDER BY is_primary DESC, user_id ASC',
+                [$companyId]
+            ) ?: [];
+        } catch (\Throwable $e) {
+            return;
+        }
+        foreach ($rows as $row) {
+            $uid = (int)($row['user_id'] ?? 0);
+            if ($uid <= 0) {
+                continue;
+            }
+            try {
+                $mapped = VideoDeliveryService::ensureProfileForAdminUser($uid);
+                $profileId = (int)($mapped['profileId'] ?? 0);
+                if ($profileId <= 0) {
+                    continue;
+                }
+                DB::query(
+                    'UPDATE video_delivery_clients SET service_version=?, auth_start=?, auth_end=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$version, $authStart ?: null, $authEnd ?: null, $profileId]
+                );
+            } catch (\Throwable $e) {
+                // 非企业客户角色或无权时跳过
+            }
+        }
     }
 
     public static function delete(int $id): void
@@ -216,6 +298,9 @@ class CompanyService
                 'contact_email' => $payload['contact_email'],
                 'industry_id' => $payload['industry_id'],
                 'status' => $payload['status'],
+                'service_version' => $payload['service_version'],
+                'auth_start' => $payload['auth_start'],
+                'auth_end' => $payload['auth_end'],
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
