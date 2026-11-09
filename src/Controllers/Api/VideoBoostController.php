@@ -14,6 +14,15 @@ use App\Services\VideoBoostService;
  */
 class VideoBoostController extends Controller
 {
+    /** 超管可访问全部视频增值任务；其余角色仅限自己名下的任务 */
+    private function assertTaskOwns(array $task): ?Response
+    {
+        if (DataScope::isSuper()) {
+            return null;
+        }
+        return $this->assertOwns(['owner_id' => $task['ownerId'] ?? 0]);
+    }
+
     public function list(Request $request): Response
     {
         DataScope::ensureColumns();
@@ -41,7 +50,7 @@ class VideoBoostController extends Controller
         if (!$task) {
             return $this->error('任务不存在', 404);
         }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertTaskOwns($task)) {
             return $err;
         }
         return $this->success($task);
@@ -66,7 +75,7 @@ class VideoBoostController extends Controller
         if (!$task) {
             return $this->error('任务不存在', 404);
         }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertTaskOwns($task)) {
             return $err;
         }
         try {
@@ -84,7 +93,7 @@ class VideoBoostController extends Controller
         if (!$task) {
             return $this->error('任务不存在', 404);
         }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertTaskOwns($task)) {
             return $err;
         }
         try {
@@ -102,7 +111,7 @@ class VideoBoostController extends Controller
         if (!$task) {
             return $this->error('任务不存在', 404);
         }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertTaskOwns($task)) {
             return $err;
         }
         VideoBoostService::delete((int)$id);
@@ -117,7 +126,7 @@ class VideoBoostController extends Controller
         if (!$task) {
             return $this->error('任务不存在', 404);
         }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertTaskOwns($task)) {
             return $err;
         }
         $raw = $request->input('dispatchEnabled', $request->input('dispatch_enabled', null));
