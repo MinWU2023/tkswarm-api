@@ -296,6 +296,7 @@ class PermissionCatalog
             self::ensureOpsAdminUserPerms();
             self::ensureVideoDeliveryPerms();
             self::ensureVideoBoostPerms();
+            self::ensureImageWizardPerms();
             self::ensureVideoDeliveryTypesPerms();
             self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
@@ -365,6 +366,47 @@ class PermissionCatalog
             'publish.video_boost.update',
             'menu.446',
         ];
+        self::ensureRoleCodesByName('%运营管理%', $codes);
+        self::ensureRoleCodesByName('%运营专员%', $codes);
+        self::stripRoleCodesByName('%企业客户%', $codes);
+    }
+
+    /**
+     * 图片向导（图片向导 / 发布图片 / 图片删除）：超管（*）天然全量；
+     * 运营管理员、运营专员通过菜单权限节点 menu.460/461/462 授权；企业客户不授予。
+     */
+    private static function ensureImageWizardPerms(): void
+    {
+        $menus = [
+            ['id' => 460, 'parent_id' => 400, 'title' => '图片向导', 'icon' => 'image', 'view' => 'publish', 'subview' => 'image_wizard', 'sort' => 1],
+            ['id' => 461, 'parent_id' => 460, 'title' => '发布图片', 'icon' => 'send', 'view' => 'publish', 'subview' => 'create_publish_images', 'sort' => 1],
+            ['id' => 462, 'parent_id' => 460, 'title' => '图片删除', 'icon' => 'trash-2', 'view' => 'publish', 'subview' => 'create_delete_images', 'sort' => 2],
+        ];
+        $codes = [];
+        foreach ($menus as $m) {
+            try {
+                DB::query(
+                    "INSERT INTO navigation_menus
+                      (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                     VALUES (?, ?, ?, ?, '', ?, ?, ?, 1)
+                     ON DUPLICATE KEY UPDATE parent_id=VALUES(parent_id), title=VALUES(title), icon=VALUES(icon), view=VALUES(view), subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1",
+                    [$m['id'], $m['parent_id'], $m['title'], $m['icon'], $m['view'], $m['subview'], $m['sort']]
+                );
+            } catch (\Throwable $e) {
+            }
+            try {
+                // permission_code 传空：强制落到 menu.{id}，覆盖此前误继承的旧值
+                MenuPermissionService::syncOne([
+                    'id' => $m['id'],
+                    'title' => $m['title'],
+                    'view' => $m['view'],
+                    'subview' => $m['subview'],
+                    'permission_code' => '',
+                ]);
+            } catch (\Throwable $e) {
+            }
+            $codes[] = 'menu.' . $m['id'];
+        }
         self::ensureRoleCodesByName('%运营管理%', $codes);
         self::ensureRoleCodesByName('%运营专员%', $codes);
         self::stripRoleCodesByName('%企业客户%', $codes);

@@ -661,8 +661,7 @@ class SeedMeta
                       (462, 460, '图片删除', 'trash-2', '', 'publish', 'create_delete_images', 2, 1)
                      ON DUPLICATE KEY UPDATE parent_id=VALUES(parent_id), title=VALUES(title), icon=VALUES(icon), view='publish', subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
                 );
-                // 权限沿用「视频发布任务」菜单，避免非管理员角色看不到
-                DB::query("UPDATE navigation_menus c JOIN navigation_menus p ON p.id=411 SET c.permission_code=p.permission_code WHERE c.id IN (460,461,462)");
+                // 权限节点 menu.460/461/462 由 PermissionCatalog::ensureImageWizardPerms 同步并按角色授权
             } catch (\Throwable $e) {
             }
             // 旧二级/重复入口隐藏（功能仍可从页面按钮进入）
