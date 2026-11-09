@@ -359,9 +359,24 @@
           this.loading = false;
         }
       },
-      rechargePoints: function () {
-        window.open('https://dyyemail.com/payment', '_blank', 'noopener');
-        ElMessage.success('已打开充值页面，完成后可点「拉取积分」同步余额');
+      rechargePoints: async function () {
+        var win = window.open('about:blank', '_blank');
+        try {
+          var d = await CompanyAPI.pointsRecharge();
+          var url = (d && (d.loginUrl || d.login_url)) || '';
+          if (!url) {
+            if (win) win.close();
+            ElMessage.error('未返回充值地址');
+            return;
+          }
+          if (win) win.location = url;
+          else window.open(url, '_blank', 'noopener');
+          this.applyService((d && d.service) || d || {});
+          ElMessage.success('已打开充值页面，完成后可点「拉取积分」同步余额');
+        } catch (e) {
+          if (win) win.close();
+          ElMessage.error((e && e.message) || '打开充值页失败');
+        }
       },
       syncPoints: async function () {
         if (this.pointsBusy) return;

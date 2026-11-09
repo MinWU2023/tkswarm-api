@@ -237,6 +237,7 @@ class VideoBoostService
                 'publishAccountId' => (int)($r['publish_account_id'] ?? 0),
                 'publisherUsername' => ltrim((string)($r['publisher_username'] ?? ''), '@'),
                 'publisherNickname' => (string)($r['publisher_nickname'] ?? ''),
+                'hasCover' => $hasCover,
                 'coverUrl' => $hasCover ? ('/api/materials/' . $id . '/cover') : '',
             ];
         }, $rows);
