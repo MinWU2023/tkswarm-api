@@ -366,8 +366,15 @@ class PermissionCatalog
             'publish.video_boost.update',
             'menu.446',
         ];
-        self::ensureRoleCodesByName('%运营管理%', $codes);
-        self::ensureRoleCodesByName('%运营专员%', $codes);
+        // 视频增值派发出的 video_boost 分任务在「矩阵任务」里的暂停 / 删除 / 重置：
+        // 只补授给运营管理 / 运营专员，不参与对企业客户的剥离，避免误删其原有矩阵任务权限
+        $workCodes = [
+            'account.work.pause',
+            'account.work.delete',
+            'account.work.reset',
+        ];
+        self::ensureRoleCodesByName('%运营管理%', array_merge($codes, $workCodes));
+        self::ensureRoleCodesByName('%运营专员%', array_merge($codes, $workCodes));
         self::stripRoleCodesByName('%企业客户%', $codes);
     }
 

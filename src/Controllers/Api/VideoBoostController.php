@@ -14,10 +14,15 @@ use App\Services\VideoBoostService;
  */
 class VideoBoostController extends Controller
 {
-    /** 超管可访问全部视频增值任务；其余角色仅限自己名下的任务 */
+    /** 超管 / 运营管理 / 运营专员：可查看并操作全部视频增值任务；其余角色仅限自己名下 */
+    private function hasFullTaskAccess(): bool
+    {
+        return DataScope::isSuper() || DataScope::isOpsAdmin() || DataScope::isOperator();
+    }
+
     private function assertTaskOwns(array $task): ?Response
     {
-        if (DataScope::isSuper()) {
+        if ($this->hasFullTaskAccess()) {
             return null;
         }
         return $this->assertOwns(['owner_id' => $task['ownerId'] ?? 0]);
@@ -27,7 +32,7 @@ class VideoBoostController extends Controller
     {
         DataScope::ensureColumns();
         VideoBoostService::ensureSchema();
-        $ownerId = DataScope::isSuper() ? 0 : $this->writeOwnerId();
+        $ownerId = $this->hasFullTaskAccess() ? 0 : $this->writeOwnerId();
         return $this->success(VideoBoostService::listTasks(
             $ownerId,
             (int)$request->input('page', 1),
