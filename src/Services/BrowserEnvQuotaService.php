@@ -39,11 +39,11 @@ class BrowserEnvQuotaService
             return self::DEFAULT_QUOTA;
         }
         $row = DB::selectOne('SELECT browser_env_quota FROM admin_users WHERE id=?', [$userId]);
-        if (!$row) {
+        if (!$row || !array_key_exists('browser_env_quota', $row) || $row['browser_env_quota'] === null) {
             return self::DEFAULT_QUOTA;
         }
-        $q = (int)($row['browser_env_quota'] ?? self::DEFAULT_QUOTA);
-        return $q > 0 ? $q : self::DEFAULT_QUOTA;
+        $q = (int)$row['browser_env_quota'];
+        return $q >= 0 ? $q : self::DEFAULT_QUOTA;
     }
 
     public static function setQuota(int $userId, int $quota): void
@@ -68,19 +68,14 @@ class BrowserEnvQuotaService
         );
     }
 
-    /** 中心库已占用：自研桌面 + Linux（不含比特） */
+    /** 中心库已占用：自研桌面 + Linux（不含比特），包含已绑账号环境 + 待发布注册环境 */
     public static function countUsed(int $userId): int
     {
         if ($userId <= 0) {
             return 0;
         }
-        AccountBrowserEnvService::ensureSchema();
-        $row = DB::selectOne(
-            "SELECT COUNT(*) AS c FROM account_browser_envs
-             WHERE owner_user_id=? AND browser_backend IN ('tkswarm','linux')",
-            [$userId]
-        );
-        return (int)($row['c'] ?? 0);
+        $map = self::mapForUsers([$userId]);
+        return (int)($map[$userId]['used'] ?? 0);
     }
 
     /** @return array{userId:int,quota:int,used:int,remaining:int} */
@@ -132,24 +127,60 @@ class BrowserEnvQuotaService
         $quotaRows = DB::select("SELECT id, browser_env_quota FROM admin_users WHERE id IN ({$ph})", $ids) ?: [];
         $quotaMap = [];
         foreach ($quotaRows as $r) {
-            $q = (int)($r['browser_env_quota'] ?? self::DEFAULT_QUOTA);
-            $quotaMap[(int)$r['id']] = $q > 0 ? $q : self::DEFAULT_QUOTA;
+            $raw = $r['browser_env_quota'] ?? null;
+            $q = $raw === null ? self::DEFAULT_QUOTA : (int)$raw;
+            $quotaMap[(int)$r['id']] = $q >= 0 ? $q : self::DEFAULT_QUOTA;
         }
         AccountBrowserEnvService::ensureSchema();
-        $usedRows = DB::select(
-            "SELECT owner_user_id AS uid, COUNT(*) AS c FROM account_browser_envs
-             WHERE owner_user_id IN ({$ph}) AND browser_backend IN ('tkswarm','linux')
-             GROUP BY owner_user_id",
+        AccountBrowserEnvService::backfillFromAccounts();
+
+        // 按有效归属（owner_user_id > 0 优先，否则回退到关联账号 a.owner_id）统计已绑定的自研/Linux 唯一环境
+        $profileSets = [];
+        $envRows = DB::select(
+            "SELECT COALESCE(NULLIF(e.owner_user_id, 0), NULLIF(a.owner_id, 0), 0) AS uid,
+                    TRIM(e.browser_profile_id) AS pid
+             FROM account_browser_envs e
+             LEFT JOIN accounts a ON a.id = e.account_id
+             WHERE e.browser_backend IN ('tkswarm','linux')
+               AND e.browser_profile_id IS NOT NULL
+               AND TRIM(e.browser_profile_id) <> ''
+               AND COALESCE(NULLIF(e.owner_user_id, 0), NULLIF(a.owner_id, 0), 0) IN ({$ph})",
             $ids
         ) ?: [];
-        $usedMap = [];
-        foreach ($usedRows as $r) {
-            $usedMap[(int)$r['uid']] = (int)($r['c'] ?? 0);
+        foreach ($envRows as $r) {
+            $uid = (int)($r['uid'] ?? 0);
+            $pid = (string)($r['pid'] ?? '');
+            if ($uid > 0 && $pid !== '') {
+                $profileSets[$uid][$pid] = true;
+            }
         }
+
+        // 同时统计 register_envs（注册环境）中已创建但尚未删除的自研/Linux 环境（与已发布绑定按 profile_id 自动去重）
+        try {
+            $regRows = DB::select(
+                "SELECT owner_id AS uid, TRIM(browser_profile_id) AS pid
+                 FROM register_envs
+                 WHERE owner_id IN ({$ph})
+                   AND browser_backend IN ('tkswarm','linux')
+                   AND browser_profile_id IS NOT NULL
+                   AND TRIM(browser_profile_id) <> ''",
+                $ids
+            ) ?: [];
+            foreach ($regRows as $r) {
+                $uid = (int)($r['uid'] ?? 0);
+                $pid = (string)($r['pid'] ?? '');
+                if ($uid > 0 && $pid !== '') {
+                    $profileSets[$uid][$pid] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            // register_envs 表尚未初始化时忽略
+        }
+
         $out = [];
         foreach ($ids as $id) {
             $quota = $quotaMap[$id] ?? self::DEFAULT_QUOTA;
-            $used = $usedMap[$id] ?? 0;
+            $used = isset($profileSets[$id]) ? count($profileSets[$id]) : 0;
             $out[$id] = [
                 'quota' => $quota,
                 'used' => $used,

@@ -924,17 +924,21 @@ class DataScope
 
     /**
      * 绑定环境时写入 owner_user_id：
-     * - 企业客户创建：绑定本人
+     * - 优先取账号归属管理用户（accountOwnerId > 0）
+     * - 若账号尚未分配归属，则取当前有效/登录管理用户 ID
      * - 超管再绑并传入 override：用指定管理用户（见 AccountBrowserEnvService::bind）
-     * - 其余默认 0（不占用具体用户额度归属，由本机浏览器 owner_id 另计）
      */
     public static function resolveBrowserEnvOwnerUserId(int $accountOwnerId): int
     {
-        if (self::isEnterpriseCustomer()) {
-            $uid = (int)(self::effectiveUser()['id'] ?? 0);
-            return $uid > 0 ? $uid : 0;
+        if ($accountOwnerId > 0) {
+            return $accountOwnerId;
         }
-        return 0;
+        $effId = (int)(self::effectiveUser()['id'] ?? 0);
+        if ($effId > 0) {
+            return $effId;
+        }
+        $loginId = (int)(self::loginUser()['id'] ?? 0);
+        return $loginId > 0 ? $loginId : 0;
     }
 
     /**

@@ -370,8 +370,14 @@ class AccountBrowserEnvService
             throw new \InvalidArgumentException('账号不存在');
         }
         if ($ownerUserIdOverride !== null && $ownerUserIdOverride > 0) {
-            if (!DataScope::isLoginSuper()) {
-                throw new \RuntimeException('仅超级管理员可为环境指定管理用户归属');
+            $accOwnerId = (int)($acc['owner_id'] ?? 0);
+            $effUid = (int)(DataScope::effectiveUser()['id'] ?? 0);
+            $loginUid = (int)(DataScope::loginUser()['id'] ?? 0);
+            $isSameAsAccountOrSelf = ($accOwnerId > 0 && $ownerUserIdOverride === $accOwnerId)
+                || ($effUid > 0 && $ownerUserIdOverride === $effUid)
+                || ($loginUid > 0 && $ownerUserIdOverride === $loginUid);
+            if (!$isSameAsAccountOrSelf && !DataScope::isLoginSuper() && !DataScope::isLoginOpsAdmin() && !DataScope::isOpsAdmin()) {
+                throw new \RuntimeException('仅超级管理员或运营管理可为环境指定其他管理用户归属');
             }
             $ownerUserId = $ownerUserIdOverride;
         } else {
@@ -379,16 +385,19 @@ class AccountBrowserEnvService
         }
 
         $taken = DB::selectOne(
-            'SELECT id, account_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
+            'SELECT id, account_id, owner_user_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
             [$profileId]
         );
         if ($taken && (int)$taken['account_id'] !== $accountId) {
             throw new \RuntimeException('该环境已绑定其他账号 #' . (int)$taken['account_id']);
         }
         if ($taken && (int)$taken['account_id'] === $accountId) {
+            $keepOwner = $ownerUserIdOverride !== null && $ownerUserIdOverride > 0
+                ? $ownerUserIdOverride
+                : ((int)($taken['owner_user_id'] ?? 0) > 0 ? (int)$taken['owner_user_id'] : $ownerUserId);
             DB::query(
                 'UPDATE account_browser_envs SET browser_backend=?, browser_type=?, owner_user_id=?, label=COALESCE(NULLIF(?, ""), label), updated_at=CURRENT_TIMESTAMP WHERE id=?',
-                [$backend, $backend, $ownerUserId, $label, (int)$taken['id']]
+                [$backend, $backend, $keepOwner, $label, (int)$taken['id']]
             );
             if ($asPrimary) {
                 DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
@@ -533,7 +542,7 @@ class AccountBrowserEnvService
         $col = self::typedColumn($backend);
 
         $taken = $profileId === '' ? null : DB::selectOne(
-            'SELECT id, account_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
+            'SELECT id, account_id, owner_user_id FROM account_browser_envs WHERE browser_profile_id=? LIMIT 1',
             [$profileId]
         );
         if ($taken && (int)$taken['account_id'] !== $accountId) {
@@ -565,11 +574,12 @@ class AccountBrowserEnvService
             $ownerUserId = DataScope::resolveBrowserEnvOwnerUserId((int)($acc['owner_id'] ?? 0));
             DB::query('UPDATE account_browser_envs SET is_primary=0 WHERE account_id=?', [$accountId]);
             if ($taken) {
+                $keepOwner = (int)($taken['owner_user_id'] ?? 0) > 0 ? (int)$taken['owner_user_id'] : $ownerUserId;
                 DB::query(
                     'UPDATE account_browser_envs
                      SET browser_backend=?, browser_type=?, owner_user_id=?, is_primary=1, updated_at=CURRENT_TIMESTAMP
                      WHERE id=?',
-                    [$backend, $backend, $ownerUserId, (int)$taken['id']]
+                    [$backend, $backend, $keepOwner, (int)$taken['id']]
                 );
             } else {
                 DB::query(

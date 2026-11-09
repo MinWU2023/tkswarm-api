@@ -88,13 +88,25 @@ class AuthController extends Controller
             $loginIsSuper = (int)($user['role_id'] ?? 0) === 1;
             $loginRoleName = $this->roleName($user);
             $loginIsOpsAdmin = !$loginIsSuper && str_contains($loginRoleName, '运营管理');
-            $children = array_map(static function ($c) {
+            $rawChildren = DataScope::childrenOf((int)$user['id']);
+            $childIds = array_map(static fn($c) => (int)($c['id'] ?? 0), $rawChildren);
+            $childQuotaMap = $childIds ? \App\Services\BrowserEnvQuotaService::mapForUsers($childIds) : [];
+            $children = array_map(static function ($c) use ($childQuotaMap) {
+                $cid = (int)$c['id'];
+                $qInfo = $childQuotaMap[$cid] ?? [
+                    'quota' => \App\Services\BrowserEnvQuotaService::DEFAULT_QUOTA,
+                    'used' => 0,
+                    'remaining' => \App\Services\BrowserEnvQuotaService::DEFAULT_QUOTA,
+                ];
                 return [
-                    'id' => (int)$c['id'],
+                    'id' => $cid,
                     'username' => $c['username'],
                     'nickname' => $c['nickname'] ?? '',
+                    'browserEnvQuota' => (int)$qInfo['quota'],
+                    'browserEnvUsed' => (int)$qInfo['used'],
+                    'browserEnvRemaining' => (int)$qInfo['remaining'],
                 ];
-            }, DataScope::childrenOf((int)$user['id']));
+            }, $rawChildren);
 
             $rawActing = $request->getHeader('x-acting-as') ?? $request->get('actingAs');
             if ($rawActing !== null && $rawActing !== '' && $rawActing !== '0' && $rawActing !== 'self') {
