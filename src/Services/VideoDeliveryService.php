@@ -301,10 +301,10 @@ class VideoDeliveryService
             }
         }
 
-        // 可见范围：Admin 看全部；运营管理/运营专员看 company_users 关联企业下的企业客户；企业客户无数据
-        if (DataScope::isSuper()) {
+        // 可见范围：超管/运营管理员看全部（无需绑定）；运营专员仅看 company_users 绑定企业下的企业客户；企业客户无数据
+        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
             // no extra filter
-        } elseif (DataScope::isOpsAdmin() || DataScope::isOperator()) {
+        } elseif (DataScope::isOperator()) {
             $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
             $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
             if (!$companyIds) {
@@ -468,10 +468,12 @@ class VideoDeliveryService
         if ($loginId > 0 && $loginId === $adminUserId) {
             return $row;
         }
-        if (DataScope::isSuper()) {
+        // 超管 / 运营管理员：全部企业客户，无需绑定
+        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
             return $row;
         }
-        if (DataScope::isOpsAdmin() || DataScope::isOperator()) {
+        // 运营专员：仅绑定企业下的企业客户
+        if (DataScope::isOperator()) {
             $selfId = (int)(DataScope::effectiveUser()['id'] ?? 0);
             $companyIds = $selfId > 0 ? CompanyService::companyIdsOfUser($selfId) : [];
             if (!$companyIds) {

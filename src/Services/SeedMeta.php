@@ -149,6 +149,7 @@ class SeedMeta
         $pairs('task_type', [
             ['publish', '视频发布'], ['message', '消息群发'], ['sync', '数据同步'], ['profile', '资料同步'],
             ['warm', '自动养号'], ['sync_fans', '同步粉丝列表'], ['dm_sync', 'API 私信同步'],
+            ['publish_images', '发布图片'],
         ]);
         $pairs('proxy_protocol', [['http', 'HTTP'], ['https', 'HTTPS'], ['socks5', 'SOCKS5']]);
         $pairs('group_type', [
@@ -647,6 +648,21 @@ class SeedMeta
                      VALUES (446, 410, '视频增值', 'zap', '', 'videoBoost', 'list', 6, 1)
                      ON DUPLICATE KEY UPDATE parent_id=410, title='视频增值', icon='zap', view='videoBoost', subview='list', sort_order=6, visible=1"
                 );
+            } catch (\Throwable $e) {
+            }
+            // 图片向导：二级「图片向导」→ 三级「发布图片」（独立发布图文，暂仅支持单账号）
+            try {
+                DB::query(
+                    "INSERT INTO navigation_menus
+                      (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                     VALUES
+                      (460, 400, '图片向导', 'image', '', 'publish', 'image_wizard', 1, 1),
+                      (461, 460, '发布图片', 'send', '', 'publish', 'create_publish_images', 1, 1),
+                      (462, 460, '图片删除', 'trash-2', '', 'publish', 'create_delete_images', 2, 1)
+                     ON DUPLICATE KEY UPDATE parent_id=VALUES(parent_id), title=VALUES(title), icon=VALUES(icon), view='publish', subview=VALUES(subview), sort_order=VALUES(sort_order), visible=1"
+                );
+                // 权限沿用「视频发布任务」菜单，避免非管理员角色看不到
+                DB::query("UPDATE navigation_menus c JOIN navigation_menus p ON p.id=411 SET c.permission_code=p.permission_code WHERE c.id IN (460,461,462)");
             } catch (\Throwable $e) {
             }
             // 旧二级/重复入口隐藏（功能仍可从页面按钮进入）

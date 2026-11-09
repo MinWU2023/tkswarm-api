@@ -46,6 +46,7 @@ class AccountWorkBatchService
         'cs_logout' => 4,       // 客服坐席：退出
         'modify_profile' => 5,  // 修改资料（紧接登录后）
         'publish' => 10,        // 发布视频
+        'publish_images' => 11, // 发布图片（图文）
         'delete_video' => 20,   // 删除视频
         'comment_reply' => 30,  // 回复评论
         'pull_comments' => 32,  // 拉取视频详情
@@ -69,7 +70,7 @@ class AccountWorkBatchService
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
         'cs_login', 'cs_logout', 'cs_detect',
-        'modify_profile', 'publish', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'video_boost', 'warm',
+        'modify_profile', 'publish', 'publish_images', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'video_boost', 'warm',
         'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile', 'env_pack_upload',
     ];
 
@@ -991,7 +992,7 @@ class AccountWorkBatchService
         $rows = DB::select(
             "SELECT t.id FROM tasks t
              WHERE t.status='queued'
-               AND t.type IN ('publish','message','warm','sync_fans','dm_sync','sync','profile')
+               AND t.type IN ('publish','publish_images','message','warm','sync_fans','dm_sync','sync','profile')
                AND (t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
                AND NOT EXISTS (
                  SELECT 1 FROM account_work_items i
@@ -2338,7 +2339,7 @@ class AccountWorkBatchService
      */
     private static function cancelParentTasksAfterBatchClear(array $refRows): void
     {
-        $reattachTypes = ['publish', 'message', 'warm', 'sync_fans', 'dm_sync', 'sync', 'profile'];
+        $reattachTypes = ['publish', 'publish_images', 'message', 'warm', 'sync_fans', 'dm_sync', 'sync', 'profile'];
         $taskIds = [];
         foreach ($refRows as $row) {
             $type = (string)($row['task_type'] ?? '');
@@ -3435,6 +3436,7 @@ class AccountWorkBatchService
             'cs_detect' => '客服坐席检测登录',
             'warm' => '养号',
             'publish' => '发布视频',
+            'publish_images' => '发布图片',
             'comment_reply' => '回复评论',
             'pull_comments' => '拉取视频详情',
             'pull_video_list' => '拉取视频列表',

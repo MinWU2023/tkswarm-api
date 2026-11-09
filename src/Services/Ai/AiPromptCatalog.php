@@ -244,6 +244,33 @@ class AiPromptCatalog
                     ['key' => 'now', 'label' => '当前时间', 'required' => false, 'default' => '', 'type' => 'text'],
                 ],
             ],
+            [
+                'code' => 'publish_music_pick',
+                'name' => '图片发布·AI 选音乐',
+                'category' => 'publish',
+                'description' => '图片发布添加背景音乐：根据风格标签与作品文案，从候选音乐列表中选出最匹配的一首（必须是无人声背景音乐）。变量：styles / title / description / keywords / candidates_json',
+                'content' => "你是 TikTok 图文作品的配乐编辑。请根据作品信息和用户勾选的音乐风格，从候选音乐列表中挑选最合适的一首作为背景音乐。\n\n"
+                    . "【作品标题】{{title}}\n"
+                    . "【作品描述】{{description}}\n"
+                    . "【关键词】{{keywords}}\n"
+                    . "【期望音乐风格标签（可多个）】{{styles}}\n\n"
+                    . "【候选音乐列表（JSON 数组，index 为序号）】\n{{candidates_json}}\n\n"
+                    . "选择规则：\n"
+                    . "0. 【硬性约束】必须选择无人声的纯背景音乐（instrumental / BGM / 纯音乐 / 器乐），不得有人声演唱、说唱、念白或歌词；曲名或作者含 vocal、vocals、lyrics、feat.、ft.、cover、sing、rap、翻唱、演唱 等字样，或明显是流行歌手歌曲、热门人声歌曲，一律排除；\n"
+                    . "1. 在满足无人声的前提下，优先匹配风格标签，其次匹配作品标题、描述、关键词所表达的情绪与场景；\n"
+                    . "2. 只能从候选列表中选择，index 必须是列表中真实存在的序号，不要编造；\n"
+                    . "3. 候选信息不足以判断时，选最可能是无人声、且最贴近风格标签的一首（名称含 instrumental、beat、bgm、ambient、piano、lofi、no vocals 等的优先）；\n"
+                    . "4. 避开明显与作品情绪冲突的曲目。\n\n"
+                    . "仅输出一个 JSON 对象，不要 markdown，不要任何解释文字，字段固定为：\n"
+                    . "{\"index\": 0, \"name\": \"所选音乐名称\", \"reason\": \"简体中文选择理由\"}",
+                'variables' => [
+                    ['key' => 'styles', 'label' => '音乐风格标签', 'required' => true, 'type' => 'text', 'example' => 'Chill, Lo-fi, Acoustic'],
+                    ['key' => 'title', 'label' => '发布标题', 'required' => false, 'default' => '', 'type' => 'text'],
+                    ['key' => 'description', 'label' => '发布描述', 'required' => false, 'default' => '', 'type' => 'textarea'],
+                    ['key' => 'keywords', 'label' => '发布关键词', 'required' => false, 'default' => '', 'type' => 'text'],
+                    ['key' => 'candidates_json', 'label' => '候选音乐 JSON', 'required' => true, 'type' => 'textarea', 'example' => '[{"index":0,"name":"Song A","artist":"Artist"}]'],
+                ],
+            ],
         ];
     }
 

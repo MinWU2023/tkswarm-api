@@ -701,7 +701,7 @@ class TaskController extends Controller
                 if (!$task || !DataScope::ownsRow($task) || !in_array($task['status'], $allowed, true)) {
                     continue;
                 }
-                if ($action === 'start' && !in_array($task['type'], ['sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync', 'comment_reply', 'pull_video_list', 'pull_comments'], true)) {
+                if ($action === 'start' && !in_array($task['type'], ['sync', 'profile', 'publish', 'publish_images', 'message', 'warm', 'sync_fans', 'dm_sync', 'comment_reply', 'pull_video_list', 'pull_comments'], true)) {
                     continue;
                 }
                 DB::query('UPDATE tasks SET status=?, finished_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?', [$to, $id]);
@@ -982,7 +982,7 @@ class TaskController extends Controller
             return $this->error('��ǰ״̬���ɲ���', 409);
         }
         if ($status === 'queued' && !in_array($task['type'], [
-            'sync', 'profile', 'publish', 'message', 'warm', 'sync_fans', 'dm_sync',
+            'sync', 'profile', 'publish', 'publish_images', 'message', 'warm', 'sync_fans', 'dm_sync',
             'comment_reply', 'pull_video_list', 'pull_comments',
         ], true)) {
             return $this->error('该任务类型暂不支持启动', 422);
@@ -1004,7 +1004,7 @@ class TaskController extends Controller
     private function parseBody(Request $request): array
     {
         $type = (string)$request->input('type', 'sync');
-        if (!in_array($type, ['publish', 'message', 'sync', 'profile', 'warm', 'sync_fans', 'dm_sync'], true)) {
+        if (!in_array($type, ['publish', 'publish_images', 'message', 'sync', 'profile', 'warm', 'sync_fans', 'dm_sync'], true)) {
             $type = 'sync';
         }
         $groupId = $request->input('groupId');
@@ -1084,6 +1084,23 @@ class TaskController extends Controller
             $accountIds = array_filter(array_map('intval', $body['payload']['accountIds'] ?? []));
             if (!$accountIds && !$body['groupId']) {
                 return '�빴ѡ�˺Ż�ѡ���˺ŷ���';
+            }
+        }
+        if ($body['type'] === 'publish_images') {
+            $accountIds = array_values(array_filter(array_map('intval', $body['payload']['accountIds'] ?? [])));
+            if (count($accountIds) !== 1) {
+                return '图片发布只能选择 1 个账号';
+            }
+            $imgs = $body['payload']['images'] ?? [];
+            if (!is_array($imgs) || count($imgs) < 1) {
+                return '请至少选择 1 张图片';
+            }
+            if (count($imgs) > 35) {
+                return '图片最多 35 张';
+            }
+            $styles = $body['payload']['musicStyles'] ?? [];
+            if (is_array($styles) && count($styles) > 5) {
+                return '音乐风格最多选 5 个';
             }
         }
         if ($body['type'] === 'publish') {

@@ -713,6 +713,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/comment-reply/ai', NodeBridgeController::class . '@commentReplyAi');
     Router::post('/api/node/ai-leads/filter-comments', NodeBridgeController::class . '@aiLeadFilterComments');
     Router::post('/api/node/ai-leads/generate-dm', NodeBridgeController::class . '@aiLeadGenerateDm');
+    Router::post('/api/node/publish/music-pick', NodeBridgeController::class . '@publishMusicPick');
     Router::post('/api/node/ai-leads/{id}/creators', NodeBridgeController::class . '@aiLeadUpsertCreator');
     Router::post('/api/node/ai-leads/{id}/videos', NodeBridgeController::class . '@aiLeadUpsertVideo');
     Router::post('/api/node/ai-leads/{id}/comments', NodeBridgeController::class . '@aiLeadSaveComments');

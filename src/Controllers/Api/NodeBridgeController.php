@@ -2322,7 +2322,7 @@ class NodeBridgeController extends Controller
         $task = DB::selectOne(
             "SELECT * FROM tasks WHERE status='queued'
              AND (scheduled_at IS NULL OR scheduled_at<=CURRENT_TIMESTAMP)
-             AND type IN ('sync','profile','publish','message','dm_sync','warm','sync_fans')
+             AND type IN ('sync','profile','publish','publish_images','message','dm_sync','warm','sync_fans')
              AND NOT EXISTS (
                SELECT 1 FROM account_work_items i
                WHERE i.task_ref_id=tasks.id AND i.task_type=tasks.type
@@ -3400,6 +3400,31 @@ class NodeBridgeController extends Controller
             return $this->success(['comments' => $matched, 'count' => count($matched)]);
         } catch (\Throwable $e) {
             return $this->error('AI 筛选失败：' . $e->getMessage(), 500);
+        }
+    }
+
+    /** Node 图片发布：AI 从候选音乐列表里按风格标签挑一首 */
+    public function publishMusicPick(Request $request): Response
+    {
+        $candidates = $request->input('candidates', []);
+        $styles = $request->input('styles', []);
+        if (!is_array($candidates)) {
+            $candidates = [];
+        }
+        if (!is_array($styles)) {
+            $styles = array_filter(array_map('trim', explode(',', (string)$styles)));
+        }
+        try {
+            $out = \App\Services\PublishMusicPickService::pick(
+                $candidates,
+                $styles,
+                (string)$request->input('title', ''),
+                (string)$request->input('description', ''),
+                (string)$request->input('keywords', '')
+            );
+            return $this->success($out);
+        } catch (\Throwable $e) {
+            return $this->error('AI 选音乐失败：' . $e->getMessage(), 422);
         }
     }
 

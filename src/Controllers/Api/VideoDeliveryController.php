@@ -15,8 +15,20 @@ use App\Services\VideoDeliveryService;
 
 class VideoDeliveryController extends Controller
 {
+    /** 企业客户角色不允许使用后台视频交付（其自助入口走企业门户） */
+    private function denyEnterpriseCustomer(): ?Response
+    {
+        if (DataScope::isEnterpriseCustomer() || (DataScope::loginUser() && str_contains(DataScope::roleNameOfUser(DataScope::loginUser()), '企业客户'))) {
+            return $this->error('企业客户角色无视频交付操作权限', 403);
+        }
+        return null;
+    }
+
     public function list(Request $request): Response
     {
+        if ($deny = $this->denyEnterpriseCustomer()) {
+            return $deny;
+        }
         $page = max(1, (int)$request->get('page', 1));
         $pageSize = max(1, min(100, (int)$request->get('pageSize', 20)));
         $keyword = trim((string)$request->get('keyword', ''));
@@ -765,6 +777,9 @@ class VideoDeliveryController extends Controller
      */
     private function loadClientMapped(int $adminUserId)
     {
+        if ($deny = $this->denyEnterpriseCustomer()) {
+            return $deny;
+        }
         try {
             return VideoDeliveryService::ensureProfileForAdminUser($adminUserId);
         } catch (\RuntimeException $e) {
