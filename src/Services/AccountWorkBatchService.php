@@ -51,6 +51,8 @@ class AccountWorkBatchService
         'comment_reply' => 30,  // 回复评论
         'pull_comments' => 32,  // 拉取视频详情
         'pull_video_list' => 31, // 拉取视频列表（Studio→线上素材）
+        'fetch_lang' => 35,     // 客服：获取对方语种（打开对方主页判断）
+        'search_users' => 36,   // 客服：TikTok 搜索用户（临时结果，不落库）
         'dm_reply' => 40,       // 回复私信
         'message' => 40,        // 私信类（与回复私信同序）
         'ai_lead' => 45,        // AI拓客
@@ -3567,7 +3569,7 @@ class AccountWorkBatchService
     {
         return in_array(strtolower(trim($taskType)), [
             'dm_sync', 'message', 'dm_reply', 'sync_fans',
-            'cs_login', 'cs_logout', 'cs_detect',
+            'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
         ], true);
     }
 

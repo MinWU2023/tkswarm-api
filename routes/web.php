@@ -688,6 +688,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/chat/dm-ingest', NodeBridgeController::class . '@dmIngest');
     Router::post('/api/node/chat/bit-send-context', NodeBridgeController::class . '@bitSendContext');
     Router::post('/api/node/chat/bit-send-result', NodeBridgeController::class . '@bitSendResult');
+    Router::post('/api/node/chat/friend-lang', NodeBridgeController::class . '@friendLangResult');
     Router::get('/api/node/proxies/{id}/bundle', NodeBridgeController::class . '@proxyBundle');
     Router::post('/api/node/proxies/{id}/probe-result', NodeBridgeController::class . '@proxyProbeResult');
     Router::post('/api/node/work-logs', NodeBridgeController::class . '@appendWorkLog');

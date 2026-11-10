@@ -2318,6 +2318,67 @@ class NodeBridgeController extends Controller
         ], '私信已入库');
     }
 
+    /**
+     * 坐席「获取语言」任务回写：Node 打开对方主页抓到简介/昵称等文本，这里判断语种后落库。
+     * 判断不出或没有可用文本时按约定默认英语（en）。
+     */
+    public function friendLangResult(Request $request): Response
+    {
+        DataScope::ensureColumns();
+        $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        if ($friendId < 1) {
+            return $this->error('friendId 必填', 422);
+        }
+        $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=?', [$friendId]);
+        if (!$friend) {
+            return $this->error('好友不存在', 404);
+        }
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId ?: (int)$friend['account_id']]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        // 参与判断的文本：简介优先，其次昵称；都为空则无法判断，走默认英语
+        $bio = trim((string)$request->input('bio', ''));
+        $nickname = trim((string)$request->input('nickname', ''));
+        $probe = trim($bio . ' ' . $nickname);
+        $lang = '';
+        $method = 'empty';
+        $note = '';
+        if ($probe !== '') {
+            try {
+                $det = \App\Services\Translator::detectLanguage(mb_substr($probe, 0, 800));
+                $cand = strtolower(trim((string)($det['language'] ?? '')));
+                if (in_array($cand, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+                    $lang = $cand;
+                    $method = (string)($det['method'] ?? 'detect');
+                }
+                $note = (string)($det['note'] ?? '');
+            } catch (\Throwable $e) {
+                // 翻译未启用/配额用尽等：不阻断任务，按兜底处理
+                $note = $e->getMessage();
+            }
+        }
+        $fallback = false;
+        if ($lang === '') {
+            $lang = 'en';
+            $fallback = true;
+        }
+        DB::query(
+            'UPDATE chat_users SET lang=?, lang_checked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [$lang, $friendId]
+        );
+        return $this->success([
+            'friendId' => $friendId,
+            'accountId' => (int)$account['id'],
+            'lang' => $lang,
+            'fallback' => $fallback,
+            'method' => $method,
+            'bio' => mb_substr($bio, 0, 200),
+            'note' => $note,
+        ], $fallback ? "未能判断语种，已按默认英语处理" : "已识别为 {$lang}");
+    }
+
     public function claimTask(Request $request): Response
     {
         DataScope::ensureColumns();

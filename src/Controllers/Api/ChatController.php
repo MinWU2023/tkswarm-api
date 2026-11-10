@@ -780,11 +780,16 @@ class ChatController extends Controller
         $shouldTranslate = !empty($friend['translate_in'])
             || (empty($friend['translate_in']) && empty($friend['translate_out']) && !empty($conn['auto_translate']));
         if ($shouldTranslate) {
+            // 接收方向：对方语种 → 中文。对方语种未获取（空）时按英语处理。
+            $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+            if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+                $peerLang = 'en';
+            }
             try {
                 $tr = Translator::translate(
                     $content,
-                    (string)($friend['translate_source'] ?: 'auto'),
-                    (string)($friend['translate_target'] ?: 'zh')
+                    $peerLang,
+                    'zh'
                 );
                 $translated = (string)($tr['text'] ?? '');
             } catch (\Throwable $e) {
@@ -1354,6 +1359,8 @@ class ChatController extends Controller
             'sync_following' => 'sync_fans',
             'refresh_fans' => 'sync_fans',
             'refresh_following' => 'sync_fans',
+            'fetch_lang' => 'fetch_lang',
+            'search_users' => 'search_users',
         ];
         if (!isset($map[$action])) {
             return $this->error('不支持的坐席动作：' . $action, 422);
@@ -1394,12 +1401,37 @@ class ChatController extends Controller
             $payload['content'] = $content;
             $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');
             $payload['toUser'] = $payload['recipient'];
-            $payload['translated'] = trim((string)$request->input('translated', ''));
+            // 发送翻译：把中文原文翻成对方语种，真正私信投递的是译文（deliverText）。
+            // content 保留中文原文供界面显示；translated 存译文；对方语种为空按英语处理。
+            $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+            if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+                $peerLang = 'en';
+            }
+            $translated = trim((string)$request->input('translated', ''));
+            $wantTranslate = $request->input('translate', null);
+            $doTranslate = $wantTranslate === null
+                ? ($peerLang !== 'zh')
+                : filter_var($wantTranslate, FILTER_VALIDATE_BOOLEAN);
+            if ($doTranslate && $peerLang !== 'zh' && $translated === '') {
+                try {
+                    $tr = \App\Services\Translator::translate($content, 'zh', $peerLang);
+                    $translated = trim((string)($tr['text'] ?? ''));
+                } catch (\Throwable $e) {
+                    // 翻译失败不能把中文直接发出去（对方看不懂）：标记错误，由 Node 侧判任务失败
+                    $payload['translateError'] = $e->getMessage();
+                }
+            }
+            $payload['peerLang'] = $peerLang;
+            $payload['translated'] = $translated;
+            // 实际投递文本：有译文发译文，否则发原文
+            if ($translated !== '' && $peerLang !== 'zh') {
+                $payload['deliverText'] = $translated;
+            }
             // 先入库成聊天记录，标记「同步中」；任务收尾时（finishItem）改为 synced / failed
             DB::query(
                 "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status, owner_id)
                  VALUES (?,?, 'out', 'text', ?, ?, 'syncing', ?)",
-                [$accountId, $friendId, $content, $payload['translated'], $this->writeOwnerId()]
+                [$accountId, $friendId, $content, $translated, $this->writeOwnerId()]
             );
             $recordId = (int)DB::getPdo()->lastInsertId();
             $payload['recordId'] = $recordId;
@@ -1408,11 +1440,49 @@ class ChatController extends Controller
                 [mb_substr(($payload['translated'] !== '' ? $payload['translated'] : $content), 0, 200), $friendId]
             );
         }
+        if ($taskType === 'dm_sync') {
+            // 私信列表同步：拉取 TikTok 收件箱会话用户写入本地会话表，供坐席左侧私信 Tab 展示。
+            // 坐席场景必须走服务器浏览器（bit），不能用 api-http 通道，否则仍然依赖本机 CK。
+            $payload['maxConversations'] = max(5, min(40, (int)$request->input('maxConversations', 30)));
+            // 每个会话只拉最近若干条，坐席列表只需要预览最后一条
+            $payload['maxMessagesPerChat'] = max(1, min(50, (int)$request->input('maxMessagesPerChat', 10)));
+            $payload['preferBit'] = true;
+            $payload['via'] = 'bit';
+        }
+        if ($taskType === 'search_users') {
+            // 搜索词必须大于 5 个字符：太短的关键词在 TikTok 上结果海量且无意义
+            $keyword = trim((string)$request->input('keyword', $request->input('q', '')));
+            $kwLen = mb_strlen($keyword);
+            if ($kwLen <= 5) {
+                return $this->error("搜索词必须大于 5 个字符（当前 {$kwLen} 个）", 422);
+            }
+            $payload['keyword'] = $keyword;
+            $payload['limit'] = max(5, min(100, (int)$request->input('limit', 40)));
+            // 结果只在任务返回里临时可见，不写 chat_users
+            $payload['temporary'] = true;
+        }
         if ($taskType === 'sync_fans') {
             $listKind = in_array($action, ['sync_following', 'refresh_following'], true) ? 'following' : 'followers';
             $payload['listKind'] = $listKind;
             $payload['maxPerRun'] = max(50, min(2000, (int)$request->input('maxPerRun', 500)));
             $payload['accountIds'] = [$accountId];
+        }
+        if ($taskType === 'fetch_lang') {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            if ($friendId < 1) {
+                return $this->error('获取语言需要 friendId', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            $recipient = trim((string)($friend['username'] ?: $friend['friend_uid'] ?: ''));
+            if ($recipient === '') {
+                return $this->error('该好友缺少用户名，无法打开主页判断语种', 422);
+            }
+            $payload['friendId'] = $friendId;
+            $payload['recipient'] = $recipient;
+            $payload['toUser'] = $recipient;
         }
 
         try {
@@ -1504,6 +1574,9 @@ class ChatController extends Controller
         $row['translate_in'] = !empty($row['translate_in']);
         $row['translate_out'] = !empty($row['translate_out']);
         $row['tags'] = array_values(array_filter(array_map('trim', explode(',', (string)($row['tags'] ?? '')))));
+        // 对方语种：空表示还没获取，收发翻译按英语处理
+        $row['lang'] = strtolower(trim((string)($row['lang'] ?? '')));
+        $row['lang_known'] = $row['lang'] !== '';
         if (empty($row['user_type'])) {
             $row['user_type'] = match ((string)($row['relation'] ?? '')) {
                 'follower' => 'follower',
@@ -1620,6 +1693,8 @@ class ChatController extends Controller
           translate_out TINYINT NOT NULL DEFAULT 0,
           translate_target VARCHAR(16) NOT NULL DEFAULT 'zh',
           translate_source VARCHAR(16) NOT NULL DEFAULT 'auto',
+          lang VARCHAR(16) NOT NULL DEFAULT '',
+          lang_checked_at DATETIME NULL,
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE KEY uk_chat_user (account_id, friend_uid)
@@ -1660,6 +1735,9 @@ class ChatController extends Controller
                 'translate_out' => 'ALTER TABLE chat_users ADD COLUMN translate_out TINYINT NOT NULL DEFAULT 0',
                 'translate_target' => "ALTER TABLE chat_users ADD COLUMN translate_target VARCHAR(16) NOT NULL DEFAULT 'zh'",
                 'translate_source' => "ALTER TABLE chat_users ADD COLUMN translate_source VARCHAR(16) NOT NULL DEFAULT 'auto'",
+                // 对方语种：由「获取语言」坐席任务打开对方主页判断后写入；空=未获取，收发按英语处理
+                'lang' => "ALTER TABLE chat_users ADD COLUMN lang VARCHAR(16) NOT NULL DEFAULT ''",
+                'lang_checked_at' => 'ALTER TABLE chat_users ADD COLUMN lang_checked_at DATETIME NULL',
                 'owner_id' => 'ALTER TABLE chat_users ADD COLUMN owner_id INT NULL',
             ],
             'chat_records' => [
