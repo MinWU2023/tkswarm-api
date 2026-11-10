@@ -1615,6 +1615,24 @@ class AccountWorkBatchService
                          )
                      )
                    )
+                   -- 客服坐席总任务同样按账号互斥：同账号共用一个自研/服务器环境，
+                   -- 两个坐席总任务并行会各自 forceRelaunch 开窗并在收尾 provider.close 关窗，
+                   -- 互相杀掉对方的 Electron 进程 → 「连接浏览器 CDP 失败 ECONNREFUSED」。
+                   -- 用 id 比较打破平局：两个都 pending 时只放行 id 较小的那个，避免互相等待卡死。
+                   AND (
+                     COALESCE(b.batch_scope,'general') <> 'cs_seat'
+                     OR NOT EXISTS (
+                       SELECT 1 FROM account_work_batches s
+                       WHERE s.account_id=b.account_id AND s.deleted_at IS NULL
+                         AND s.id < b.id
+                         AND COALESCE(s.batch_scope,'general') = 'cs_seat'
+                         AND (s.status='running' OR s.status='pending')
+                         AND EXISTS (
+                           SELECT 1 FROM account_work_items si
+                           WHERE si.batch_id=s.id AND si.status IN ('pending','running')
+                         )
+                     )
+                   )
                    {$serverOnlySql}
                    {$ownerSql}
                    {$excludeSql}
