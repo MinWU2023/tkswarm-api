@@ -1376,6 +1376,20 @@ class ChatController extends Controller
             if (!$friend) {
                 return $this->error('好友不存在', 404);
             }
+            // 日私信额度：与 AI 拓客共用账号当日额度（ai_lead_account_daily）；已用完则不入队，也不写聊天记录
+            try {
+                $remaining = \App\Services\AiLeadVideoWeightService::getRemainingToday($accountId);
+                // 已在队列里等待/执行中的坐席发信也占额度，避免连点几条一起超限
+                $inflight = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c FROM account_work_items WHERE account_id=? AND task_type='dm_reply' AND status IN ('pending','running')",
+                    [$accountId]
+                )['c'] ?? 0);
+                if ($remaining - $inflight < 1) {
+                    return $this->error('今日私信次数已使用完，请明日再试', 422);
+                }
+            } catch (\Throwable $e) {
+                error_log('[seat_dm_quota] check failed: ' . $e->getMessage());
+            }
             $payload['friendId'] = $friendId;
             $payload['content'] = $content;
             $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');

@@ -2121,6 +2121,18 @@ class AccountWorkBatchService
             }
         }
 
+        // 坐席发信成功：账号当日私信次数 +1（仅首次完成时计一次，重复回调不重复计数）
+        if ($type === 'dm_reply' && $status === 'completed' && (string)($item['status'] ?? '') !== 'completed') {
+            try {
+                $dmAccountId = (int)($item['account_id'] ?? 0);
+                if ($dmAccountId > 0) {
+                    \App\Services\AiLeadExecutionService::bumpDailyDm($dmAccountId);
+                }
+            } catch (\Throwable $e) {
+                error_log('[seat_dm_quota] bump failed: ' . $e->getMessage());
+            }
+        }
+
         // 坐席发信：回写聊天记录同步状态（成功=synced，失败/跳过=failed）
         if ($type === 'dm_reply') {
             try {

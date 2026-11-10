@@ -10,6 +10,7 @@ use App\Core\Database\DB;
 use App\Services\AccountImport;
 use App\Services\AccountBanService;
 use App\Services\AccountWorkBatchService;
+use App\Services\AiLeadVideoWeightService;
 use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\IndustryDataService;
@@ -3097,6 +3098,7 @@ class AccountController extends Controller
 
     /**
      * 选账号卡片所需统计：粉丝/视频/最近同步 + 当日私信配额。
+     * 关联：tiktok_profiles / tiktok_videos / ai_lead_account_daily / account_video_weight_tiers
      * @param list<array<string,mixed>> $rows
      * @return list<array<string,mixed>>
      */
@@ -3129,15 +3131,20 @@ class AccountController extends Controller
             }
         } catch (\Throwable $e) {
         }
+        $videoCountMap = [];
         $videoSyncMap = [];
         try {
             $videoSyncs = DB::select(
-                "SELECT account_id, MAX(last_synced_at) AS last_video_at
+                "SELECT account_id,
+                        COUNT(*) AS video_count,
+                        MAX(last_synced_at) AS last_video_at
                  FROM tiktok_videos WHERE account_id IN ({$ph}) GROUP BY account_id",
                 $ids
             ) ?: [];
             foreach ($videoSyncs as $v) {
-                $videoSyncMap[(int)$v['account_id']] = (string)($v['last_video_at'] ?? '');
+                $aid = (int)$v['account_id'];
+                $videoCountMap[$aid] = (int)($v['video_count'] ?? 0);
+                $videoSyncMap[$aid] = (string)($v['last_video_at'] ?? '');
             }
         } catch (\Throwable $e) {
         }
@@ -3155,18 +3162,69 @@ class AccountController extends Controller
         } catch (\Throwable $e) {
         }
 
+        $tierCache = [];
+        $defaultTiers = null;
+        $resolveDmLimit = static function (int $ownerId, ?string $firstVideoAt) use (&$tierCache, &$defaultTiers): int {
+            $days = null;
+            $at = trim((string)$firstVideoAt);
+            if ($at !== '') {
+                try {
+                    $start = new \DateTimeImmutable(substr($at, 0, 10));
+                    $today = new \DateTimeImmutable('today');
+                    $days = $start > $today ? 0 : $start->diff($today)->days;
+                } catch (\Throwable $e) {
+                    $days = null;
+                }
+            }
+            if ($days === null) {
+                return 1;
+            }
+            $ownerId = max(0, $ownerId);
+            if (!isset($tierCache[$ownerId])) {
+                $tierCache[$ownerId] = AiLeadVideoWeightService::listTiers($ownerId);
+            }
+            $tiers = $tierCache[$ownerId];
+            if (!$tiers) {
+                if ($defaultTiers === null) {
+                    $defaultTiers = AiLeadVideoWeightService::listTiers(0);
+                }
+                $tiers = $defaultTiers;
+            }
+            $limit = 1;
+            foreach ($tiers as $tier) {
+                if ($days >= (int)($tier['days'] ?? 0)) {
+                    $limit = max($limit, (int)($tier['dailyDmLimit'] ?? 0));
+                }
+            }
+            return max(1, $limit);
+        };
+
         foreach ($rows as &$row) {
             $id = (int)($row['id'] ?? 0);
             $p = $profileMap[$id] ?? null;
-            $row['followers_count'] = (int)($p['followers_count'] ?? 0);
-            $row['videos_count'] = (int)($p['videos_count'] ?? 0);
+            $hasProfile = $p !== null;
+            $followers = (int)($p['followers_count'] ?? 0);
+            $profileVideos = (int)($p['videos_count'] ?? 0);
+            $listedVideos = (int)($videoCountMap[$id] ?? 0);
+            $videos = max($profileVideos, $listedVideos);
             $profileSynced = trim((string)($p['last_synced_at'] ?? ''));
-            $row['profile_synced_at'] = $profileSynced;
             $videoAt = trim((string)($videoSyncMap[$id] ?? ''));
+            $row['has_tiktok_profile'] = $hasProfile ? 1 : 0;
+            $row['followers_count'] = $followers;
+            $row['videos_count'] = $videos;
+            $row['profile_synced_at'] = $profileSynced;
             $row['last_video_at'] = $videoAt !== '' ? $videoAt : $profileSynced;
             $dm = $dmMap[$id] ?? null;
-            $row['dm_used'] = (int)($dm['times'] ?? 0);
-            $row['dm_limit'] = (int)($dm['daily_limit'] ?? 0);
+            $dmUsed = (int)($dm['times'] ?? 0);
+            $dmLimit = (int)($dm['daily_limit'] ?? 0);
+            if ($dmLimit <= 0) {
+                $dmLimit = $resolveDmLimit(
+                    (int)($row['owner_id'] ?? 0),
+                    (string)($row['first_video_published_at'] ?? '')
+                );
+            }
+            $row['dm_used'] = $dmUsed;
+            $row['dm_limit'] = $dmLimit;
         }
         unset($row);
         return $rows;
@@ -3193,6 +3251,8 @@ class AccountController extends Controller
         }
         $row['followers_count'] = (int)($row['followers_count'] ?? 0);
         $row['videos_count'] = (int)($row['videos_count'] ?? 0);
+        $row['has_tiktok_profile'] = !empty($row['has_tiktok_profile']) ? 1 : 0;
+        $row['profile_synced_at'] = (string)($row['profile_synced_at'] ?? '');
         $row['last_video_at'] = (string)($row['last_video_at'] ?? '');
         $row['dm_used'] = (int)($row['dm_used'] ?? 0);
         $row['dm_limit'] = (int)($row['dm_limit'] ?? 0);
