@@ -1372,6 +1372,9 @@ class ChatController extends Controller
             'refresh_following' => 'sync_fans',
             'fetch_lang' => 'fetch_lang',
             'search_users' => 'search_users',
+            'pin_friend' => 'pin_friend',
+            'block_user' => 'block_user',
+            'delete_chat' => 'delete_chat',
         ];
         if (!isset($map[$action])) {
             return $this->error('不支持的坐席动作：' . $action, 422);
@@ -1484,6 +1487,30 @@ class ChatController extends Controller
             $payload['friendId'] = $friendId;
             $payload['recipient'] = $recipient;
             $payload['toUser'] = $recipient;
+        }
+        // 会话操作（置顶 / 拉黑 / 删除）：统一走服务器浏览器任务，成功后再回写本地会话状态
+        if (in_array($taskType, ['pin_friend', 'block_user', 'delete_chat'], true)) {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            if ($friendId < 1) {
+                return $this->error('该操作需要 friendId', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            $recipient = trim((string)($friend['username'] ?: $friend['friend_uid'] ?: ''));
+            if ($recipient === '') {
+                return $this->error('该会话缺少用户名，无法在 TikTok 上定位会话', 422);
+            }
+            $payload['friendId'] = $friendId;
+            $payload['recipient'] = $recipient;
+            $payload['toUser'] = $recipient;
+            if ($taskType === 'pin_friend') {
+                $payload['pinned'] = filter_var($request->input('pinned', true), FILTER_VALIDATE_BOOLEAN);
+            }
+            if ($taskType === 'block_user') {
+                $payload['blocked'] = filter_var($request->input('blocked', true), FILTER_VALIDATE_BOOLEAN);
+            }
         }
 
         try {

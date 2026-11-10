@@ -38,6 +38,7 @@ class AccountWorkBatchService
         'ai_lead', 'ai_lead_dm',
         'dm_sync', 'message', 'dm_reply', 'sync_fans',
         'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
+        'pin_friend', 'block_user', 'delete_chat',
     ];
     /** @var array<string,int> 越小越先执行 */
     public const TYPE_PRIORITY = [
@@ -53,6 +54,9 @@ class AccountWorkBatchService
         'pull_video_list' => 31, // 拉取视频列表（Studio→线上素材）
         'fetch_lang' => 35,     // 客服：获取对方语种（打开对方主页判断）
         'search_users' => 36,   // 客服：TikTok 搜索用户（临时结果，不落库）
+        'pin_friend' => 37,     // 客服：置顶会话（TikTok 无常驻置顶，任务内校验会话存在）
+        'block_user' => 38,     // 客服：拉黑 / 取消拉黑
+        'delete_chat' => 39,    // 客服：删除 TikTok 会话
         'dm_reply' => 40,       // 回复私信
         'message' => 40,        // 私信类（与回复私信同序）
         'ai_lead' => 45,        // AI拓客
@@ -2026,7 +2030,44 @@ class AccountWorkBatchService
     /**
      * @param array<string,mixed>|null $result
      */
-    /** 批量置失败前：把该批次里未完成的坐席发信（dm_reply）对应的聊天记录从「同步中」改为失败 */
+    /**
+     * 坐席会话操作完成后回写本地会话表：
+     *  - pin_friend：置顶 / 取消置顶（TikTok 没有置顶功能，只调整本地会话顺序）
+     *  - block_user：拉黑 / 解除拉黑
+     *  - delete_chat：删除本地会话与聊天记录（TikTok 侧会话已在浏览器里删除）
+     */
+    private static function syncSeatConversationState(array $item, ?array $result): void
+    {
+        $payload = json_decode((string)($item['payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $friendId = (int)($payload['friendId'] ?? 0);
+        $accountId = (int)($item['account_id'] ?? 0);
+        if ($friendId < 1 || $accountId < 1) {
+            return;
+        }
+        $type = (string)($item['task_type'] ?? '');
+        if ($type === 'pin_friend') {
+            DB::query(
+                'UPDATE chat_users SET is_pinned=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=?',
+                [!empty($payload['pinned']) ? 1 : 0, $friendId, $accountId]
+            );
+            return;
+        }
+        if ($type === 'block_user') {
+            DB::query(
+                'UPDATE chat_users SET relation=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=?',
+                [!empty($payload['blocked']) ? 'blocked' : 'stranger', $friendId, $accountId]
+            );
+            return;
+        }
+        if ($type === 'delete_chat') {
+            DB::query('DELETE FROM chat_records WHERE user_id=?', [$friendId]);
+            DB::query('DELETE FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+        }
+    }
+
     private static function syncSeatRecordsOnBatchFail(int $batchId): void
     {
         try {
@@ -2151,6 +2192,15 @@ class AccountWorkBatchService
                 }
             } catch (\Throwable $e) {
                 error_log('[seat_search_cache] save failed: ' . $e->getMessage());
+            }
+        }
+
+        // 坐席会话操作（置顶 / 拉黑 / 删除）成功：把结果回写到本地会话表
+        if ($status === 'completed' && in_array($type, ['pin_friend', 'block_user', 'delete_chat'], true)) {
+            try {
+                self::syncSeatConversationState($item, $result);
+            } catch (\Throwable $e) {
+                error_log('[seat_chat_action] sync failed: ' . $e->getMessage());
             }
         }
 
@@ -3598,6 +3648,7 @@ class AccountWorkBatchService
         return in_array(strtolower(trim($taskType)), [
             'dm_sync', 'message', 'dm_reply', 'sync_fans',
             'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
+            'pin_friend', 'block_user', 'delete_chat',
         ], true);
     }
 
