@@ -3097,8 +3097,9 @@ class AccountController extends Controller
     }
 
     /**
-     * 选账号卡片所需统计：粉丝/视频/最近同步 + 当日私信配额。
-     * 关联：tiktok_profiles / tiktok_videos / ai_lead_account_daily / account_video_weight_tiers
+     * 选账号卡片所需统计：粉丝/视频/最近发布 + 当日私信配额。
+     * 视频数 / 最后更新：按 materials.publish_account_id 统计**全部用户**挂到该账号的发布记录（不按当前登录用户 owner 过滤）。
+     * 其它：tiktok_profiles / tiktok_videos / ai_lead_account_daily / account_video_weight_tiers
      * @param list<array<string,mixed>> $rows
      * @return list<array<string,mixed>>
      */
@@ -3131,6 +3132,36 @@ class AccountController extends Controller
             }
         } catch (\Throwable $e) {
         }
+
+        // 全库发布记录（不按 material.owner_id / DataScope 过滤）
+        $publishCountMap = [];
+        $publishAtMap = [];
+        try {
+            $pubs = DB::select(
+                "SELECT m.publish_account_id AS account_id,
+                        COUNT(*) AS video_count,
+                        MAX(COALESCE(m.platform_published_at, m.updated_at, m.created_at)) AS last_video_at
+                 FROM materials m
+                 WHERE m.publish_account_id IN ({$ph})
+                   AND (
+                     m.origin='online'
+                     OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>'')
+                   )
+                 GROUP BY m.publish_account_id",
+                $ids
+            ) ?: [];
+            foreach ($pubs as $v) {
+                $aid = (int)($v['account_id'] ?? 0);
+                if ($aid <= 0) {
+                    continue;
+                }
+                $publishCountMap[$aid] = (int)($v['video_count'] ?? 0);
+                $publishAtMap[$aid] = trim((string)($v['last_video_at'] ?? ''));
+            }
+        } catch (\Throwable $e) {
+        }
+
+        // 旧同步表兜底
         $videoCountMap = [];
         $videoSyncMap = [];
         try {
@@ -3144,7 +3175,7 @@ class AccountController extends Controller
             foreach ($videoSyncs as $v) {
                 $aid = (int)$v['account_id'];
                 $videoCountMap[$aid] = (int)($v['video_count'] ?? 0);
-                $videoSyncMap[$aid] = (string)($v['last_video_at'] ?? '');
+                $videoSyncMap[$aid] = trim((string)($v['last_video_at'] ?? ''));
             }
         } catch (\Throwable $e) {
         }
@@ -3205,15 +3236,21 @@ class AccountController extends Controller
             $hasProfile = $p !== null;
             $followers = (int)($p['followers_count'] ?? 0);
             $profileVideos = (int)($p['videos_count'] ?? 0);
+            $publishVideos = (int)($publishCountMap[$id] ?? 0);
             $listedVideos = (int)($videoCountMap[$id] ?? 0);
-            $videos = max($profileVideos, $listedVideos);
+            // 优先全库 materials 发布数，再兜底资料/同步表
+            $videos = max($publishVideos, $profileVideos, $listedVideos);
             $profileSynced = trim((string)($p['last_synced_at'] ?? ''));
+            $publishAt = trim((string)($publishAtMap[$id] ?? ''));
             $videoAt = trim((string)($videoSyncMap[$id] ?? ''));
+            // 最后更新优先取全库发布记录时间
+            $lastVideoAt = $publishAt !== '' ? $publishAt : ($videoAt !== '' ? $videoAt : $profileSynced);
             $row['has_tiktok_profile'] = $hasProfile ? 1 : 0;
+            $row['has_published_videos'] = $publishVideos > 0 || $listedVideos > 0 ? 1 : 0;
             $row['followers_count'] = $followers;
             $row['videos_count'] = $videos;
             $row['profile_synced_at'] = $profileSynced;
-            $row['last_video_at'] = $videoAt !== '' ? $videoAt : $profileSynced;
+            $row['last_video_at'] = $lastVideoAt;
             $dm = $dmMap[$id] ?? null;
             $dmUsed = (int)($dm['times'] ?? 0);
             $dmLimit = (int)($dm['daily_limit'] ?? 0);
@@ -3252,6 +3289,7 @@ class AccountController extends Controller
         $row['followers_count'] = (int)($row['followers_count'] ?? 0);
         $row['videos_count'] = (int)($row['videos_count'] ?? 0);
         $row['has_tiktok_profile'] = !empty($row['has_tiktok_profile']) ? 1 : 0;
+        $row['has_published_videos'] = !empty($row['has_published_videos']) ? 1 : 0;
         $row['profile_synced_at'] = (string)($row['profile_synced_at'] ?? '');
         $row['last_video_at'] = (string)($row['last_video_at'] ?? '');
         $row['dm_used'] = (int)($row['dm_used'] ?? 0);
