@@ -573,18 +573,22 @@ class ChatController extends Controller
         if (($friend['relation'] ?? '') === 'blocked') {
             return $this->error('对方已拉黑，无法发送', 422);
         }
-        // 与 Node 对齐：content=原文，translated=译文
+        // 与 Node 对齐：content=原文，translated=译文。
+        // 这里只是本地落库（不经 TikTok 投递），翻译失败不该阻断消息记录。
         $translated = '';
         if ($msgType === 'text' && !empty($friend['translate_out'])) {
-            try {
-                $tr = Translator::translate(
-                    $content,
-                    (string)($friend['translate_source'] ?: 'auto'),
-                    (string)($friend['translate_target'] ?: 'zh')
-                );
-                $translated = (string)($tr['text'] ?? '');
-            } catch (\Throwable $e) {
-                return $this->error('发送翻译失败：' . $e->getMessage(), 422);
+            $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+            if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+                $peerLang = 'en';
+            }
+            if ($peerLang !== 'zh') {
+                try {
+                    $tr = Translator::translate($content, 'zh', $peerLang);
+                    $translated = (string)($tr['text'] ?? '');
+                } catch (\Throwable $e) {
+                    // 翻译未启用/失败时留空，真实投递由 Node 侧实时翻译
+                    $translated = '';
+                }
             }
         }
         DB::query(
@@ -1401,43 +1405,29 @@ class ChatController extends Controller
             $payload['content'] = $content;
             $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');
             $payload['toUser'] = $payload['recipient'];
-            // 发送翻译：把中文原文翻成对方语种，真正私信投递的是译文（deliverText）。
-            // content 保留中文原文供界面显示；translated 存译文；对方语种为空按英语处理。
+            // 发送翻译：这里只决定「目标语种」，真正的翻译交给 Node 本地翻译器实时做
+            // （Node 侧已对接翻译接口，不依赖 PHP 系统设置的翻译开关）。
+            // content = 中文原文，translated 先留空，Node 翻完再回写译文。
             $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
             if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
                 $peerLang = 'en';
             }
-            $translated = trim((string)$request->input('translated', ''));
-            $wantTranslate = $request->input('translate', null);
-            $doTranslate = $wantTranslate === null
-                ? ($peerLang !== 'zh')
-                : filter_var($wantTranslate, FILTER_VALIDATE_BOOLEAN);
-            if ($doTranslate && $peerLang !== 'zh' && $translated === '') {
-                try {
-                    $tr = \App\Services\Translator::translate($content, 'zh', $peerLang);
-                    $translated = trim((string)($tr['text'] ?? ''));
-                } catch (\Throwable $e) {
-                    // 翻译失败不能把中文直接发出去（对方看不懂）：标记错误，由 Node 侧判任务失败
-                    $payload['translateError'] = $e->getMessage();
-                }
-            }
             $payload['peerLang'] = $peerLang;
-            $payload['translated'] = $translated;
-            // 实际投递文本：有译文发译文，否则发原文
-            if ($translated !== '' && $peerLang !== 'zh') {
-                $payload['deliverText'] = $translated;
-            }
+            $payload['sourceLang'] = 'zh';
+            // 对方就是中文：无需翻译，直接发原文
+            $payload['needTranslate'] = $peerLang !== 'zh';
+            $payload['translated'] = '';
             // 先入库成聊天记录，标记「同步中」；任务收尾时（finishItem）改为 synced / failed
             DB::query(
                 "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status, owner_id)
-                 VALUES (?,?, 'out', 'text', ?, ?, 'syncing', ?)",
-                [$accountId, $friendId, $content, $translated, $this->writeOwnerId()]
+                 VALUES (?,?, 'out', 'text', ?, '', 'syncing', ?)",
+                [$accountId, $friendId, $content, $this->writeOwnerId()]
             );
             $recordId = (int)DB::getPdo()->lastInsertId();
             $payload['recordId'] = $recordId;
             DB::query(
                 "UPDATE chat_users SET last_message=?, last_direction='out', last_message_at=CURRENT_TIMESTAMP, unread_count=0, is_new=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                [mb_substr(($payload['translated'] !== '' ? $payload['translated'] : $content), 0, 200), $friendId]
+                [mb_substr($content, 0, 200), $friendId]
             );
         }
         if ($taskType === 'dm_sync') {
@@ -1495,6 +1485,13 @@ class ChatController extends Controller
             );
             $batchId = (int)($out['batch_id'] ?? 0);
             $itemId = (int)($out['item_id'] ?? 0);
+            // 记录这条聊天消息对应的坐席分任务：发送失败后前端点「重发」按它重置为待执行
+            if ($itemId > 0 && !empty($payload['recordId'])) {
+                DB::query(
+                    'UPDATE chat_records SET work_item_id=? WHERE id=?',
+                    [$itemId, (int)$payload['recordId']]
+                );
+            }
             if ($batchId > 0) {
                 AccountWorkBatchService::appendLog(
                     $batchId,
@@ -1525,6 +1522,112 @@ class ChatController extends Controller
     }
 
     /** 客服坐席：轮询分任务状态 */
+    /**
+     * 重发失败消息：把它对应的坐席分任务重置为「待执行」，由服务器浏览器队列重新领取。
+     * 只重置任务，不改聊天内容；成功后状态回到 syncing。
+     */
+    public function resendFailedMessage(Request $request): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        $recordId = (int)$request->input('recordId', $request->input('record_id', 0));
+        if ($recordId < 1) {
+            return $this->error('recordId 必填', 422);
+        }
+        $record = DB::selectOne('SELECT * FROM chat_records WHERE id=?', [$recordId]);
+        if (!$record) {
+            return $this->error('消息不存在', 404);
+        }
+        if ((string)($record['direction'] ?? '') !== 'out') {
+            return $this->error('只有自己发出的消息可以重发', 422);
+        }
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$record['account_id']]);
+        if ($err = $this->assertChatAccountVisible($account)) {
+            return $err;
+        }
+        $status = (string)($record['status'] ?? '');
+        if (!in_array($status, ['failed', 'syncing'], true)) {
+            return $this->error("只有发送失败的消息可以重发（当前状态：{$status}）", 422);
+        }
+        $accountId = (int)$record['account_id'];
+        $friendId = (int)$record['user_id'];
+
+        $itemId = (int)($record['work_item_id'] ?? 0);
+        // 老记录没有 work_item_id：按 payload 里的 recordId 反查最近一条 dm_reply 分任务
+        if ($itemId < 1) {
+            $found = DB::selectOne(
+                "SELECT id FROM account_work_items
+                 WHERE account_id=? AND task_type='dm_reply' AND payload_json LIKE ?
+                 ORDER BY id DESC LIMIT 1",
+                [$accountId, '%"recordId":' . $recordId . '%']
+            );
+            $itemId = $found ? (int)$found['id'] : 0;
+        }
+
+        if ($itemId > 0) {
+            try {
+                AccountWorkBatchService::resetItem($itemId);
+            } catch (\Throwable $e) {
+                return $this->error('重置任务失败：' . $e->getMessage(), 422);
+            }
+            DB::query("UPDATE chat_records SET status='syncing' WHERE id=?", [$recordId]);
+            return $this->success([
+                'recordId' => $recordId,
+                'itemId' => $itemId,
+                'accountId' => $accountId,
+                'mode' => 'reset',
+            ], '已把该消息的发送任务重置为待执行，服务器浏览器会重新发送');
+        }
+
+        // 找不到原任务（可能已清理）：按原内容重新入队一条 dm_reply
+        $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+        if (!$friend) {
+            return $this->error('好友不存在，无法重发', 404);
+        }
+        $content = trim((string)($record['content'] ?? ''));
+        if ($content === '') {
+            return $this->error('原消息内容为空，无法重发', 422);
+        }
+        $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+        if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+            $peerLang = 'en';
+        }
+        $payload = [
+            'browserBackend' => 'linux',
+            'browser_backend' => 'linux',
+            'source' => 'chat.seat',
+            'seatAction' => 'send',
+            'autoSend' => true,
+            'friendId' => $friendId,
+            'content' => $content,
+            'recipient' => (string)($friend['username'] ?: $friend['friend_uid'] ?: ''),
+            'toUser' => (string)($friend['username'] ?: $friend['friend_uid'] ?: ''),
+            'peerLang' => $peerLang,
+            'sourceLang' => 'zh',
+            'needTranslate' => $peerLang !== 'zh',
+            'translated' => '',
+            'recordId' => $recordId,
+        ];
+        try {
+            $out = AccountWorkBatchService::enqueueItem($accountId, 'dm_reply', $payload, 0, $this->writeOwnerId());
+        } catch (\Throwable $e) {
+            return $this->error('重新入队失败：' . $e->getMessage(), 422);
+        }
+        $newItemId = (int)($out['item_id'] ?? 0);
+        DB::query(
+            "UPDATE chat_records SET status='syncing', work_item_id=? WHERE id=?",
+            [$newItemId > 0 ? $newItemId : null, $recordId]
+        );
+        return $this->success([
+            'recordId' => $recordId,
+            'itemId' => $newItemId,
+            'batchId' => (int)($out['batch_id'] ?? 0),
+            'accountId' => $accountId,
+            'mode' => 'requeue',
+        ], '已重新入队发送任务，服务器浏览器会重新发送');
+    }
+
     public function seatItemStatus(Request $request, string $id): Response
     {
         $this->ensureSchema();
@@ -1708,6 +1811,7 @@ class ChatController extends Controller
           content TEXT NOT NULL,
           translated TEXT NULL,
           status VARCHAR(32) NOT NULL DEFAULT 'sent',
+          work_item_id INT NULL,
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         DB::query("CREATE TABLE IF NOT EXISTS chat_connections (
@@ -1744,6 +1848,8 @@ class ChatController extends Controller
                 'translated' => 'ALTER TABLE chat_records ADD COLUMN translated TEXT NULL',
                 'external_id' => 'ALTER TABLE chat_records ADD COLUMN external_id VARCHAR(191) NULL',
                 'owner_id' => 'ALTER TABLE chat_records ADD COLUMN owner_id INT NULL',
+                // 对应坐席分任务：发送失败后点「重发」按这个 id 把任务重置为待执行
+                'work_item_id' => 'ALTER TABLE chat_records ADD COLUMN work_item_id INT NULL',
             ],
             'chat_connections' => [
                 'ai_hosting' => 'ALTER TABLE chat_connections ADD COLUMN ai_hosting TINYINT NOT NULL DEFAULT 0',

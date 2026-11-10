@@ -2291,13 +2291,29 @@ class NodeBridgeController extends Controller
         }
         $aid = (int)$account['id'];
         $translated = (string)$request->input('translated', '');
+        $delivered = (string)$request->input('delivered', '');
         $status = (string)$request->input('status', 'sent');
-        // 带 recordId：该消息已在入队时入库（同步中），这里只更新状态，不再重复插入
+        // 带 recordId：该消息已在入队时入库（同步中），这里更新状态 + 译文（原文入库时已存）
         $recordId = (int)$request->input('recordId', $request->input('record_id', 0));
         if ($recordId > 0) {
             $st = in_array($status, ['sent', 'synced'], true) ? 'synced' : ($status === 'failed' ? 'failed' : $status);
-            DB::query('UPDATE chat_records SET status=? WHERE id=? AND user_id=?', [$st, $recordId, $friendId]);
-            return $this->success(['id' => $recordId, 'account_id' => $aid, 'friend_id' => $friendId, 'status' => $st], '私信状态已更新');
+            if ($translated !== '') {
+                // 译文由 Node 实时翻译后回写：chat_records 里 content=原文、translated=译文
+                DB::query(
+                    'UPDATE chat_records SET status=?, translated=? WHERE id=? AND user_id=?',
+                    [$st, mb_substr($translated, 0, 4000), $recordId, $friendId]
+                );
+            } else {
+                DB::query('UPDATE chat_records SET status=? WHERE id=? AND user_id=?', [$st, $recordId, $friendId]);
+            }
+            return $this->success([
+                'id' => $recordId,
+                'account_id' => $aid,
+                'friend_id' => $friendId,
+                'status' => $st,
+                'translated' => $translated,
+                'delivered' => $delivered,
+            ], '私信状态已更新');
         }
         DB::query(
             "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status)
@@ -2377,6 +2393,47 @@ class NodeBridgeController extends Controller
             'bio' => mb_substr($bio, 0, 200),
             'note' => $note,
         ], $fallback ? "未能判断语种，已按默认英语处理" : "已识别为 {$lang}");
+    }
+
+    /**
+     * 批量查本地会话的语言：搜索结果里展示「已获取过语言」的用户用。
+     * TikTok 搜索结果本身不含语言，只能回查本地 chat_users。
+     */
+    public function friendLangs(Request $request): Response
+    {
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $usernames = $request->input('usernames', []);
+        if (!is_array($usernames)) {
+            $usernames = [];
+        }
+        $usernames = array_slice(array_values(array_unique(array_filter(array_map(
+            static fn($v) => strtolower(trim((string)$v)),
+            $usernames
+        )))), 0, 200);
+        if (!$usernames) {
+            return $this->success(['items' => []]);
+        }
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
+        if ($err = $this->assertNodeAccountRow($account)) {
+            return $err;
+        }
+        $ph = implode(',', array_fill(0, count($usernames), '?'));
+        $params = array_merge([$accountId], $usernames);
+        $rows = DB::select(
+            "SELECT id, LOWER(username) AS uname, lang FROM chat_users
+             WHERE account_id=? AND LOWER(username) IN ({$ph})",
+            $params
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $items[] = [
+                'username' => (string)($r['uname'] ?? ''),
+                'friendId' => (int)($r['id'] ?? 0),
+                'lang' => strtolower(trim((string)($r['lang'] ?? ''))),
+            ];
+        }
+        return $this->success(['items' => $items]);
     }
 
     public function claimTask(Request $request): Response
