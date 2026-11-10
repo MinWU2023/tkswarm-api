@@ -1337,6 +1337,13 @@ class ChatController extends Controller
         $this->ensureSchema();
         DataScope::ensureColumns();
         AccountWorkBatchService::ensureSchema();
+        // 先回收过期/无租约的 running 批次：否则同账号上一次卡死的坐席总任务
+        // 会一直占着 cs_seat 互斥位，新任务永远领不到、也不打开环境
+        try {
+            AccountWorkBatchService::reclaimExpiredLeases();
+        } catch (\Throwable $e) {
+            error_log('[seat_reclaim] ' . $e->getMessage());
+        }
         $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
         $action = strtolower(trim((string)$request->input('action', '')));
         $account = DB::selectOne(
