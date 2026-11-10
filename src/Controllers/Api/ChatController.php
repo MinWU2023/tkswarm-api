@@ -1375,6 +1375,7 @@ class ChatController extends Controller
             'pin_friend' => 'pin_friend',
             'block_user' => 'block_user',
             'delete_chat' => 'delete_chat',
+            'pull_chat' => 'pull_chat',
         ];
         if (!isset($map[$action])) {
             return $this->error('不支持的坐席动作：' . $action, 422);
@@ -1489,7 +1490,7 @@ class ChatController extends Controller
             $payload['toUser'] = $recipient;
         }
         // 会话操作（置顶 / 拉黑 / 删除）：统一走服务器浏览器任务，成功后再回写本地会话状态
-        if (in_array($taskType, ['pin_friend', 'block_user', 'delete_chat'], true)) {
+        if (in_array($taskType, ['pin_friend', 'block_user', 'delete_chat', 'pull_chat'], true)) {
             $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
             if ($friendId < 1) {
                 return $this->error('该操作需要 friendId', 422);

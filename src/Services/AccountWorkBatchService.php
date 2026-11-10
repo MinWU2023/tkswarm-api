@@ -38,7 +38,7 @@ class AccountWorkBatchService
         'ai_lead', 'ai_lead_dm',
         'dm_sync', 'message', 'dm_reply', 'sync_fans',
         'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
-        'pin_friend', 'block_user', 'delete_chat',
+        'pin_friend', 'block_user', 'delete_chat', 'pull_chat',
     ];
     /** @var array<string,int> 越小越先执行 */
     public const TYPE_PRIORITY = [
@@ -55,8 +55,9 @@ class AccountWorkBatchService
         'fetch_lang' => 35,     // 客服：获取对方语种（打开对方主页判断）
         'search_users' => 36,   // 客服：TikTok 搜索用户（临时结果，不落库）
         'pin_friend' => 37,     // 客服：置顶会话（TikTok 无常驻置顶，任务内校验会话存在）
-        'block_user' => 38,     // 客服：拉黑 / 取消拉黑
-        'delete_chat' => 39,    // 客服：删除 TikTok 会话
+        'pull_chat' => 38,      // 客服：拉取会话私信记录（覆盖本地入库）
+        'block_user' => 39,     // 客服：拉黑 / 取消拉黑
+        'delete_chat' => 40,    // 客服：删除 TikTok 会话
         'dm_reply' => 40,       // 回复私信
         'message' => 40,        // 私信类（与回复私信同序）
         'ai_lead' => 45,        // AI拓客
@@ -2028,9 +2029,6 @@ class AccountWorkBatchService
     }
 
     /**
-     * @param array<string,mixed>|null $result
-     */
-    /**
      * 坐席会话操作完成后回写本地会话表：
      *  - pin_friend：置顶 / 取消置顶（TikTok 没有置顶功能，只调整本地会话顺序）
      *  - block_user：拉黑 / 解除拉黑
@@ -2066,6 +2064,58 @@ class AccountWorkBatchService
             DB::query('DELETE FROM chat_records WHERE user_id=?', [$friendId]);
             DB::query('DELETE FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
         }
+    }
+
+    /**
+     * 拉取会话完成：先删掉该会话的旧聊天记录，再把这次从 TikTok 拉到的私信入库。
+     * 按要求写入「对方语种译文字段」(translated)；content 同步留一份原文，
+     * 避免客服关掉翻译时气泡是空的。
+     */
+    private static function persistPulledChatMessages(array $item, ?array $result): void
+    {
+        $payload = json_decode((string)($item['payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $friendId = (int)($payload['friendId'] ?? 0);
+        $accountId = (int)($item['account_id'] ?? 0);
+        if ($friendId < 1 || $accountId < 1) {
+            return;
+        }
+        $messages = is_array($result['messages'] ?? null) ? $result['messages'] : [];
+
+        // 覆盖式入库：先清空旧记录（含失败的、同步中的）
+        DB::query('DELETE FROM chat_records WHERE user_id=?', [$friendId]);
+
+        if (!$messages) {
+            DB::query(
+                'UPDATE chat_users SET last_message=?, last_direction=?, last_message_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                ['', 'in', $friendId]
+            );
+            return;
+        }
+
+        $ownerId = (int)($item['owner_id'] ?? 0);
+        $lastText = '';
+        $lastDirection = 'in';
+        foreach ($messages as $m) {
+            $text = trim((string)($m['content'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $direction = (string)($m['direction'] ?? 'in') === 'out' ? 'out' : 'in';
+            DB::query(
+                "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status, owner_id)
+                 VALUES (?,?,?, 'text', ?, ?, 'sent', ?)",
+                [$accountId, $friendId, $direction, $text, $text, $ownerId]
+            );
+            $lastText = $text;
+            $lastDirection = $direction;
+        }
+        DB::query(
+            'UPDATE chat_users SET last_message=?, last_direction=?, last_message_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [mb_substr($lastText, 0, 200), $lastDirection, $friendId]
+        );
     }
 
     private static function syncSeatRecordsOnBatchFail(int $batchId): void
@@ -2201,6 +2251,15 @@ class AccountWorkBatchService
                 self::syncSeatConversationState($item, $result);
             } catch (\Throwable $e) {
                 error_log('[seat_chat_action] sync failed: ' . $e->getMessage());
+            }
+        }
+
+        // 坐席拉取会话成功：清掉该会话旧记录，把本次拉到的私信写入「对方语种译文字段」
+        if ($status === 'completed' && $type === 'pull_chat') {
+            try {
+                self::persistPulledChatMessages($item, $result);
+            } catch (\Throwable $e) {
+                error_log('[seat_pull_chat] persist failed: ' . $e->getMessage());
             }
         }
 
@@ -3648,7 +3707,7 @@ class AccountWorkBatchService
         return in_array(strtolower(trim($taskType)), [
             'dm_sync', 'message', 'dm_reply', 'sync_fans',
             'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
-            'pin_friend', 'block_user', 'delete_chat',
+            'pin_friend', 'block_user', 'delete_chat', 'pull_chat',
         ], true);
     }
 
