@@ -3134,6 +3134,7 @@ class AccountController extends Controller
         }
 
         // 全库发布记录（不按 material.owner_id / DataScope 过滤）
+        // 注意：独立发布成功时常只回写 publish_status + publish_account_id，platform_video_id 可能仍为空，不能强制要求 video_id
         $publishCountMap = [];
         $publishAtMap = [];
         try {
@@ -3145,7 +3146,7 @@ class AccountController extends Controller
                  WHERE m.publish_account_id IN ({$ph})
                    AND (
                      m.origin='online'
-                     OR (m.publish_status='published' AND TRIM(IFNULL(m.platform_video_id,''))<>'')
+                     OR m.publish_status='published'
                    )
                  GROUP BY m.publish_account_id",
                 $ids
@@ -3157,6 +3158,33 @@ class AccountController extends Controller
                 }
                 $publishCountMap[$aid] = (int)($v['video_count'] ?? 0);
                 $publishAtMap[$aid] = trim((string)($v['last_video_at'] ?? ''));
+            }
+        } catch (\Throwable $e) {
+        }
+
+        // 发布任务成功明细兜底（任务列表里「已完成」但素材未回写时仍能显示）
+        $taskPublishCountMap = [];
+        $taskPublishAtMap = [];
+        try {
+            $taskPubs = DB::select(
+                "SELECT i.account_id,
+                        COUNT(*) AS video_count,
+                        MAX(COALESCE(i.updated_at, i.created_at)) AS last_video_at
+                 FROM task_items i
+                 INNER JOIN tasks t ON t.id=i.task_id
+                 WHERE i.account_id IN ({$ph})
+                   AND i.status='success'
+                   AND t.type='publish'
+                 GROUP BY i.account_id",
+                $ids
+            ) ?: [];
+            foreach ($taskPubs as $v) {
+                $aid = (int)($v['account_id'] ?? 0);
+                if ($aid <= 0) {
+                    continue;
+                }
+                $taskPublishCountMap[$aid] = (int)($v['video_count'] ?? 0);
+                $taskPublishAtMap[$aid] = trim((string)($v['last_video_at'] ?? ''));
             }
         } catch (\Throwable $e) {
         }
@@ -3237,16 +3265,20 @@ class AccountController extends Controller
             $followers = (int)($p['followers_count'] ?? 0);
             $profileVideos = (int)($p['videos_count'] ?? 0);
             $publishVideos = (int)($publishCountMap[$id] ?? 0);
+            $taskVideos = (int)($taskPublishCountMap[$id] ?? 0);
             $listedVideos = (int)($videoCountMap[$id] ?? 0);
-            // 优先全库 materials 发布数，再兜底资料/同步表
-            $videos = max($publishVideos, $profileVideos, $listedVideos);
+            // 优先全库 materials / 成功发布任务，再兜底资料/同步表
+            $videos = max($publishVideos, $taskVideos, $profileVideos, $listedVideos);
             $profileSynced = trim((string)($p['last_synced_at'] ?? ''));
             $publishAt = trim((string)($publishAtMap[$id] ?? ''));
+            $taskAt = trim((string)($taskPublishAtMap[$id] ?? ''));
             $videoAt = trim((string)($videoSyncMap[$id] ?? ''));
-            // 最后更新优先取全库发布记录时间
-            $lastVideoAt = $publishAt !== '' ? $publishAt : ($videoAt !== '' ? $videoAt : $profileSynced);
+            // 最后更新：materials 发布时间 > 任务成功时间 > 同步表 > 资料同步
+            $lastVideoAt = $publishAt !== ''
+                ? $publishAt
+                : ($taskAt !== '' ? $taskAt : ($videoAt !== '' ? $videoAt : $profileSynced));
             $row['has_tiktok_profile'] = $hasProfile ? 1 : 0;
-            $row['has_published_videos'] = $publishVideos > 0 || $listedVideos > 0 ? 1 : 0;
+            $row['has_published_videos'] = ($publishVideos > 0 || $taskVideos > 0 || $listedVideos > 0) ? 1 : 0;
             $row['followers_count'] = $followers;
             $row['videos_count'] = $videos;
             $row['profile_synced_at'] = $profileSynced;
