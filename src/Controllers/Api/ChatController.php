@@ -1459,6 +1459,8 @@ class ChatController extends Controller
             $payload['limit'] = max(5, min(100, (int)$request->input('limit', 40)));
             // 结果只在任务返回里临时可见，不写 chat_users
             $payload['temporary'] = true;
+            // 下次搜索即刷新：先清掉该账号上一次的缓存，完成后由 finishItem 写入最新结果
+            \App\Services\RedisCache::clearSeatSearch($accountId);
         }
         if ($taskType === 'sync_fans') {
             $listKind = in_array($action, ['sync_following', 'refresh_following'], true) ? 'following' : 'followers';
@@ -1673,6 +1675,34 @@ class ChatController extends Controller
                 'seatAction' => $payload['seatAction'] ?? '',
                 'listKind' => $payload['listKind'] ?? '',
             ],
+        ]);
+    }
+
+    /**
+     * 读取某账号上一次的客服搜索结果（Redis，每账号独立，有效期一天；过期即为空）。
+     * GET /api/chat/search-cache?accountId=
+     */
+    public function searchCache(Request $request): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', 0);
+        if ($accountId < 1) {
+            return $this->error('请指定账号', 422);
+        }
+        $account = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$accountId]);
+        if ($err = $this->assertChatAccountVisible($account)) {
+            return $err;
+        }
+        $cached = \App\Services\RedisCache::loadSeatSearch($accountId);
+        return $this->success([
+            'accountId' => $accountId,
+            'cached' => $cached !== null,
+            'keyword' => (string)($cached['keyword'] ?? ''),
+            'items' => is_array($cached['items'] ?? null) ? $cached['items'] : [],
+            'total' => (int)($cached['total'] ?? 0),
+            'savedAt' => (string)($cached['savedAt'] ?? ''),
+            'expiresIn' => $cached['expiresIn'] ?? null,
         ]);
     }
 

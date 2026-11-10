@@ -2137,6 +2137,23 @@ class AccountWorkBatchService
             self::syncVideoBoostWorkItem($item, $status, $result, $errorMessage);
         }
 
+        // 客服坐席搜索用户：结果按账号独立写入 Redis（有效期一天），页面切走/刷新也能取回
+        if ($status === 'completed' && $type === 'search_users' && is_array($result)) {
+            try {
+                $searchAccountId = (int)($item['account_id'] ?? 0);
+                if ($searchAccountId > 0) {
+                    \App\Services\RedisCache::saveSeatSearch($searchAccountId, [
+                        'keyword' => (string)($result['keyword'] ?? ''),
+                        'total' => (int)($result['total'] ?? 0),
+                        'items' => is_array($result['items'] ?? null) ? $result['items'] : [],
+                        'itemId' => $itemId,
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                error_log('[seat_search_cache] save failed: ' . $e->getMessage());
+            }
+        }
+
         if ($status === 'completed' && $type === 'pull_stats') {
             try {
                 $fresh = DB::selectOne('SELECT * FROM account_work_items WHERE id=?', [$itemId]) ?: $item;

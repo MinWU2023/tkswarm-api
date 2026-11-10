@@ -1015,15 +1015,27 @@ class PortalApiController extends Controller
                     $coverUrl = '/api/materials/' . (int)$r['id'] . '/cover';
                 }
                 $title = trim((string)($r['share_title'] ?? '')) ?: trim((string)($r['name'] ?? '')) ?: ('视频 ' . (string)($r['platform_video_id'] ?? ''));
+                $views = max(0, (int)($r['view_count'] ?? 0));
+                $likes = max(0, (int)($r['like_count'] ?? 0));
+                $comments = max(0, (int)($r['comment_count'] ?? 0));
+                // 历史脏数据：播放被误写入赞/评时，展示侧先清掉
+                if ($views > 0) {
+                    if ($likes === $views) {
+                        $likes = 0;
+                    }
+                    if ($comments === $views) {
+                        $comments = 0;
+                    }
+                }
                 $recentVideos[] = [
                     'materialId' => (int)$r['id'],
                     'videoId' => trim((string)($r['platform_video_id'] ?? '')),
                     'videoUrl' => (string)($r['platform_video_url'] ?? ''),
                     'title' => $title,
                     'coverUrl' => $coverUrl,
-                    'views' => (int)($r['view_count'] ?? 0),
-                    'likes' => (int)($r['like_count'] ?? 0),
-                    'comments' => (int)($r['comment_count'] ?? 0),
+                    'views' => $views,
+                    'likes' => $likes,
+                    'comments' => $comments,
                     'origin' => (string)($r['origin'] ?? ''),
                     'publishStatus' => (string)($r['publish_status'] ?? ''),
                     'postedAt' => (string)($r['platform_published_at'] ?? ''),

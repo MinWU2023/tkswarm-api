@@ -354,6 +354,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/chat/messages/resend', ChatController::class . '@resendFailedMessage');
     Router::post('/api/chat/seat-tasks', ChatController::class . '@enqueueSeatTask');
     Router::get('/api/chat/seat-items/{id}', ChatController::class . '@seatItemStatus');
+    Router::get('/api/chat/search-cache', ChatController::class . '@searchCache');
     Router::get('/api/chat/tags', ChatController::class . '@tags');
     Router::post('/api/chat/tags', ChatController::class . '@createTag');
     Router::delete('/api/chat/tags/{id}', ChatController::class . '@deleteTag');

@@ -2099,9 +2099,20 @@ class AccountController extends Controller
                 $content = [];
             }
         }
-        // 读接口时补齐素材链接/封面（入库时 base64 过长可能未写 cover_url）
+        // 读接口时：纠错「播放=点赞=评论」列错位残留 + 补齐素材链接/封面
         if ($content) {
             foreach ($content as &$cRow) {
+                $viewsNum = max(0, (int)($cRow['views_num'] ?? 0));
+                $likesNum = max(0, (int)($cRow['likes_num'] ?? 0));
+                $commentsNum = max(0, (int)($cRow['comments_num'] ?? 0));
+                if ($viewsNum > 0) {
+                    if ($likesNum === $viewsNum) {
+                        $cRow['likes_num'] = 0;
+                    }
+                    if ($commentsNum === $viewsNum) {
+                        $cRow['comments_num'] = 0;
+                    }
+                }
                 $mid = (int)($cRow['material_id'] ?? 0);
                 $needUrl = trim((string)($cRow['video_url'] ?? '')) === '';
                 $needCover = trim((string)($cRow['cover_url'] ?? '')) === '';

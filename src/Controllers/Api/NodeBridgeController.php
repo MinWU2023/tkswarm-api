@@ -688,6 +688,19 @@ class NodeBridgeController extends Controller
                 if ($materialId > 0) {
                     $matchedMaterials += 1;
                 }
+                // Studio 表头列错位时常见：播放=点赞=评论；入库前清掉误读的赞/评
+                $viewsNum = max(0, (int)($row['views'] ?? 0));
+                $likesNum = max(0, (int)($row['likes'] ?? 0));
+                $commentsNum = max(0, (int)($row['comments'] ?? 0));
+                $sharesNum = max(0, (int)($row['shares'] ?? 0));
+                if ($viewsNum > 0) {
+                    if ($likesNum === $viewsNum) {
+                        $likesNum = 0;
+                    }
+                    if ($commentsNum === $viewsNum) {
+                        $commentsNum = 0;
+                    }
+                }
                 DB::query(
                     'INSERT INTO tiktok_studio_content(
                         account_id, row_no, title, views_num, likes_num, comments_num, shares_num, posted_at,
@@ -697,10 +710,10 @@ class NodeBridgeController extends Controller
                         $aid,
                         $rowNo,
                         $title,
-                        (int)($row['views'] ?? 0),
-                        (int)($row['likes'] ?? 0),
-                        (int)($row['comments'] ?? 0),
-                        (int)($row['shares'] ?? 0),
+                        $viewsNum,
+                        $likesNum,
+                        $commentsNum,
+                        $sharesNum,
                         mb_substr((string)($row['postedAt'] ?? $row['posted_at'] ?? ''), 0, 64),
                         mb_substr($videoId, 0, 191),
                         mb_substr($videoUrl, 0, 1000),
@@ -708,6 +721,27 @@ class NodeBridgeController extends Controller
                         $materialId,
                     ]
                 );
+                // 已匹配素材时回写互动数（0 不覆盖已有值，避免把错位清零盖掉旧正确数据）
+                if ($materialId > 0 && ($viewsNum > 0 || $likesNum > 0 || $commentsNum > 0)) {
+                    try {
+                        DB::query(
+                            'UPDATE materials SET
+                                view_count=IF(?=0, view_count, ?),
+                                like_count=IF(?=0, like_count, ?),
+                                comment_count=IF(?=0, comment_count, ?),
+                                updated_at=CURRENT_TIMESTAMP
+                             WHERE id=?',
+                            [
+                                $viewsNum, $viewsNum,
+                                $likesNum, $likesNum,
+                                $commentsNum, $commentsNum,
+                                $materialId,
+                            ]
+                        );
+                    } catch (\Throwable $e) {
+                        // 忽略素材回写失败
+                    }
+                }
                 // 同步到 tiktok_videos，便于「最近同步视频」展示
                 if ($videoId !== '') {
                     try {
@@ -1992,6 +2026,15 @@ class NodeBridgeController extends Controller
             $views = max(0, (int)($row['views'] ?? $row['viewCount'] ?? $row['view_count'] ?? 0));
             $likes = max(0, (int)($row['likes'] ?? $row['likeCount'] ?? $row['like_count'] ?? 0));
             $comments = max(0, (int)($row['comments'] ?? $row['commentCount'] ?? $row['comment_count'] ?? 0));
+            // 播放/点赞/评论三者相同：多为 Studio 列错位，勿把播放量写入赞/评
+            if ($views > 0) {
+                if ($likes === $views) {
+                    $likes = 0;
+                }
+                if ($comments === $views) {
+                    $comments = 0;
+                }
+            }
             $postedAt = trim((string)($row['postedAt'] ?? $row['posted_at'] ?? $row['platformPublishedAt'] ?? ''));
             $postedSql = null;
             if ($postedAt !== '' && preg_match('/^\d{4}-\d{2}-\d{2}/', $postedAt)) {
