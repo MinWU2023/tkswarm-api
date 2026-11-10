@@ -1444,7 +1444,9 @@ class ChatController extends Controller
             $keyword = trim((string)$request->input('keyword', $request->input('q', '')));
             $kwLen = mb_strlen($keyword);
             if ($kwLen <= 5) {
-                return $this->error("搜索词必须大于 5 个字符（当前 {$kwLen} 个）", 422);
+                // 带上收到的原始值：前端传空时能立刻看出是取值问题还是转发丢参数
+                $got = $keyword === '' ? '空值' : "「{$keyword}」";
+                return $this->error("搜索词必须大于 5 个字符（当前 {$kwLen} 个，收到 {$got}）", 422);
             }
             $payload['keyword'] = $keyword;
             $payload['limit'] = max(5, min(100, (int)$request->input('limit', 40)));
