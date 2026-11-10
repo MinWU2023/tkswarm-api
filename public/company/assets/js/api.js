@@ -135,6 +135,21 @@
     },
     chatMessages: function (params) {
       return request('/api/company/chat/messages' + qs(params), { method: 'GET' });
+    },
+    createChatFriend: function (body) {
+      return request('/api/company/chat/friends', { method: 'POST', body: body || {} });
+    },
+    enqueueSeatTask: function (body) {
+      return request('/api/company/chat/seat-tasks', { method: 'POST', body: body || {} });
+    },
+    seatItemStatus: function (id) {
+      return request('/api/company/chat/seat-items/' + id, { method: 'GET' });
+    },
+    chatSearchCache: function (params) {
+      return request('/api/company/chat/search-cache' + qs(params), { method: 'GET' });
+    },
+    resendChatMessage: function (body) {
+      return request('/api/company/chat/messages/resend', { method: 'POST', body: body || {} });
     }
   };
 })(window);

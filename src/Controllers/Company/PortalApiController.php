@@ -7,12 +7,14 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
+use App\Services\AccountBrowserEnvService;
 use App\Services\AccountWorkBatchService;
 use App\Services\AiLeadExecutionService;
 use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\PullCommentService;
+use App\Services\RedisCache;
 use App\Services\TikTokVideoScreenshotService;
 use App\Services\CustomVideoTypeService;
 use App\Services\VideoDeliveryService;
@@ -1817,7 +1819,7 @@ class PortalApiController extends Controller
     }
 
     /**
-     * 企业客服坐席：账号列表（只读，企业权限范围）
+     * 企业客服坐席：账号列表（企业权限范围；动作经运营专员/运营管理中转入服务器浏览器）
      */
     public function chatAccounts(Request $request): Response
     {
@@ -1825,6 +1827,7 @@ class PortalApiController extends Controller
             return $err;
         }
         DataScope::ensureColumns();
+        AccountBrowserEnvService::ensureSchema();
 
         $page = max(1, (int)$request->get('page', 1));
         $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
@@ -1846,6 +1849,7 @@ class PortalApiController extends Controller
         $from = 'FROM accounts a
              LEFT JOIN chat_connections c ON c.account_id=a.id';
         $select = "SELECT a.id, a.username, a.nickname, a.login_status, a.chat_status, a.enabled,
+                a.browser_profile_id, a.tkswarm_browser_profile_id, a.linux_browser_profile_id,
                 COALESCE(c.status,'offline') AS connection_status,
                 (SELECT COUNT(*) FROM chat_users f WHERE f.account_id=a.id) AS friend_count,
                 (SELECT COALESCE(SUM(f.unread_count),0) FROM chat_users f WHERE f.account_id=a.id) AS unread_count";
@@ -1894,6 +1898,9 @@ class PortalApiController extends Controller
             if (!$r) {
                 return null;
             }
+            $hasEnv = trim((string)($r['tkswarm_browser_profile_id'] ?? '')) !== ''
+                || trim((string)($r['linux_browser_profile_id'] ?? '')) !== ''
+                || trim((string)($r['browser_profile_id'] ?? '')) !== '';
             return [
                 'id' => (int)$r['id'],
                 'username' => (string)($r['username'] ?? ''),
@@ -1904,6 +1911,7 @@ class PortalApiController extends Controller
                 'connectionStatus' => (string)($r['connection_status'] ?? 'offline'),
                 'friendCount' => (int)($r['friend_count'] ?? 0),
                 'unreadCount' => (int)($r['unread_count'] ?? 0),
+                'hasEnv' => $hasEnv,
             ];
         };
 
@@ -1920,18 +1928,12 @@ class PortalApiController extends Controller
                 'online' => (int)($stats['online'] ?? 0),
                 'unread' => (int)($unreadRow['unread'] ?? 0),
             ],
-            'capabilities' => [
-                'pullDm' => false,
-                'analyze' => false,
-                'pullFollow' => false,
-                'searchUser' => false,
-                'send' => false,
-            ],
+            'capabilities' => $this->companySeatCapabilities(),
         ]);
     }
 
     /**
-     * 企业客服坐席：好友/粉丝/关注列表（只读，可看类型用户，不可拉取）
+     * 企业客服坐席：好友/粉丝/关注列表（拉取动作走 seat-tasks → 运营中转）
      */
     public function chatFriends(Request $request): Response
     {
@@ -2011,17 +2013,12 @@ class PortalApiController extends Controller
             'page' => $page,
             'pageSize' => $pageSize,
             'counts' => $counts,
-            'capabilities' => [
-                'pullDm' => false,
-                'pullFans' => false,
-                'pullFollowing' => false,
-                'searchUser' => false,
-            ],
+            'capabilities' => $this->companySeatCapabilities(),
         ]);
     }
 
     /**
-     * 企业客服坐席：会话消息（只读）
+     * 企业客服坐席：会话消息（发送走 seat-tasks → 运营中转）
      */
     public function chatMessages(Request $request): Response
     {
@@ -2052,7 +2049,7 @@ class PortalApiController extends Controller
         $offset = ($page - 1) * $pageSize;
         $total = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM chat_records WHERE user_id=?', [$friendId])['c'] ?? 0);
         $items = DB::select(
-            "SELECT id, user_id, direction, msg_type, content, created_at
+            "SELECT id, user_id, direction, msg_type, content, translated, status, work_item_id, created_at
              FROM chat_records WHERE user_id=?
              ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}",
             [$friendId]
@@ -2077,18 +2074,542 @@ class PortalApiController extends Controller
                     'direction' => (string)($r['direction'] ?? 'in'),
                     'msgType' => (string)($r['msg_type'] ?? 'text'),
                     'content' => (string)($r['content'] ?? ''),
+                    'translated' => (string)($r['translated'] ?? ''),
+                    'status' => (string)($r['status'] ?? ''),
+                    'workItemId' => (int)($r['work_item_id'] ?? 0),
                     'createdAt' => (string)($r['created_at'] ?? ''),
                 ];
             }, $items),
             'total' => $total,
             'page' => $page,
             'pageSize' => $pageSize,
-            'capabilities' => [
-                'send' => false,
-                'pullDm' => false,
-                'analyze' => false,
+            'capabilities' => $this->companySeatCapabilities(),
+        ]);
+    }
+
+    /**
+     * 企业客服坐席：入队服务器浏览器任务。
+     * 发布者（batch/item owner_id）= 关联企业的运营专员；没有则随机运营管理。
+     */
+    public function enqueueSeatTask(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        try {
+            AccountWorkBatchService::reclaimExpiredLeases();
+        } catch (\Throwable $e) {
+            error_log('[company_seat_reclaim] ' . $e->getMessage());
+        }
+
+        $accountId = (int)$request->input('accountId', $request->input('account_id', 0));
+        $action = strtolower(trim((string)$request->input('action', '')));
+        [$account, $accErr] = $this->loadCompanyChatAccount($accountId);
+        if ($accErr) {
+            return $accErr;
+        }
+
+        $relay = $this->resolveCompanySeatRelay($account);
+        if ($relay instanceof Response) {
+            return $relay;
+        }
+        $publisherId = (int)($relay['ownerId'] ?? 0);
+        if ($publisherId < 1) {
+            return $this->error('未找到可用的运营专员或运营管理，无法推送服务器浏览器任务', 422);
+        }
+
+        $hasEnv = trim((string)($account['tkswarm_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['linux_browser_profile_id'] ?? '')) !== ''
+            || trim((string)($account['browser_profile_id'] ?? '')) !== '';
+        if (!$hasEnv && !in_array($action, ['logout'], true)) {
+            return $this->error('账号尚未绑定自研/服务器环境包，请联系运营先创建并上传环境包', 422);
+        }
+
+        $map = [
+            'login' => 'cs_login',
+            'logout' => 'cs_logout',
+            'detect' => 'cs_detect',
+            'send' => 'dm_reply',
+            'dm_sync' => 'dm_sync',
+            'sync_fans' => 'sync_fans',
+            'sync_following' => 'sync_fans',
+            'refresh_fans' => 'sync_fans',
+            'refresh_following' => 'sync_fans',
+            'fetch_lang' => 'fetch_lang',
+            'search_users' => 'search_users',
+            'pin_friend' => 'pin_friend',
+            'block_user' => 'block_user',
+            'delete_chat' => 'delete_chat',
+            'pull_chat' => 'pull_chat',
+        ];
+        if (!isset($map[$action])) {
+            return $this->error('不支持的坐席动作：' . $action, 422);
+        }
+        $taskType = $map[$action];
+        $payload = [
+            'browserBackend' => 'linux',
+            'browser_backend' => 'linux',
+            'source' => 'company.chat.seat',
+            'seatAction' => $action,
+            'autoSend' => true,
+            'companyRelay' => [
+                'ownerId' => $publisherId,
+                'role' => (string)($relay['role'] ?? ''),
+                'username' => (string)($relay['username'] ?? ''),
+                'nickname' => (string)($relay['nickname'] ?? ''),
+                'byUserId' => (int)(($GLOBALS['auth_user']['id'] ?? 0)),
+            ],
+        ];
+
+        if ($taskType === 'dm_reply') {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            $content = trim((string)$request->input('content', ''));
+            if ($friendId < 1 || $content === '') {
+                return $this->error('发送私信需要 friendId 与 content', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            try {
+                $remaining = \App\Services\AiLeadVideoWeightService::getRemainingToday($accountId);
+                $inflight = (int)(DB::selectOne(
+                    "SELECT COUNT(*) AS c FROM account_work_items WHERE account_id=? AND task_type='dm_reply' AND status IN ('pending','running')",
+                    [$accountId]
+                )['c'] ?? 0);
+                if ($remaining - $inflight < 1) {
+                    return $this->error('今日私信次数已使用完，请明日再试', 422);
+                }
+            } catch (\Throwable $e) {
+                error_log('[company_seat_dm_quota] ' . $e->getMessage());
+            }
+            $payload['friendId'] = $friendId;
+            $payload['content'] = $content;
+            $payload['recipient'] = (string)($friend['username'] ?: $friend['friend_uid'] ?: '');
+            $payload['toUser'] = $payload['recipient'];
+            $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+            if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+                $peerLang = 'en';
+            }
+            $payload['peerLang'] = $peerLang;
+            $payload['sourceLang'] = 'zh';
+            $payload['needTranslate'] = $peerLang !== 'zh';
+            $payload['translated'] = '';
+            DB::query(
+                "INSERT INTO chat_records(account_id, user_id, direction, msg_type, content, translated, status, owner_id)
+                 VALUES (?,?, 'out', 'text', ?, '', 'syncing', ?)",
+                [$accountId, $friendId, $content, $this->writeOwnerId()]
+            );
+            $recordId = (int)DB::getPdo()->lastInsertId();
+            $payload['recordId'] = $recordId;
+            DB::query(
+                "UPDATE chat_users SET last_message=?, last_direction='out', last_message_at=CURRENT_TIMESTAMP, unread_count=0, is_new=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [mb_substr($content, 0, 200), $friendId]
+            );
+        }
+        if ($taskType === 'dm_sync') {
+            $payload['maxConversations'] = max(5, min(40, (int)$request->input('maxConversations', 30)));
+            $payload['maxMessagesPerChat'] = max(1, min(50, (int)$request->input('maxMessagesPerChat', 10)));
+            $payload['preferBit'] = true;
+            $payload['via'] = 'bit';
+        }
+        if ($taskType === 'search_users') {
+            $keyword = trim((string)$request->input('keyword', $request->input('q', '')));
+            $kwLen = mb_strlen($keyword);
+            if ($kwLen <= 5) {
+                $got = $keyword === '' ? '空值' : "「{$keyword}」";
+                return $this->error("搜索词必须大于 5 个字符（当前 {$kwLen} 个，收到 {$got}）", 422);
+            }
+            $payload['keyword'] = $keyword;
+            $payload['limit'] = max(5, min(100, (int)$request->input('limit', 40)));
+            $payload['temporary'] = true;
+            RedisCache::clearSeatSearch($accountId);
+        }
+        if ($taskType === 'sync_fans') {
+            $listKind = in_array($action, ['sync_following', 'refresh_following'], true) ? 'following' : 'followers';
+            $payload['listKind'] = $listKind;
+            $payload['maxPerRun'] = max(50, min(2000, (int)$request->input('maxPerRun', 500)));
+            $payload['accountIds'] = [$accountId];
+        }
+        if ($taskType === 'fetch_lang') {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            if ($friendId < 1) {
+                return $this->error('获取语言需要 friendId', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            $recipient = trim((string)($friend['username'] ?: $friend['friend_uid'] ?: ''));
+            if ($recipient === '') {
+                return $this->error('该好友缺少用户名，无法打开主页判断语种', 422);
+            }
+            $payload['friendId'] = $friendId;
+            $payload['recipient'] = $recipient;
+            $payload['toUser'] = $recipient;
+        }
+        if (in_array($taskType, ['pin_friend', 'block_user', 'delete_chat', 'pull_chat'], true)) {
+            $friendId = (int)$request->input('friendId', $request->input('friend_id', 0));
+            if ($friendId < 1) {
+                return $this->error('该操作需要 friendId', 422);
+            }
+            $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+            if (!$friend) {
+                return $this->error('好友不存在', 404);
+            }
+            $recipient = trim((string)($friend['username'] ?: $friend['friend_uid'] ?: ''));
+            if ($recipient === '') {
+                return $this->error('该会话缺少用户名，无法在 TikTok 上定位会话', 422);
+            }
+            $payload['friendId'] = $friendId;
+            $payload['recipient'] = $recipient;
+            $payload['toUser'] = $recipient;
+            if ($taskType === 'pin_friend') {
+                $payload['pinned'] = filter_var($request->input('pinned', true), FILTER_VALIDATE_BOOLEAN);
+            }
+            if ($taskType === 'block_user') {
+                $payload['blocked'] = filter_var($request->input('blocked', true), FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        try {
+            $out = AccountWorkBatchService::enqueueItem(
+                $accountId,
+                $taskType,
+                $payload,
+                0,
+                $publisherId
+            );
+            $batchId = (int)($out['batch_id'] ?? 0);
+            $itemId = (int)($out['item_id'] ?? 0);
+            if ($itemId > 0 && !empty($payload['recordId'])) {
+                DB::query(
+                    'UPDATE chat_records SET work_item_id=? WHERE id=?',
+                    [$itemId, (int)$payload['recordId']]
+                );
+            }
+            if ($batchId > 0) {
+                $relayLabel = (string)($relay['nickname'] ?: $relay['username'] ?: ('#' . $publisherId));
+                AccountWorkBatchService::appendLog(
+                    $batchId,
+                    $itemId,
+                    "企业客服坐席：账号#{$accountId} 动作={$action}/{$taskType} 已入队（linux / cs_seat，中转={$relayLabel}）",
+                    'info',
+                    $accountId,
+                    0,
+                    ['seatAction' => $action, 'taskType' => $taskType, 'companyRelay' => $relay]
+                );
+            }
+            return $this->success([
+                'accountId' => $accountId,
+                'action' => $action,
+                'taskType' => $taskType,
+                'batchId' => $batchId,
+                'itemId' => $itemId,
+                'browserBackend' => 'linux',
+                'batchScope' => 'cs_seat',
+                'publisher' => [
+                    'ownerId' => $publisherId,
+                    'role' => (string)($relay['role'] ?? ''),
+                    'username' => (string)($relay['username'] ?? ''),
+                    'nickname' => (string)($relay['nickname'] ?? ''),
+                ],
+            ], '已通过运营中转推送坐席任务到服务器浏览器队列');
+        } catch (\Throwable $e) {
+            if (!empty($payload['recordId'])) {
+                DB::query("UPDATE chat_records SET status='failed' WHERE id=?", [(int)$payload['recordId']]);
+            }
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /** 企业客服坐席：轮询分任务状态 */
+    public function seatItemStatus(Request $request, string $id): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        $itemId = (int)$id;
+        $row = AccountWorkBatchService::getWorkItem($itemId);
+        if (!$row) {
+            return $this->error('坐席任务不存在', 404);
+        }
+        [$account, $accErr] = $this->loadCompanyChatAccount((int)($row['account_id'] ?? 0));
+        if ($accErr) {
+            return $accErr;
+        }
+        unset($account);
+        $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $result = json_decode((string)($row['result_json'] ?? '{}'), true);
+        if (!is_array($result)) {
+            $result = [];
+        }
+        return $this->success([
+            'itemId' => $itemId,
+            'batchId' => (int)($row['batch_id'] ?? 0),
+            'accountId' => (int)($row['account_id'] ?? 0),
+            'taskType' => (string)($row['task_type'] ?? ''),
+            'status' => (string)($row['status'] ?? ''),
+            'batchStatus' => (string)($row['batch_status'] ?? ''),
+            'errorMessage' => (string)($row['error_message'] ?? $row['batch_last_error'] ?? ''),
+            'loginStatus' => (string)($row['login_status'] ?? ''),
+            'result' => $result,
+            'payload' => [
+                'seatAction' => $payload['seatAction'] ?? '',
+                'listKind' => $payload['listKind'] ?? '',
             ],
         ]);
+    }
+
+    /** 企业客服坐席：读取搜索缓存 */
+    public function searchCache(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', $request->get('accountId', 0));
+        if ($accountId < 1) {
+            return $this->error('请指定账号', 422);
+        }
+        [, $accErr] = $this->loadCompanyChatAccount($accountId);
+        if ($accErr) {
+            return $accErr;
+        }
+        $cached = RedisCache::loadSeatSearch($accountId);
+        return $this->success([
+            'accountId' => $accountId,
+            'cached' => $cached !== null,
+            'keyword' => (string)($cached['keyword'] ?? ''),
+            'items' => is_array($cached['items'] ?? null) ? $cached['items'] : [],
+            'total' => (int)($cached['total'] ?? 0),
+            'savedAt' => (string)($cached['savedAt'] ?? ''),
+            'expiresIn' => $cached['expiresIn'] ?? null,
+        ]);
+    }
+
+    /** 企业客服坐席：建立/复用本地会话（搜索结果点开发信） */
+    public function createChatFriend(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        $accountId = (int)$request->input('accountId', 0);
+        $friendUid = trim((string)$request->input('friendUid', $request->input('uid', '')));
+        $username = trim((string)$request->input('username', ''));
+        $nickname = trim((string)$request->input('nickname', ''));
+        if ($accountId < 1 || $friendUid === '') {
+            return $this->error('请指定账号与好友 UID', 422);
+        }
+        [, $accErr] = $this->loadCompanyChatAccount($accountId);
+        if ($accErr) {
+            return $accErr;
+        }
+        $ownerId = $this->writeOwnerId();
+        $relation = trim((string)$request->input('relation', 'stranger')) ?: 'stranger';
+        $userType = trim((string)$request->input('userType', $request->input('user_type', 'dm'))) ?: 'dm';
+        try {
+            DB::query(
+                'INSERT INTO chat_users(account_id, user_type, friend_uid, username, nickname, relation, is_new, owner_id) VALUES (?,?,?,?,?,?,1,?)',
+                [$accountId, $userType, $friendUid, $username ?: $friendUid, $nickname, $relation, $ownerId]
+            );
+            $id = (int)DB::getPdo()->lastInsertId();
+        } catch (\Throwable $e) {
+            $row = DB::selectOne('SELECT * FROM chat_users WHERE account_id=? AND friend_uid=?', [$accountId, $friendUid]);
+            return $this->success($this->mapCompanyChatFriend($row ?: []), '好友已存在');
+        }
+        $row = DB::selectOne('SELECT * FROM chat_users WHERE id=?', [$id]);
+        return $this->success($this->mapCompanyChatFriend($row ?: ['id' => $id, 'account_id' => $accountId]), '好友已添加');
+    }
+
+    /** 企业客服坐席：重发失败消息（重置/重入队，仍走运营中转 owner） */
+    public function resendFailedMessage(Request $request): Response
+    {
+        if ($err = $this->gate($request)) {
+            return $err;
+        }
+        DataScope::ensureColumns();
+        AccountWorkBatchService::ensureSchema();
+        $recordId = (int)$request->input('recordId', $request->input('record_id', 0));
+        if ($recordId < 1) {
+            return $this->error('recordId 必填', 422);
+        }
+        $record = DB::selectOne('SELECT * FROM chat_records WHERE id=?', [$recordId]);
+        if (!$record) {
+            return $this->error('消息不存在', 404);
+        }
+        if ((string)($record['direction'] ?? '') !== 'out') {
+            return $this->error('只有自己发出的消息可以重发', 422);
+        }
+        $accountId = (int)($record['account_id'] ?? 0);
+        [$account, $accErr] = $this->loadCompanyChatAccount($accountId);
+        if ($accErr) {
+            return $accErr;
+        }
+        $status = (string)($record['status'] ?? '');
+        if (!in_array($status, ['failed', 'syncing'], true)) {
+            return $this->error("只有发送失败的消息可以重发（当前状态：{$status}）", 422);
+        }
+        $friendId = (int)$record['user_id'];
+        $itemId = (int)($record['work_item_id'] ?? 0);
+        if ($itemId < 1) {
+            $found = DB::selectOne(
+                "SELECT id FROM account_work_items
+                 WHERE account_id=? AND task_type='dm_reply' AND payload_json LIKE ?
+                 ORDER BY id DESC LIMIT 1",
+                [$accountId, '%"recordId":' . $recordId . '%']
+            );
+            $itemId = $found ? (int)$found['id'] : 0;
+        }
+        if ($itemId > 0) {
+            try {
+                AccountWorkBatchService::resetItem($itemId);
+            } catch (\Throwable $e) {
+                return $this->error('重置任务失败：' . $e->getMessage(), 422);
+            }
+            DB::query("UPDATE chat_records SET status='syncing' WHERE id=?", [$recordId]);
+            return $this->success([
+                'recordId' => $recordId,
+                'itemId' => $itemId,
+                'accountId' => $accountId,
+                'mode' => 'reset',
+            ], '已把该消息的发送任务重置为待执行，服务器浏览器会重新发送');
+        }
+
+        $relay = $this->resolveCompanySeatRelay($account);
+        if ($relay instanceof Response) {
+            return $relay;
+        }
+        $publisherId = (int)($relay['ownerId'] ?? 0);
+        if ($publisherId < 1) {
+            return $this->error('未找到可用的运营专员或运营管理，无法重发', 422);
+        }
+        $friend = DB::selectOne('SELECT * FROM chat_users WHERE id=? AND account_id=?', [$friendId, $accountId]);
+        if (!$friend) {
+            return $this->error('好友不存在，无法重发', 404);
+        }
+        $content = trim((string)($record['content'] ?? ''));
+        if ($content === '') {
+            return $this->error('原消息内容为空，无法重发', 422);
+        }
+        $peerLang = strtolower(trim((string)($friend['lang'] ?? '')));
+        if (!in_array($peerLang, ['zh', 'en', 'ja', 'ko', 'es'], true)) {
+            $peerLang = 'en';
+        }
+        $payload = [
+            'browserBackend' => 'linux',
+            'browser_backend' => 'linux',
+            'source' => 'company.chat.seat',
+            'seatAction' => 'send',
+            'autoSend' => true,
+            'friendId' => $friendId,
+            'content' => $content,
+            'recipient' => (string)($friend['username'] ?: $friend['friend_uid'] ?: ''),
+            'toUser' => (string)($friend['username'] ?: $friend['friend_uid'] ?: ''),
+            'peerLang' => $peerLang,
+            'sourceLang' => 'zh',
+            'needTranslate' => $peerLang !== 'zh',
+            'translated' => '',
+            'recordId' => $recordId,
+            'companyRelay' => [
+                'ownerId' => $publisherId,
+                'role' => (string)($relay['role'] ?? ''),
+                'byUserId' => (int)(($GLOBALS['auth_user']['id'] ?? 0)),
+            ],
+        ];
+        try {
+            $out = AccountWorkBatchService::enqueueItem($accountId, 'dm_reply', $payload, 0, $publisherId);
+        } catch (\Throwable $e) {
+            return $this->error('重新入队失败：' . $e->getMessage(), 422);
+        }
+        $newItemId = (int)($out['item_id'] ?? 0);
+        DB::query(
+            "UPDATE chat_records SET status='syncing', work_item_id=? WHERE id=?",
+            [$newItemId > 0 ? $newItemId : null, $recordId]
+        );
+        return $this->success([
+            'recordId' => $recordId,
+            'itemId' => $newItemId,
+            'batchId' => (int)($out['batch_id'] ?? 0),
+            'accountId' => $accountId,
+            'mode' => 'requeue',
+            'publisher' => [
+                'ownerId' => $publisherId,
+                'role' => (string)($relay['role'] ?? ''),
+            ],
+        ], '已重新入队发送任务，服务器浏览器会重新发送');
+    }
+
+    /** @return array{pullDm:bool,analyze:bool,pullFollow:bool,pullFans:bool,pullFollowing:bool,searchUser:bool,send:bool,login:bool} */
+    private function companySeatCapabilities(): array
+    {
+        return [
+            'pullDm' => true,
+            'analyze' => true,
+            'pullFollow' => true,
+            'pullFans' => true,
+            'pullFollowing' => true,
+            'searchUser' => true,
+            'send' => true,
+            'login' => true,
+        ];
+    }
+
+    /**
+     * @return array{0:?array<string,mixed>,1:?Response}
+     */
+    private function loadCompanyChatAccount(int $accountId): array
+    {
+        if ($accountId < 1) {
+            return [null, $this->error('请选择账号', 400)];
+        }
+        AccountBrowserEnvService::ensureSchema();
+        [$scopeSql, $scopeParams] = DataScope::accountListScopeSql('a.owner_id');
+        $account = DB::selectOne(
+            "SELECT a.id, a.username, a.nickname, a.owner_id, a.company_id, a.login_status,
+                    a.browser_profile_id, a.tkswarm_browser_profile_id, a.linux_browser_profile_id, a.enabled
+             FROM accounts a WHERE a.id=?{$scopeSql} LIMIT 1",
+            array_merge([$accountId], $scopeParams)
+        );
+        if (!$account) {
+            return [null, $this->error('账号不存在或无权访问', 403)];
+        }
+        return [$account, null];
+    }
+
+    /**
+     * @param array<string,mixed> $account
+     * @return array{ownerId:int,role:string,username:string,nickname:string}|Response
+     */
+    private function resolveCompanySeatRelay(array $account): array|Response
+    {
+        CompanyService::ensureSchema();
+        $companyIds = [];
+        $cid = (int)($account['company_id'] ?? 0);
+        if ($cid > 0) {
+            $companyIds[] = $cid;
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId > 0) {
+            foreach (CompanyService::companyIdsOfUser($userId) as $id) {
+                if ($id > 0 && !in_array($id, $companyIds, true)) {
+                    $companyIds[] = $id;
+                }
+            }
+        }
+        $relay = CompanyService::resolveSeatRelayOwnerId($companyIds);
+        if (!$relay || (int)($relay['ownerId'] ?? 0) < 1) {
+            return $this->error('未找到可用的运营专员或运营管理，无法推送服务器浏览器任务', 422);
+        }
+        return $relay;
     }
 
     /** @param array<string,mixed> $row */
@@ -2106,8 +2627,9 @@ class PortalApiController extends Controller
             };
         }
         $tags = array_values(array_filter(array_map('trim', explode(',', (string)($row['tags'] ?? '')))));
+        $lang = strtolower(trim((string)($row['lang'] ?? '')));
         return [
-            'id' => (int)$row['id'],
+            'id' => (int)($row['id'] ?? 0),
             'accountId' => (int)($row['account_id'] ?? 0),
             'accountUsername' => (string)($row['account_username'] ?? ''),
             'friendUid' => (string)($row['friend_uid'] ?? ''),
@@ -2123,6 +2645,8 @@ class PortalApiController extends Controller
             'lastMessage' => (string)($row['last_message'] ?? ''),
             'lastDirection' => (string)($row['last_direction'] ?? ''),
             'lastMessageAt' => (string)($row['last_message_at'] ?? ''),
+            'lang' => $lang,
+            'langKnown' => $lang !== '',
         ];
     }
 

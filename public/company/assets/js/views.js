@@ -1406,7 +1406,19 @@
         friendId: null,
         friend: null,
         messages: [],
-        msgLoading: false
+        msgLoading: false,
+        draft: '',
+        caps: {
+          pullDm: true, pullFans: true, pullFollowing: true,
+          searchUser: true, send: true, login: true, analyze: true
+        },
+        friendRefresh: { loading: false, tab: '', accountId: 0 },
+        seatBusy: '',
+        opBusy: '',
+        searchKeyword: '',
+        searchLoading: false,
+        searchItems: [],
+        searchError: ''
       };
     },
     mounted: function () {
@@ -1416,6 +1428,55 @@
       avatarLetter: function (name) {
         var s = String(name || '?').trim();
         return (s.charAt(0) || '?').toUpperCase();
+      },
+      currentAccount: function () {
+        var self = this;
+        return (this.accounts || []).find(function (a) {
+          return Number(a.id) === Number(self.accountId);
+        }) || null;
+      },
+      tabLabel: function (tab) {
+        return tab === 'follower' ? '粉丝' : (tab === 'following' ? '关注' : (tab === 'search' ? '搜索' : '私信'));
+      },
+      isFriendRefreshing: function (tab) {
+        var st = this.friendRefresh;
+        if (!st || !st.loading) return false;
+        if (tab && st.tab !== tab) return false;
+        return Number(st.accountId) === Number(this.accountId);
+      },
+      beginFriendRefresh: function (tab) {
+        this.friendRefresh = { loading: true, tab: tab, accountId: Number(this.accountId) || 0 };
+      },
+      endFriendRefresh: function () {
+        this.friendRefresh = { loading: false, tab: '', accountId: 0 };
+      },
+      runSeatTaskAndWait: async function (action, extra) {
+        var accountId = Number((extra && extra.accountId) || this.accountId || 0);
+        if (!accountId) {
+          ElMessage.warning('请先选择账号');
+          return null;
+        }
+        var body = Object.assign({}, extra || {}, { accountId: accountId, action: action });
+        var enq = await CompanyAPI.enqueueSeatTask(body);
+        var itemId = Number(enq && enq.itemId || 0);
+        if (!itemId) {
+          ElMessage.error((enq && enq.message) || '入队失败');
+          return null;
+        }
+        var started = Date.now();
+        while (Date.now() - started < 180000) {
+          await new Promise(function (r) { setTimeout(r, 2000); });
+          var st = await CompanyAPI.seatItemStatus(itemId);
+          var status = String((st && st.status) || '');
+          if (status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'paused') {
+            return Object.assign({}, st, { enq: enq });
+          }
+          if (st && st.errorMessage && /等待|缺环境包|登录数据/.test(String(st.errorMessage))) {
+            ElMessage.info(st.errorMessage);
+          }
+        }
+        ElMessage.info('任务仍在服务器浏览器执行中，可稍后刷新查看');
+        return { status: 'running', enq: enq, itemId: itemId };
       },
       loadAccounts: async function () {
         this.loading = true;
@@ -1431,6 +1492,7 @@
           this.accountPage = d.page || 1;
           this.accountPages = d.pages || 1;
           this.accountTotal = d.total || 0;
+          if (d.capabilities) this.caps = Object.assign({}, this.caps, d.capabilities);
           if (d.selected && d.selected.id) {
             this.accountId = d.selected.id;
           } else if (!this.accountId && this.accounts.length) {
@@ -1438,7 +1500,8 @@
             this.accountId = online ? online.id : this.accounts[0].id;
           }
           if (this.accountId) {
-            await this.loadFriends();
+            if (this.friendTab === 'search') await this.loadSearchCache();
+            else await this.loadFriends();
           } else {
             this.friends = [];
             this.friendId = null;
@@ -1458,18 +1521,25 @@
         this.friendId = null;
         this.friend = null;
         this.messages = [];
-        await this.loadFriends();
+        this.searchItems = [];
+        this.searchError = '';
+        if (this.friendTab === 'search') await this.loadSearchCache();
+        else await this.loadFriends();
       },
       setFriendTab: async function (tab) {
         if (this.friendTab === tab) return;
         this.friendTab = tab || 'dm';
-        this.friendId = null;
-        this.friend = null;
-        this.messages = [];
-        await this.loadFriends();
+        if (tab !== 'search') {
+          this.friendId = null;
+          this.friend = null;
+          this.messages = [];
+          await this.loadFriends();
+        } else {
+          await this.loadSearchCache();
+        }
       },
       loadFriends: async function () {
-        if (!this.accountId) return;
+        if (!this.accountId || this.friendTab === 'search') return;
         try {
           var d = await CompanyAPI.chatFriends({
             accountId: this.accountId,
@@ -1478,6 +1548,7 @@
           });
           this.friends = d.items || [];
           this.friendCounts = d.counts || { dm: 0, follower: 0, following: 0 };
+          if (d.capabilities) this.caps = Object.assign({}, this.caps, d.capabilities);
           if (this.friendId && !this.friends.some(function (f) { return f.id === this.friendId; }.bind(this))) {
             this.friendId = null;
             this.friend = null;
@@ -1498,6 +1569,7 @@
           var d = await CompanyAPI.chatMessages({ friendId: id, pageSize: 100 });
           this.friend = d.friend || null;
           this.messages = d.items || [];
+          if (d.capabilities) this.caps = Object.assign({}, this.caps, d.capabilities);
           var self = this;
           this.friends = (this.friends || []).map(function (f) {
             if (f.id === id) return Object.assign({}, f, { unreadCount: 0 });
@@ -1522,18 +1594,507 @@
       changeAccountPage: function (p) {
         this.accountPage = p;
         this.loadAccounts();
+      },
+      refreshChatDm: async function () {
+        if (!this.caps.pullDm) return;
+        if (!this.accountId) { ElMessage.warning('请先选择账号'); return; }
+        if (this.isFriendRefreshing()) { ElMessage.warning('列表刷新中，请稍候'); return; }
+        this.friendTab = 'dm';
+        this.beginFriendRefresh('dm');
+        ElMessage.info('已通过运营中转推送私信同步到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('dm_sync', {
+            accountId: Number(this.accountId),
+            maxConversations: 30,
+            maxMessagesPerChat: 10
+          });
+          if (!r) { this.endFriendRefresh(); await this.loadFriends(); return; }
+          var res = r.result || {};
+          if (r.status === 'completed') {
+            ElMessage.success('私信列表同步完成：会话 ' + (res.friendsUpserted ?? res.conversations ?? '-') + ' · 消息 ' + (res.messagesUpserted ?? '-'));
+          } else {
+            ElMessage.error(r.errorMessage || ('私信同步结束：' + r.status));
+          }
+        } catch (e) {
+          ElMessage.error(e.message || '私信同步失败');
+        } finally {
+          this.endFriendRefresh();
+          await this.loadFriends();
+        }
+      },
+      refreshChatFans: async function () {
+        if (!this.caps.pullFans) return;
+        if (!this.accountId) { ElMessage.warning('请先选择账号'); return; }
+        if (this.isFriendRefreshing()) { ElMessage.warning('列表刷新中，请稍候'); return; }
+        this.friendTab = 'follower';
+        this.beginFriendRefresh('follower');
+        ElMessage.info('已通过运营中转推送粉丝同步到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('sync_fans', { accountId: Number(this.accountId) });
+          if (!r) { this.endFriendRefresh(); await this.loadFriends(); return; }
+          var p = (r.result && r.result.progress) || {};
+          if (r.status === 'completed') {
+            ElMessage.success('粉丝同步完成：抓取 ' + (p.scraped ?? '-') + ' · 新增 ' + (p.added ?? '-') + ' / 更新 ' + (p.updated ?? '-'));
+          } else {
+            ElMessage.error(r.errorMessage || ('粉丝同步结束：' + r.status));
+          }
+        } catch (e) {
+          ElMessage.error(e.message || '粉丝同步失败');
+        } finally {
+          this.endFriendRefresh();
+          await this.loadFriends();
+        }
+      },
+      refreshChatFollowing: async function () {
+        if (!this.caps.pullFollowing) return;
+        if (!this.accountId) { ElMessage.warning('请先选择账号'); return; }
+        if (this.isFriendRefreshing()) { ElMessage.warning('列表刷新中，请稍候'); return; }
+        this.friendTab = 'following';
+        this.beginFriendRefresh('following');
+        ElMessage.info('已通过运营中转推送关注同步到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('sync_following', { accountId: Number(this.accountId) });
+          if (!r) { this.endFriendRefresh(); await this.loadFriends(); return; }
+          var p = (r.result && r.result.progress) || {};
+          if (r.status === 'completed') {
+            ElMessage.success('关注同步完成：抓取 ' + (p.scraped ?? '-') + ' · 新增 ' + (p.added ?? '-') + ' / 更新 ' + (p.updated ?? '-'));
+          } else {
+            ElMessage.error(r.errorMessage || ('关注同步结束：' + r.status));
+          }
+        } catch (e) {
+          ElMessage.error(e.message || '关注同步失败');
+        } finally {
+          this.endFriendRefresh();
+          await this.loadFriends();
+        }
+      },
+      detectLogin: async function () {
+        if (!this.caps.login || !this.accountId) return;
+        this.seatBusy = 'detect';
+        ElMessage.info('已推送检测登录到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('detect', { accountId: Number(this.accountId) });
+          if (!r) return;
+          var loggedIn = Boolean(r.result && r.result.loggedIn) || r.loginStatus === 'online';
+          if (r.status === 'completed' && loggedIn) ElMessage.success('已登录 TikTok');
+          else ElMessage.warning(r.errorMessage || (loggedIn ? '已登录' : '未登录'));
+          await this.loadAccounts();
+        } catch (e) {
+          ElMessage.error(e.message || '检测失败');
+        } finally {
+          this.seatBusy = '';
+        }
+      },
+      accountLogin: async function () {
+        if (!this.caps.login || !this.accountId) return;
+        this.seatBusy = 'login';
+        ElMessage.info('已推送登录任务到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('login', { accountId: Number(this.accountId) });
+          if (!r) return;
+          var ok = r.status === 'completed' && ((r.result && r.result.loginOk) || r.loginStatus === 'online');
+          if (ok) ElMessage.success('登录成功');
+          else ElMessage.error(r.errorMessage || '登录未完成');
+          await this.loadAccounts();
+        } catch (e) {
+          ElMessage.error(e.message || '登录失败');
+        } finally {
+          this.seatBusy = '';
+        }
+      },
+      accountLogout: async function () {
+        if (!this.caps.login || !this.accountId) return;
+        try {
+          await ElementPlus.ElMessageBox.confirm('退出将关闭服务器浏览器环境并标记为未登录，是否继续？', '退出登录', { type: 'warning' });
+        } catch (_) { return; }
+        this.seatBusy = 'logout';
+        ElMessage.info('已推送退出任务到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('logout', { accountId: Number(this.accountId) });
+          if (r && r.status === 'completed') ElMessage.success('已退出');
+          else ElMessage.error((r && r.errorMessage) || '退出未完成');
+          await this.loadAccounts();
+        } catch (e) {
+          ElMessage.error(e.message || '退出失败');
+        } finally {
+          this.seatBusy = '';
+        }
+      },
+      sendMessage: async function () {
+        if (!this.caps.send) return;
+        var content = String(this.draft || '').trim();
+        if (!content) { ElMessage.warning('请输入消息'); return; }
+        if (!this.friendId || !this.accountId) { ElMessage.warning('请选择账号与会话'); return; }
+        try {
+          await ElementPlus.ElMessageBox.confirm('将通过运营中转推送到服务器浏览器发送私信，是否继续？', '发送私信', { type: 'info' });
+        } catch (_) { return; }
+        this.opBusy = 'send';
+        ElMessage.info('已推送发信任务到服务器浏览器…');
+        var draftKeep = content;
+        this.draft = '';
+        try {
+          var r = await this.runSeatTaskAndWait('send', {
+            accountId: Number(this.accountId),
+            friendId: Number(this.friendId),
+            content: draftKeep
+          });
+          if (!r) { this.draft = draftKeep; return; }
+          if (r.status === 'completed') ElMessage.success('发送成功，已同步');
+          else ElMessage.error(r.errorMessage || '发送失败');
+          await this.selectFriend(this.friendId);
+          await this.loadFriends();
+        } catch (e) {
+          this.draft = draftKeep;
+          ElMessage.error(e.message || '发送失败');
+        } finally {
+          this.opBusy = '';
+        }
+      },
+      resendMessage: async function (recordId) {
+        var id = Number(recordId || 0);
+        if (!id) return;
+        try {
+          await ElementPlus.ElMessageBox.confirm('把这条消息的发送任务重置为待执行，由服务器浏览器重新发送？', '重发', { type: 'warning' });
+        } catch (_) { return; }
+        try {
+          await CompanyAPI.resendChatMessage({ recordId: id });
+          ElMessage.success('已重置发送任务');
+          if (this.friendId) await this.selectFriend(this.friendId);
+        } catch (e) {
+          ElMessage.error(e.message || '重发失败');
+        }
+      },
+      pullChat: async function () {
+        if (!this.friendId || !this.accountId) return;
+        this.opBusy = 'pull';
+        ElMessage.info('已推送拉取会话到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('pull_chat', {
+            accountId: Number(this.accountId),
+            friendId: Number(this.friendId)
+          });
+          if (r && r.status === 'completed') ElMessage.success('会话已拉取');
+          else ElMessage.error((r && r.errorMessage) || '拉取未完成');
+          await this.selectFriend(this.friendId);
+        } catch (e) {
+          ElMessage.error(e.message || '拉取失败');
+        } finally {
+          this.opBusy = '';
+        }
+      },
+      togglePin: async function () {
+        if (!this.friendId || !this.accountId) return;
+        var pinned = !(this.friend && this.friend.isPinned);
+        this.opBusy = 'pin';
+        try {
+          var r = await this.runSeatTaskAndWait('pin_friend', {
+            accountId: Number(this.accountId),
+            friendId: Number(this.friendId),
+            pinned: pinned
+          });
+          if (r && r.status === 'completed') ElMessage.success(pinned ? '已置顶' : '已取消置顶');
+          else ElMessage.error((r && r.errorMessage) || '操作未完成');
+          await this.loadFriends();
+          if (this.friendId) await this.selectFriend(this.friendId);
+        } catch (e) {
+          ElMessage.error(e.message || '置顶失败');
+        } finally {
+          this.opBusy = '';
+        }
+      },
+      blockFriend: async function () {
+        if (!this.friendId || !this.accountId) return;
+        var blocked = !(this.friend && this.friend.relation === 'blocked');
+        try {
+          await ElementPlus.ElMessageBox.confirm(blocked ? '确认拉黑该用户？' : '确认取消拉黑？', '拉黑', { type: 'warning' });
+        } catch (_) { return; }
+        this.opBusy = 'block';
+        try {
+          var r = await this.runSeatTaskAndWait('block_user', {
+            accountId: Number(this.accountId),
+            friendId: Number(this.friendId),
+            blocked: blocked
+          });
+          if (r && r.status === 'completed') ElMessage.success(blocked ? '已拉黑' : '已取消拉黑');
+          else ElMessage.error((r && r.errorMessage) || '操作未完成');
+          await this.loadFriends();
+          if (this.friendId) await this.selectFriend(this.friendId);
+        } catch (e) {
+          ElMessage.error(e.message || '拉黑失败');
+        } finally {
+          this.opBusy = '';
+        }
+      },
+      fetchLang: async function () {
+        if (!this.friendId || !this.accountId) return;
+        this.opBusy = 'lang';
+        try {
+          var r = await this.runSeatTaskAndWait('fetch_lang', {
+            accountId: Number(this.accountId),
+            friendId: Number(this.friendId)
+          });
+          if (r && r.status === 'completed') {
+            var lang = (r.result && (r.result.lang || r.result.language)) || '';
+            ElMessage.success(lang ? ('已获取语言：' + lang) : '语言已更新');
+          } else {
+            ElMessage.error((r && r.errorMessage) || '获取语言未完成');
+          }
+          if (this.friendId) await this.selectFriend(this.friendId);
+          await this.loadFriends();
+        } catch (e) {
+          ElMessage.error(e.message || '获取语言失败');
+        } finally {
+          this.opBusy = '';
+        }
+      },
+      loadSearchCache: async function () {
+        if (!this.accountId) return;
+        try {
+          var d = await CompanyAPI.chatSearchCache({ accountId: this.accountId });
+          if (d && d.cached) {
+            this.searchKeyword = d.keyword || this.searchKeyword;
+            this.searchItems = d.items || [];
+            this.searchError = '';
+          }
+        } catch (_) { /* ignore */ }
+      },
+      runSearch: async function () {
+        if (!this.caps.searchUser) return;
+        if (!this.accountId) { ElMessage.warning('请先选择账号'); return; }
+        var keyword = String(this.searchKeyword || '').trim();
+        if (!keyword) { ElMessage.warning('请输入搜索词（至少 6 个字符）'); return; }
+        if (Array.from(keyword).length <= 5) {
+          ElMessage.warning('搜索词必须大于 5 个字符（当前 ' + Array.from(keyword).length + ' 个）');
+          return;
+        }
+        this.searchLoading = true;
+        this.searchError = '';
+        this.searchItems = [];
+        ElMessage.info('已通过运营中转推送用户搜索到服务器浏览器…');
+        try {
+          var r = await this.runSeatTaskAndWait('search_users', {
+            accountId: Number(this.accountId),
+            keyword: keyword,
+            limit: 40
+          });
+          if (!r) { this.searchLoading = false; return; }
+          if (r.status !== 'completed') {
+            this.searchError = r.errorMessage || '搜索失败';
+            this.searchItems = [];
+          } else {
+            this.searchItems = Array.isArray(r.result && r.result.items) ? r.result.items : [];
+            this.searchError = '';
+          }
+        } catch (e) {
+          this.searchError = e.message || '搜索失败';
+          ElMessage.error(this.searchError);
+        } finally {
+          this.searchLoading = false;
+        }
+      },
+      openSearchedUser: async function (u) {
+        if (!u || !this.accountId) return;
+        try {
+          var friendId = Number(u.friendId || 0);
+          if (!friendId) {
+            var friend = await CompanyAPI.createChatFriend({
+              accountId: Number(this.accountId),
+              friendUid: String(u.username || u.uid || ''),
+              username: String(u.username || ''),
+              nickname: String(u.nickname || ''),
+              relation: 'stranger',
+              userType: 'dm'
+            });
+            friendId = Number(friend && friend.id || 0);
+            if (!friendId) throw new Error('建立会话失败');
+            u.friendId = friendId;
+          }
+          this.friendTab = 'dm';
+          await this.loadFriends();
+          await this.selectFriend(friendId);
+        } catch (e) {
+          ElMessage.error(e.message || '打开会话失败');
+        }
+      },
+      statusLabel: function (m) {
+        if (!m || m.direction !== 'out') return '';
+        if (m.status === 'syncing') return ' · 同步中';
+        if (m.status === 'failed') return ' · 发送失败';
+        if (m.status === 'synced') return ' · 已同步';
+        return '';
       }
     },
     render: function () {
       var self = this;
-      var tabLabel = { dm: '私信', follower: '粉丝', following: '关注' };
-      var emptyFriend = '暂无' + (tabLabel[self.friendTab] || '联系人');
-      var currentAccount = (self.accounts || []).find(function (a) {
-        return Number(a.id) === Number(self.accountId);
-      }) || null;
+      var emptyFriend = '暂无' + self.tabLabel(self.friendTab);
+      var currentAccount = self.currentAccount();
+      var online = currentAccount && currentAccount.loginStatus === 'online';
+      var refreshing = self.isFriendRefreshing(self.friendTab);
+      var canSend = self.caps.send && online && self.friend && !self.opBusy;
+
+      var friendToolbar = null;
+      if (self.friendTab === 'dm' && self.caps.pullDm) {
+        friendToolbar = h('div', { class: 'cx-chat-tab-toolbar' }, [
+          h('button', {
+            type: 'button',
+            class: 'tiny primary',
+            disabled: refreshing || !!self.seatBusy,
+            onClick: function () { self.refreshChatDm(); }
+          }, refreshing ? '刷新中…' : '刷新私信')
+        ]);
+      } else if (self.friendTab === 'follower' && self.caps.pullFans) {
+        friendToolbar = h('div', { class: 'cx-chat-tab-toolbar' }, [
+          h('button', {
+            type: 'button',
+            class: 'tiny primary',
+            disabled: refreshing || !!self.seatBusy,
+            onClick: function () { self.refreshChatFans(); }
+          }, refreshing ? '刷新中…' : '刷新粉丝')
+        ]);
+      } else if (self.friendTab === 'following' && self.caps.pullFollowing) {
+        friendToolbar = h('div', { class: 'cx-chat-tab-toolbar' }, [
+          h('button', {
+            type: 'button',
+            class: 'tiny primary',
+            disabled: refreshing || !!self.seatBusy,
+            onClick: function () { self.refreshChatFollowing(); }
+          }, refreshing ? '刷新中…' : '刷新关注')
+        ]);
+      }
+
+      var skeletonRows = [];
+      for (var i = 0; i < 6; i++) {
+        skeletonRows.push(h('div', { class: 'cx-chat-skel-row', key: 'sk' + i }, [
+          h('span', { class: 'cx-chat-skel-avatar' }),
+          h('span', { class: 'cx-chat-skel-lines' }, [h('i'), h('i')])
+        ]));
+      }
+
+      var friendListNodes;
+      if (!self.accountId) {
+        friendListNodes = [h('div', { class: 'cx-chat-empty' }, '请先选择左侧账号')];
+      } else if (self.friendTab === 'search') {
+        friendListNodes = [
+          h('div', { class: 'cx-chat-search-inline' }, [
+            h(ElementPlus.ElInput, {
+              modelValue: self.searchKeyword,
+              'onUpdate:modelValue': function (v) { self.searchKeyword = v; },
+              placeholder: '搜索词（至少 6 个字符）',
+              size: 'small',
+              clearable: true,
+              onKeyup: function (e) {
+                if (e.key === 'Enter') self.runSearch();
+              }
+            }),
+            h(ElementPlus.ElButton, {
+              size: 'small',
+              type: 'primary',
+              loading: self.searchLoading,
+              onClick: function () { self.runSearch(); }
+            }, function () { return '搜索'; })
+          ]),
+          h('div', { class: 'cx-chat-tab-note' }, '通过运营中转在服务器浏览器搜索 TikTok 用户；点击结果可建立会话并发信。'),
+          self.searchLoading
+            ? h('div', { class: 'cx-chat-skel' }, [
+              h('div', { class: 'muted', style: 'padding:8px 12px;font-size:12px' }, '正在搜索，请稍候…'),
+              skeletonRows
+            ])
+            : (self.searchError
+              ? [h('div', { class: 'cx-chat-empty' }, self.searchError)]
+              : (self.searchItems.length
+                ? self.searchItems.map(function (u, idx) {
+                  return h('button', {
+                    type: 'button',
+                    class: 'cx-chat-item',
+                    key: 'su' + idx,
+                    onClick: function () { self.openSearchedUser(u); }
+                  }, [
+                    h('div', { class: 'cx-chat-avatar' }, self.avatarLetter(u.nickname || u.username)),
+                    h('div', { class: 'cx-chat-meta' }, [
+                      h('b', u.nickname || u.username || '-'),
+                      h('small', '@' + (u.username || '') + (u.followersText ? (' · ' + u.followersText) : ''))
+                    ])
+                  ]);
+                })
+                : [h('div', { class: 'cx-chat-empty' }, self.searchKeyword ? '暂无搜索结果' : '输入关键词后搜索')]))
+        ];
+      } else if (refreshing) {
+        friendListNodes = [
+          h('div', { class: 'cx-chat-skel' }, [
+            h('div', { class: 'muted', style: 'padding:8px 12px;font-size:12px' },
+              '正在刷新' + self.tabLabel(self.friendTab) + '列表，请稍候…'),
+            skeletonRows
+          ])
+        ];
+      } else if (self.friends.length) {
+        friendListNodes = self.friends.map(function (f) {
+          return h('button', {
+            type: 'button',
+            class: 'cx-chat-item' + (Number(f.id) === Number(self.friendId) ? ' is-active' : ''),
+            onClick: function () { self.selectFriend(f.id); }
+          }, [
+            h('div', { class: 'cx-chat-avatar' }, self.avatarLetter(f.nickname || f.username || f.friendUid)),
+            h('div', { class: 'cx-chat-meta' }, [
+              h('b', [
+                f.isPinned ? '📌 ' : '',
+                f.nickname || f.username || f.friendUid || ('#' + f.id),
+                f.unreadCount ? h('span', { class: 'cx-chat-badge' }, String(f.unreadCount)) : null
+              ]),
+              h('small', f.lastMessage || (f.relation ? ('关系：' + f.relation) : '暂无消息'))
+            ])
+          ]);
+        });
+      } else {
+        friendListNodes = [h('div', { class: 'cx-chat-empty' }, emptyFriend)];
+      }
+
+      var accountActions = currentAccount && self.caps.login
+        ? h('div', { class: 'cx-chat-account-actions' }, [
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.seatBusy,
+            onClick: function () { self.detectLogin(); }
+          }, self.seatBusy === 'detect' ? '检测中…' : '检测登录'),
+          h('button', {
+            type: 'button', class: 'tiny primary',
+            disabled: !!self.seatBusy,
+            onClick: function () { self.accountLogin(); }
+          }, self.seatBusy === 'login' ? '登录中…' : '登录'),
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.seatBusy,
+            onClick: function () { self.accountLogout(); }
+          }, self.seatBusy === 'logout' ? '退出中…' : '退出')
+        ])
+        : null;
+
+      var threadActions = self.friend
+        ? h('div', { class: 'cx-chat-thread-actions' }, [
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.opBusy,
+            onClick: function () { self.pullChat(); }
+          }, self.opBusy === 'pull' ? '拉取中…' : '拉取会话'),
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.opBusy,
+            onClick: function () { self.togglePin(); }
+          }, self.opBusy === 'pin' ? '操作中…' : (self.friend.isPinned ? '取消置顶' : '置顶')),
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.opBusy,
+            onClick: function () { self.blockFriend(); }
+          }, self.opBusy === 'block' ? '操作中…' : (self.friend.relation === 'blocked' ? '取消拉黑' : '拉黑')),
+          h('button', {
+            type: 'button', class: 'tiny',
+            disabled: !!self.opBusy,
+            onClick: function () { self.fetchLang(); }
+          }, self.opBusy === 'lang' ? '获取中…' : '获取语言')
+        ])
+        : null;
 
       return h('div', { class: 'page-view support-page' }, [
-        pageHead('客服坐席', '企业账号私信、粉丝与关注会话'),
+        pageHead('客服坐席', '与 Node 同款坐席能力；任务经企业关联运营专员/运营管理中转到服务器浏览器'),
         h('div', { class: 'cx-chat-shell' + (self.loading ? ' is-loading' : '') }, [
           h('aside', { class: 'cx-chat-col cx-chat-accounts' }, [
             h('div', { class: 'cx-chat-col-head' }, [h('h3', '账号')]),
@@ -1567,9 +2128,7 @@
                     h('div', { class: 'cx-chat-meta' }, [
                       h('b', [
                         a.username || ('#' + a.id),
-                        a.unreadCount
-                          ? h('span', { class: 'cx-chat-badge' }, String(a.unreadCount))
-                          : null
+                        a.unreadCount ? h('span', { class: 'cx-chat-badge' }, String(a.unreadCount)) : null
                       ]),
                       h('small', [
                         h('i', { class: 'cx-dot' + (a.loginStatus === 'online' ? ' on' : '') }),
@@ -1580,6 +2139,7 @@
                 })
                 : [h('div', { class: 'cx-chat-empty' }, '暂无可见账号')]
             ),
+            accountActions,
             self.accountPages > 1
               ? h('div', { class: 'cx-chat-pager' }, [
                 h(ElementPlus.ElPagination, {
@@ -1609,33 +2169,17 @@
                 type: 'button',
                 class: self.friendTab === 'following' ? 'is-active' : '',
                 onClick: function () { self.setFriendTab('following'); }
-              }, '关注' + (self.friendCounts.following ? ' (' + self.friendCounts.following + ')' : ''))
+              }, '关注' + (self.friendCounts.following ? ' (' + self.friendCounts.following + ')' : '')),
+              self.caps.searchUser
+                ? h('button', {
+                  type: 'button',
+                  class: self.friendTab === 'search' ? 'is-active' : '',
+                  onClick: function () { self.setFriendTab('search'); }
+                }, '搜索')
+                : null
             ]),
-            h('div', { class: 'cx-chat-list' },
-              !self.accountId
-                ? [h('div', { class: 'cx-chat-empty' }, '请先选择左侧账号')]
-                : (self.friends.length
-                  ? self.friends.map(function (f) {
-                    return h('button', {
-                      type: 'button',
-                      class: 'cx-chat-item' + (Number(f.id) === Number(self.friendId) ? ' is-active' : ''),
-                      onClick: function () { self.selectFriend(f.id); }
-                    }, [
-                      h('div', { class: 'cx-chat-avatar' }, self.avatarLetter(f.nickname || f.username || f.friendUid)),
-                      h('div', { class: 'cx-chat-meta' }, [
-                        h('b', [
-                          f.isPinned ? '📌 ' : '',
-                          f.nickname || f.username || f.friendUid || ('#' + f.id),
-                          f.unreadCount
-                            ? h('span', { class: 'cx-chat-badge' }, String(f.unreadCount))
-                            : null
-                        ]),
-                        h('small', f.lastMessage || (f.relation ? ('关系：' + f.relation) : '暂无消息'))
-                      ])
-                    ]);
-                  })
-                  : [h('div', { class: 'cx-chat-empty' }, emptyFriend)])
-            )
+            friendToolbar,
+            h('div', { class: 'cx-chat-list' }, friendListNodes)
           ]),
           h('section', { class: 'cx-chat-col cx-chat-thread' }, [
             h('div', { class: 'cx-chat-col-head' }, [
@@ -1644,11 +2188,14 @@
                   ? (self.friend.nickname || self.friend.username || self.friend.friendUid || '会话')
                   : '会话'),
                 h('div', { class: 'muted' }, self.friend
-                  ? ('关系：' + (self.friend.relation || '-') + ' · UID ' + (self.friend.friendUid || '-'))
+                  ? ('关系：' + (self.friend.relation || '-') +
+                    (self.friend.lang ? (' · 语言 ' + self.friend.lang) : ' · 语言?') +
+                    ' · UID ' + (self.friend.friendUid || '-'))
                   : (currentAccount
                     ? ('账号：' + (currentAccount.username || ''))
                     : '请选择联系人查看消息'))
-              ])
+              ]),
+              threadActions
             ]),
             h('div', {
               class: 'cx-chat-messages',
@@ -1658,21 +2205,63 @@
               : (self.messages.length
                 ? self.messages.map(function (m) {
                   var isOut = m.direction === 'out';
+                  var failed = isOut && m.status === 'failed';
                   var body = m.msgType === 'image'
                     ? h('img', { src: m.content, alt: '图片', class: 'cx-chat-img' })
                     : h('span', m.content || '');
-                  return h('div', { class: 'cx-bubble-wrap' + (isOut ? ' is-out' : '') }, [
+                  return h('div', {
+                    class: 'cx-bubble-wrap' + (isOut ? ' is-out' : '') + (failed ? ' is-failed' : ''),
+                    key: 'm' + m.id
+                  }, [
+                    failed
+                      ? h('button', {
+                        type: 'button',
+                        class: 'cx-bubble-resend',
+                        title: '重新发送',
+                        onClick: function () { self.resendMessage(m.id); }
+                      }, '↻')
+                      : null,
                     h('div', { class: 'cx-bubble' + (isOut ? ' is-out' : '') }, [
                       body,
                       h('span', { class: 'cx-bubble-time' },
-                        (m.createdAt || '') + ' · ' + (isOut ? '我' : '对方'))
+                        (m.createdAt || '') + ' · ' + (isOut ? '我' : '对方') + self.statusLabel(m))
                     ])
                   ]);
                 })
                 : [h('div', { class: 'cx-chat-empty' }, self.friend
                   ? '该会话暂无消息'
                   : '请选择联系人查看会话')])
-            )
+            ),
+            h('div', { class: 'cx-chat-composer' }, [
+              h(ElementPlus.ElInput, {
+                type: 'textarea',
+                modelValue: self.draft,
+                'onUpdate:modelValue': function (v) { self.draft = v; },
+                rows: 2,
+                resize: 'none',
+                disabled: !canSend && !(self.caps.send && self.friend && online),
+                placeholder: !currentAccount
+                  ? '请先选择账号'
+                  : (!online ? '请先检测/登录 TikTok' : (self.friend ? '输入消息…' : '请选择联系人')),
+                onKeydown: function (e) {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canSend) self.sendMessage();
+                  }
+                }
+              }),
+              h('div', { class: 'cx-chat-composer-bar' }, [
+                h(ElementPlus.ElButton, {
+                  type: 'primary',
+                  size: 'small',
+                  disabled: !canSend,
+                  loading: self.opBusy === 'send',
+                  onClick: function () { self.sendMessage(); }
+                }, function () { return self.caps.send ? '发送' : '无发送权限'; }),
+                h('span', { class: 'muted cx-chat-composer-hint' },
+                  '任务经企业关联运营专员（无则随机运营管理）中转到服务器浏览器')
+              ])
+            ])
           ])
         ])
       ]);

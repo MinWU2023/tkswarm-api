@@ -488,4 +488,60 @@ class CompanyService
         }
         return $out;
     }
+
+    /**
+     * 企业客服坐席 → 服务器浏览器任务的中转发布者。
+     * 优先：与企业关联的启用「运营专员」；没有则随机一个启用「运营管理」。
+     *
+     * @param list<int> $companyIds
+     * @return array{ownerId:int,role:string,username:string,nickname:string}|null
+     */
+    public static function resolveSeatRelayOwnerId(array $companyIds): ?array
+    {
+        self::ensureSchema();
+        $companyIds = array_values(array_unique(array_filter(array_map('intval', $companyIds))));
+        if ($companyIds) {
+            $ph = implode(',', array_fill(0, count($companyIds), '?'));
+            $specialists = DB::select(
+                "SELECT DISTINCT u.id, u.username, u.nickname
+                 FROM admin_users u
+                 INNER JOIN admin_roles r ON r.id = u.role_id
+                 INNER JOIN company_users cu ON cu.user_id = u.id
+                 WHERE u.status = 1
+                   AND r.name LIKE ?
+                   AND cu.company_id IN ({$ph})
+                 ORDER BY u.id ASC",
+                array_merge(['%运营专员%'], $companyIds)
+            ) ?: [];
+            if ($specialists) {
+                $pick = $specialists[array_rand($specialists)];
+                return [
+                    'ownerId' => (int)($pick['id'] ?? 0),
+                    'role' => 'ops_specialist',
+                    'username' => (string)($pick['username'] ?? ''),
+                    'nickname' => (string)($pick['nickname'] ?? ''),
+                ];
+            }
+        }
+
+        $admins = DB::select(
+            "SELECT u.id, u.username, u.nickname
+             FROM admin_users u
+             INNER JOIN admin_roles r ON r.id = u.role_id
+             WHERE u.status = 1 AND r.name LIKE ?
+             ORDER BY u.id ASC
+             LIMIT 50",
+            ['%运营管理%']
+        ) ?: [];
+        if (!$admins) {
+            return null;
+        }
+        $pick = $admins[array_rand($admins)];
+        return [
+            'ownerId' => (int)($pick['id'] ?? 0),
+            'role' => 'ops_admin',
+            'username' => (string)($pick['username'] ?? ''),
+            'nickname' => (string)($pick['nickname'] ?? ''),
+        ];
+    }
 }

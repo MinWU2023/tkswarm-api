@@ -171,6 +171,11 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/chat/accounts', CompanyPortalApiController::class . '@chatAccounts');
     Router::get('/api/company/chat/friends', CompanyPortalApiController::class . '@chatFriends');
     Router::get('/api/company/chat/messages', CompanyPortalApiController::class . '@chatMessages');
+    Router::post('/api/company/chat/friends', CompanyPortalApiController::class . '@createChatFriend');
+    Router::post('/api/company/chat/seat-tasks', CompanyPortalApiController::class . '@enqueueSeatTask');
+    Router::get('/api/company/chat/seat-items/{id}', CompanyPortalApiController::class . '@seatItemStatus');
+    Router::get('/api/company/chat/search-cache', CompanyPortalApiController::class . '@searchCache');
+    Router::post('/api/company/chat/messages/resend', CompanyPortalApiController::class . '@resendFailedMessage');
 });
 
 // 需登录（authEnabled=false 时 AuthMiddleware 放行 guest 超管）
