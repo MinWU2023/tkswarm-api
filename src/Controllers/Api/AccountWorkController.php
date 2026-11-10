@@ -41,7 +41,7 @@ class AccountWorkController extends Controller
         }
         // 服务器浏览器任务页：cs_seat/ai_lead，以及误入 general 的坐席类分任务（旧版入队兜底）
         if ($forServerBrowser) {
-            $seatTypes = ['sync_fans', 'dm_sync', 'dm_reply', 'cs_login', 'cs_logout', 'cs_detect', 'ai_lead', 'ai_lead_dm'];
+            $seatTypes = ['sync_fans', 'dm_sync', 'dm_reply', 'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users', 'ai_lead', 'ai_lead_dm'];
             $ph = implode(',', array_fill(0, count($seatTypes), '?'));
             $where[] = "(COALESCE(b.batch_scope,'general') IN ('cs_seat','ai_lead')
                 OR EXISTS (

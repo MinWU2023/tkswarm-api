@@ -37,7 +37,7 @@ class AccountWorkBatchService
     public const SERVER_BROWSER_TASK_TYPES = [
         'ai_lead', 'ai_lead_dm',
         'dm_sync', 'message', 'dm_reply', 'sync_fans',
-        'cs_login', 'cs_logout', 'cs_detect',
+        'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
     ];
     /** @var array<string,int> 越小越先执行 */
     public const TYPE_PRIORITY = [
@@ -71,7 +71,7 @@ class AccountWorkBatchService
 
     /** 需要走浏览器账号会话的任务类型 */
     public const BROWSER_TYPES = [
-        'cs_login', 'cs_logout', 'cs_detect',
+        'cs_login', 'cs_logout', 'cs_detect', 'fetch_lang', 'search_users',
         'modify_profile', 'publish', 'publish_images', 'delete_video', 'comment_reply', 'pull_comments', 'pull_video_list', 'dm_reply', 'message', 'ai_lead', 'ai_lead_dm', 'auto_follow', 'video_boost', 'warm',
         'diagnose', 'dm_sync', 'sync_fans', 'pull_stats', 'sync', 'profile', 'env_pack_upload',
     ];
