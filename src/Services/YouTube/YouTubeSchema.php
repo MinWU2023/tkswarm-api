@@ -12,6 +12,8 @@ final class YouTubeSchema
 {
     public static function ensureSchema(): void
     {
+        // 企业绑定列：每次校验，避免常驻进程漏迁移
+        self::ensureAccountCompanyColumn();
         static $done = false;
         if ($done) {
             return;
@@ -22,6 +24,7 @@ final class YouTubeSchema
             "CREATE TABLE IF NOT EXISTS `youtube_accounts` (
               `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
               `owner_id` INT NOT NULL DEFAULT 0,
+              `company_id` INT UNSIGNED NULL,
               `username` VARCHAR(191) NOT NULL DEFAULT '',
               `password` VARCHAR(255) NOT NULL DEFAULT '',
               `nickname` VARCHAR(191) NOT NULL DEFAULT '',
@@ -46,11 +49,13 @@ final class YouTubeSchema
               `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
               PRIMARY KEY (`id`),
               KEY `idx_yt_acc_owner` (`owner_id`),
+              KEY `idx_yt_acc_company` (`company_id`),
               KEY `idx_yt_acc_channel` (`channel_id`),
               KEY `idx_yt_acc_username` (`username`),
               KEY `idx_yt_acc_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+        self::ensureAccountCompanyColumn();
 
         DB::query(
             "CREATE TABLE IF NOT EXISTS `youtube_videos` (
@@ -197,6 +202,32 @@ final class YouTubeSchema
               KEY `idx_yt_crt_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+    }
+
+    /** youtube_accounts 关联企业 */
+    public static function ensureAccountCompanyColumn(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_accounts') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols) {
+            return;
+        }
+        if (!in_array('company_id', $cols, true)) {
+            try {
+                DB::query('ALTER TABLE youtube_accounts ADD COLUMN company_id INT UNSIGNED NULL AFTER owner_id');
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            $idx = DB::select("SHOW INDEX FROM youtube_accounts WHERE Key_name='idx_yt_acc_company'");
+            if (!$idx) {
+                DB::query('ALTER TABLE youtube_accounts ADD KEY idx_yt_acc_company (company_id)');
+            }
+        } catch (\Throwable $e) {
+        }
     }
 
     /** TikTok 素材同步：给发布任务补 material_id / source_cdn_url */

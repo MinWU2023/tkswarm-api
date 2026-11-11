@@ -208,6 +208,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/youtube/oauth-config', YouTubeController::class . '@saveOAuthConfig');
     Router::get('/api/youtube/accounts', YouTubeController::class . '@listAccounts');
     Router::post('/api/youtube/accounts', YouTubeController::class . '@createAccount');
+    Router::put('/api/youtube/accounts/{id}', YouTubeController::class . '@updateAccount');
+    Router::post('/api/youtube/accounts/{id}', YouTubeController::class . '@updateAccount');
     Router::delete('/api/youtube/accounts/{id}', YouTubeController::class . '@deleteAccount');
     Router::post('/api/youtube/accounts/{id}/auth', YouTubeController::class . '@startAuth');
     Router::post('/api/youtube/accounts/{id}/refresh-token', YouTubeController::class . '@refreshAccountToken');
@@ -559,6 +561,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/materials/{id}/github-bind', MaterialController::class . '@bindGithubCdn');
     Router::put('/api/materials/{id}/rename', MaterialController::class . '@rename');
     Router::put('/api/materials/{id}/cover', MaterialController::class . '@setCover');
+    Router::put('/api/materials/{id}/cover-file', MaterialController::class . '@updateCoverFile');
     Router::post('/api/materials/{id}/check', MaterialController::class . '@check');
     Router::delete('/api/materials/{id}', MaterialController::class . '@delete');
 

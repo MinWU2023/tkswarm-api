@@ -185,6 +185,41 @@ class MaterialController extends Controller
         return $this->success($this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [(int)$id])), '封面已更新');
     }
 
+    /**
+     * 记录封面本机路径（封面文件由本机 node 落盘，不上传服务器）。
+     * 发布任务执行时用这个路径直接 setInputFiles 到 Studio 封面框。
+     */
+    public function updateCoverFile(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $old = DB::selectOne('SELECT * FROM materials WHERE id=?', [(int)$id]);
+        if ($err = $this->assertMaterialOwns($old)) {
+            return $err;
+        }
+        $coverFilePath = trim((string)$request->input('coverFilePath', $request->input('cover_file_path', '')));
+        $coverFileName = trim((string)$request->input('coverFileName', $request->input('cover_file_name', '')));
+        if ($coverFilePath === '') {
+            return $this->error('封面本机路径不能为空', 422);
+        }
+        if ($coverFileName === '') {
+            $coverFileName = basename(str_replace('\\', '/', $coverFilePath));
+        }
+        $cover = $this->normalizeCoverBase64((string)$request->input('coverBase64', $request->input('cover_base64', '')));
+        if ($cover !== '') {
+            DB::query(
+                'UPDATE materials SET cover_file_path=?, cover_file_name=?, cover_base64=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$coverFilePath, $coverFileName, $cover, (int)$id]
+            );
+        } else {
+            DB::query(
+                'UPDATE materials SET cover_file_path=?, cover_file_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$coverFilePath, $coverFileName, (int)$id]
+            );
+        }
+        return $this->success($this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [(int)$id])), '封面路径已记录');
+    }
+
     public function create(Request $request): Response
     {
         $this->ensureSchema();
@@ -211,8 +246,8 @@ class MaterialController extends Controller
         $shareTitle = trim((string)$request->input('shareTitle', $request->input('share_title', '')));
         $shareCaption = trim((string)$request->input('shareCaption', $request->input('share_caption', '')));
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $name,
                 $filePath,
@@ -228,6 +263,8 @@ class MaterialController extends Controller
                 '',
                 '',
                 $cover,
+                trim((string)$request->input('coverFilePath', $request->input('cover_file_path', ''))),
+                trim((string)$request->input('coverFileName', $request->input('cover_file_name', ''))),
                 $shareTitle,
                 $shareCaption,
                 $this->writeMaterialOwnerId(),
@@ -927,20 +964,28 @@ class MaterialController extends Controller
         }
         $display = $name !== '' ? $name : pathinfo($origName, PATHINFO_FILENAME);
         $cover = '';
+        $coverFilePath = '';
+        $coverFileName = '';
         $shareTitle = '';
         $shareCaption = '';
         if ($request) {
             $cover = $this->normalizeCoverBase64((string)$request->input('coverBase64', $request->input('cover_base64', '')));
+            // 封面只留本机路径，不上传：发布任务执行时用这个路径直接 setInputFiles 到 Studio
+            $coverFilePath = trim((string)$request->input('coverFilePath', $request->input('cover_file_path', '')));
+            $coverFileName = trim((string)$request->input('coverFileName', $request->input('cover_file_name', '')));
             $shareTitle = trim((string)$request->input('shareTitle', $request->input('share_title', '')));
             $shareCaption = trim((string)$request->input('shareCaption', $request->input('share_caption', '')));
         }
         if ($cover === '') {
             $cover = $this->extractCoverBase64($dest);
         }
+        if ($coverFilePath !== '' && $coverFileName === '') {
+            $coverFileName = basename(str_replace('\\', '/', $coverFilePath));
+        }
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            [$display, $dest, $origName, $ext, $mime ?: $this->mimeOf($origName), $size, $description, $tags, 'ready', 'unused', null, '', $sha, $cover, $shareTitle, $shareCaption, $this->writeMaterialOwnerId()]
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [$display, $dest, $origName, $ext, $mime ?: $this->mimeOf($origName), $size, $description, $tags, 'ready', 'unused', null, '', $sha, $cover, $coverFilePath, $coverFileName, $shareTitle, $shareCaption, $this->writeMaterialOwnerId()]
         );
         $id = (int)DB::getPdo()->lastInsertId();
         return $this->success($this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$id])), '素材已上传');
@@ -977,6 +1022,9 @@ class MaterialController extends Controller
         }
         // 注意：PHP empty("0")===false，必须用 intval 判断 has_cover
         $row['hasCover'] = $row['coverBase64'] !== '' || (int)($row['has_cover'] ?? 0) === 1;
+        // 封面本机路径：只在 node 侧发布时使用（setInputFiles 直接给 Studio），不对外当图片地址
+        $row['coverFilePath'] = (string)($row['cover_file_path'] ?? '');
+        $row['coverFileName'] = (string)($row['cover_file_name'] ?? '');
         $row['shareTitle'] = (string)($row['share_title'] ?? '');
         $row['shareCaption'] = (string)($row['share_caption'] ?? '');
         $origin = trim((string)($row['origin'] ?? 'local'));
@@ -1682,6 +1730,9 @@ class MaterialController extends Controller
             'platform_video_id' => "ALTER TABLE materials ADD COLUMN platform_video_id VARCHAR(64) NOT NULL DEFAULT ''",
             'platform_video_url' => "ALTER TABLE materials ADD COLUMN platform_video_url VARCHAR(500) NOT NULL DEFAULT ''",
             'cover_base64' => 'ALTER TABLE materials ADD COLUMN cover_base64 LONGTEXT NULL',
+            // 封面本机路径：封面只留在本机，不上传服务器。发布任务用它 setInputFiles 到 Studio 封面框。
+            'cover_file_path' => 'ALTER TABLE materials ADD COLUMN cover_file_path TEXT NULL',
+            'cover_file_name' => "ALTER TABLE materials ADD COLUMN cover_file_name VARCHAR(255) NOT NULL DEFAULT ''",
             'share_title' => "ALTER TABLE materials ADD COLUMN share_title VARCHAR(500) NOT NULL DEFAULT ''",
             'share_caption' => 'ALTER TABLE materials ADD COLUMN share_caption TEXT NULL',
             'owner_id' => 'ALTER TABLE materials ADD COLUMN owner_id INT NULL',

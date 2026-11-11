@@ -7,6 +7,7 @@ use App\Core\Controller;
 use App\Core\Database\DB;
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\YouTube\YouTubeApiService;
 use App\Services\YouTube\YouTubeOAuthConfigService;
@@ -100,16 +101,26 @@ class YouTubeController extends Controller
         }
         YouTubeSchema::ensureSchema();
         $keyword = trim((string)$request->get('keyword', ''));
+        $companyId = (int)$request->get('companyId', $request->get('company_id', 0));
         $filters = ['1=1'];
         $params = [];
+        if ($companyId > 0) {
+            $filters[] = 'y.company_id=?';
+            $params[] = $companyId;
+        }
         if ($keyword !== '') {
-            $filters[] = '(username LIKE ? OR nickname LIKE ? OR channel_title LIKE ? OR channel_id LIKE ? OR CAST(id AS CHAR) LIKE ?)';
+            $filters[] = '(y.username LIKE ? OR y.nickname LIKE ? OR y.channel_title LIKE ? OR y.channel_id LIKE ? OR CAST(y.id AS CHAR) LIKE ? OR IFNULL(c.name,\'\') LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($params, $like, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like, $like);
         }
         $where = 'WHERE ' . implode(' AND ', $filters);
         $rows = DB::select(
-            "SELECT * FROM youtube_accounts {$where} ORDER BY id DESC LIMIT 500",
+            "SELECT y.*, c.name AS company_name
+             FROM youtube_accounts y
+             LEFT JOIN companies c ON c.id = y.company_id
+             {$where}
+             ORDER BY y.id DESC
+             LIMIT 500",
             $params
         ) ?: [];
         return $this->success([
@@ -131,15 +142,20 @@ class YouTubeController extends Controller
         $username = trim((string)$request->input('username', $request->input('label', '')));
         $nickname = trim((string)$request->input('nickname', ''));
         $notes = trim((string)$request->input('notes', ''));
+        [$companyId, $companyErr] = $this->resolveCompanyIdInput($request->all());
+        if ($companyErr) {
+            return $companyErr;
+        }
         $ownerId = DataScope::writeOwnerId();
         $extra = json_encode(['notes' => $notes], JSON_UNESCAPED_UNICODE);
         DB::query(
             "INSERT INTO youtube_accounts
-             (owner_id, username, nickname, google_cloud_project_id, oauth_client_id, oauth_client_secret,
+             (owner_id, company_id, username, nickname, google_cloud_project_id, oauth_client_id, oauth_client_secret,
               oauth_redirect_uri, oauth_scopes, status, extra_json)
-             VALUES (?,?,?,?,?,?,?,?, 'pending', ?)",
+             VALUES (?,?,?,?,?,?,?,?,?, 'pending', ?)",
             [
                 $ownerId,
+                $companyId,
                 $username,
                 $nickname,
                 '',
@@ -151,8 +167,61 @@ class YouTubeController extends Controller
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();
-        $row = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$id]);
+        $row = DB::selectOne(
+            'SELECT y.*, c.name AS company_name FROM youtube_accounts y LEFT JOIN companies c ON c.id=y.company_id WHERE y.id=?',
+            [$id]
+        );
         return $this->success($this->mapAccount($row ?: ['id' => $id]), '账号草稿已创建，请点击授权登录');
+    }
+
+    /** 更新备注/企业绑定等 */
+    public function updateAccount(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        YouTubeSchema::ensureSchema();
+        $aid = (int)$id;
+        $row = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
+        if (!$row) {
+            return $this->error('账号不存在', 404);
+        }
+        $all = $request->all();
+        $username = array_key_exists('username', $all)
+            ? trim((string)$all['username'])
+            : (string)($row['username'] ?? '');
+        $nickname = array_key_exists('nickname', $all)
+            ? trim((string)$all['nickname'])
+            : (string)($row['nickname'] ?? '');
+        $extra = json_decode((string)($row['extra_json'] ?? '{}'), true);
+        if (!is_array($extra)) {
+            $extra = [];
+        }
+        if (array_key_exists('notes', $all)) {
+            $extra['notes'] = trim((string)$all['notes']);
+        }
+        $companyId = (int)($row['company_id'] ?? 0) ?: null;
+        if (array_key_exists('companyId', $all) || array_key_exists('company_id', $all)) {
+            [$companyId, $companyErr] = $this->resolveCompanyIdInput($all);
+            if ($companyErr) {
+                return $companyErr;
+            }
+        }
+        DB::query(
+            'UPDATE youtube_accounts SET username=?, nickname=?, company_id=?, extra_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [
+                $username,
+                $nickname,
+                $companyId,
+                json_encode($extra, JSON_UNESCAPED_UNICODE),
+                $aid,
+            ]
+        );
+        $fresh = DB::selectOne(
+            'SELECT y.*, c.name AS company_name FROM youtube_accounts y LEFT JOIN companies c ON c.id=y.company_id WHERE y.id=?',
+            [$aid]
+        );
+        return $this->success($this->mapAccount($fresh ?: $row), '已保存');
     }
 
     public function deleteAccount(Request $request, string $id): Response
@@ -168,6 +237,31 @@ class YouTubeController extends Controller
         }
         DB::query('DELETE FROM youtube_accounts WHERE id=?', [$aid]);
         return $this->success(['id' => $aid], '已删除');
+    }
+
+    /**
+     * @param array<string,mixed> $input
+     * @return array{0:?int,1:?Response}
+     */
+    private function resolveCompanyIdInput(array $input): array
+    {
+        $raw = $input['companyId'] ?? $input['company_id'] ?? null;
+        if ($raw === null || $raw === '' || $raw === '__clear__' || $raw === '0') {
+            return [null, null];
+        }
+        $companyId = (int)$raw;
+        if ($companyId <= 0) {
+            return [null, null];
+        }
+        try {
+            CompanyService::ensureSchema();
+            if (!CompanyService::find($companyId)) {
+                return [null, $this->error('企业不存在 #' . $companyId, 422)];
+            }
+        } catch (\Throwable $e) {
+            return [null, $this->error('校验企业失败：' . $e->getMessage(), 500)];
+        }
+        return [$companyId, null];
     }
 
     /** 开始 OAuth：返回 Google 授权 URL */
@@ -801,11 +895,27 @@ class YouTubeController extends Controller
     {
         $hasRefresh = trim((string)($row['refresh_token'] ?? '')) !== '';
         $expiresAt = (string)($row['token_expires_at'] ?? '');
+        $extra = json_decode((string)($row['extra_json'] ?? '{}'), true);
+        if (!is_array($extra)) {
+            $extra = [];
+        }
+        $companyId = (int)($row['company_id'] ?? 0);
+        $companyName = trim((string)($row['company_name'] ?? ''));
+        if ($companyName === '' && $companyId > 0) {
+            try {
+                $c = CompanyService::find($companyId);
+                $companyName = trim((string)($c['name'] ?? ''));
+            } catch (\Throwable $e) {
+            }
+        }
         return [
             'id' => (int)($row['id'] ?? 0),
             'ownerId' => (int)($row['owner_id'] ?? 0),
+            'companyId' => $companyId > 0 ? $companyId : null,
+            'companyName' => $companyName,
             'username' => (string)($row['username'] ?? ''),
             'nickname' => (string)($row['nickname'] ?? ''),
+            'notes' => (string)($extra['notes'] ?? ''),
             'channelId' => (string)($row['channel_id'] ?? ''),
             'channelTitle' => (string)($row['channel_title'] ?? ''),
             'channelCustomUrl' => (string)($row['channel_custom_url'] ?? ''),
