@@ -153,7 +153,8 @@ class PermissionCatalog
             [183, 'system', 'system.video_delivery_types', '管理视频交付类型', 183],
 
             // —— 开发管理 · YouTube ——
-            [184, 'system', 'system.youtube', '管理 YouTube OAuth 与同步发布', 184],
+            [184, 'system', 'system.youtube', '管理 YouTube OAuth 开发配置', 184],
+            [185, 'system', 'system.youtube.use', '使用 YouTube 账号与发布', 185],
         ];
     }
 
@@ -709,7 +710,10 @@ class PermissionCatalog
         ]);
     }
 
-    /** 开发管理 · YouTube：运营管理可配；企业客户不授予 */
+    /**
+     * YouTube：开发配置（system.youtube / menu.780）仅超管(*) + 运营管理；
+     * 账号与发布（system.youtube.use / menu.781–783）开放给运营管理 / 运营专员 / 企业客户。
+     */
     private static function ensureYouTubePerms(): void
     {
         $menus = [
@@ -750,8 +754,16 @@ class PermissionCatalog
         try {
             DB::query(
                 "INSERT INTO admin_permissions (id, module, code, name, sort_order)
-                 VALUES (184, 'system', 'system.youtube', '管理 YouTube OAuth 与同步发布', 184)
-                 ON DUPLICATE KEY UPDATE module='system', code='system.youtube', name='管理 YouTube OAuth 与同步发布', sort_order=184"
+                 VALUES (184, 'system', 'system.youtube', '管理 YouTube OAuth 开发配置', 184)
+                 ON DUPLICATE KEY UPDATE module='system', code='system.youtube', name='管理 YouTube OAuth 开发配置', sort_order=184"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            DB::query(
+                "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                 VALUES (185, 'system', 'system.youtube.use', '使用 YouTube 账号与发布', 185)
+                 ON DUPLICATE KEY UPDATE module='system', code='system.youtube.use', name='使用 YouTube 账号与发布', sort_order=185"
             );
         } catch (\Throwable $e) {
         }
@@ -759,13 +771,15 @@ class PermissionCatalog
             \App\Services\YouTube\YouTubeSchema::ensureSchema();
         } catch (\Throwable $e) {
         }
-        self::ensureRoleCodesByName('%运营管理%', [
-            'system.youtube',
-            'menu.780',
-            'menu.781',
-            'menu.782',
-            'menu.783',
-        ]);
+        $configCodes = ['system.youtube', 'menu.780'];
+        $useCodes = ['system.youtube.use', 'menu.781', 'menu.782', 'menu.783'];
+        // 运营管理：配置 + 使用
+        self::ensureRoleCodesByName('%运营管理%', array_merge($configCodes, $useCodes));
+        // 运营专员 / 企业客户：仅使用（不含开发配置）
+        self::ensureRoleCodesByName('%运营专员%', $useCodes);
+        self::ensureRoleCodesByName('%企业客户%', $useCodes);
+        self::stripRoleCodesByName('%运营专员%', $configCodes);
+        self::stripRoleCodesByName('%企业客户%', $configCodes);
     }
 
     /** @param list<string> $needCodes */

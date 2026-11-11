@@ -98,7 +98,7 @@ class RoutePermissionMap
             ['method' => 'GET', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'PUT', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
-            // YouTube：中间件已登录即可（[]）；控制器校验 system.youtube / 超管 / 运营管理
+            // YouTube：中间件已登录即可（[]）；控制器：配置=超管/运营管理；账号发布=四角色/system.youtube.use
             ['method' => 'GET', 'pattern' => '#^/api/youtube/#', 'codes' => []],
             ['method' => 'POST', 'pattern' => '#^/api/youtube/#', 'codes' => []],
             ['method' => 'PUT', 'pattern' => '#^/api/youtube/#', 'codes' => []],

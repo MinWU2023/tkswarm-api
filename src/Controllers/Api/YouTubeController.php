@@ -17,7 +17,8 @@ use App\Services\YouTube\YouTubeSchema;
  */
 class YouTubeController extends Controller
 {
-    private function denyUnlessCanManage(): ?Response
+    /** YouTube 开发配置：超管 / 运营管理 / system.youtube */
+    private function denyUnlessCanConfig(): ?Response
     {
         DataScope::bootFromGlobals();
         if (DataScope::isLoginSuper() || DataScope::isLoginOpsAdmin()) {
@@ -25,10 +26,31 @@ class YouTubeController extends Controller
         }
         $perms = $GLOBALS['auth_permissions'] ?? [];
         if (is_array($perms) && (in_array('*', $perms, true) || in_array('admin', $perms, true)
-            || in_array('system.youtube', $perms, true) || in_array('youtube.manage', $perms, true))) {
+            || in_array('system.youtube', $perms, true))) {
             return null;
         }
-        return $this->error('无权管理 YouTube', 403);
+        return $this->error('无权管理 YouTube 开发配置', 403);
+    }
+
+    /** YouTube 账号与发布：超管 / 运营管理 / 运营专员 / 企业客户 / system.youtube.use */
+    private function denyUnlessCanUse(): ?Response
+    {
+        DataScope::bootFromGlobals();
+        if (DataScope::isLoginSuper() || DataScope::isLoginOpsAdmin()
+            || DataScope::isOperator() || DataScope::isEnterpriseCustomer()) {
+            return null;
+        }
+        $perms = $GLOBALS['auth_permissions'] ?? [];
+        if (is_array($perms) && (in_array('*', $perms, true) || in_array('admin', $perms, true)
+            || in_array('system.youtube.use', $perms, true)
+            || in_array('system.youtube', $perms, true)
+            || in_array('youtube.manage', $perms, true)
+            || in_array('menu.781', $perms, true)
+            || in_array('menu.782', $perms, true)
+            || in_array('menu.783', $perms, true))) {
+            return null;
+        }
+        return $this->error('无权使用 YouTube 账号与发布', 403);
     }
 
     // -------------------------------------------------------------------------
@@ -37,7 +59,7 @@ class YouTubeController extends Controller
 
     public function getOAuthConfig(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanConfig()) {
             return $deny;
         }
         return $this->success([
@@ -50,7 +72,7 @@ class YouTubeController extends Controller
 
     public function saveOAuthConfig(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanConfig()) {
             return $deny;
         }
         $all = $request->all();
@@ -73,7 +95,7 @@ class YouTubeController extends Controller
 
     public function listAccounts(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -98,7 +120,7 @@ class YouTubeController extends Controller
 
     public function createAccount(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -135,7 +157,7 @@ class YouTubeController extends Controller
 
     public function deleteAccount(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -151,7 +173,7 @@ class YouTubeController extends Controller
     /** 开始 OAuth：返回 Google 授权 URL */
     public function startAuth(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -258,7 +280,7 @@ class YouTubeController extends Controller
 
     public function refreshAccountToken(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -286,7 +308,7 @@ class YouTubeController extends Controller
     /** 有已发布可上传素材的 TikTok 账号列表（创建任务第一步） */
     public function listTikTokPublishAccounts(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         $keyword = trim((string)$request->get('keyword', ''));
@@ -333,7 +355,7 @@ class YouTubeController extends Controller
     /** 可选已发布素材（含本地/CDN）；可按 TikTok 发布账号过滤 */
     public function listSyncMaterials(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         $page = max(1, (int)$request->get('page', 1));
@@ -410,7 +432,7 @@ class YouTubeController extends Controller
      */
     public function enqueueSync(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -557,7 +579,7 @@ class YouTubeController extends Controller
 
     public function listPublishTasks(Request $request): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
@@ -602,7 +624,7 @@ class YouTubeController extends Controller
 
     public function runPublishTask(Request $request, string $id): Response
     {
-        if ($deny = $this->denyUnlessCanManage()) {
+        if ($deny = $this->denyUnlessCanUse()) {
             return $deny;
         }
         YouTubeSchema::ensureSchema();
