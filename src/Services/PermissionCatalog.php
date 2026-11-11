@@ -715,7 +715,7 @@ class PermissionCatalog
         $menus = [
             [780, 'YouTube 开发配置', 'youtubeConfig'],
             [781, 'YouTube 账号', 'youtubeAccounts'],
-            [782, 'YouTube 同步发布', 'youtubeSync'],
+            [782, 'Youtube发布', 'youtubeSync'],
         ];
         foreach ($menus as [$id, $title, $view]) {
             try {
@@ -728,6 +728,20 @@ class PermissionCatalog
                 ]);
             } catch (\Throwable $e) {
             }
+        }
+        // 账号菜单挂到「账号中心 → 账号数据」(parent 110)，与账号列表同级
+        try {
+            DB::query(
+                "UPDATE navigation_menus SET parent_id=110, title='YouTube 账号', icon='youtube', path='', view='youtubeAccounts', subview='', sort_order=2, visible=1 WHERE id=781 OR view='youtubeAccounts'"
+            );
+        } catch (\Throwable $e) {
+        }
+        // Youtube发布挂到「AI矩阵 → 视频向导」(parent 410)
+        try {
+            DB::query(
+                "UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='', sort_order=7, visible=1 WHERE id=782 OR view='youtubeSync'"
+            );
+        } catch (\Throwable $e) {
         }
         try {
             DB::query(

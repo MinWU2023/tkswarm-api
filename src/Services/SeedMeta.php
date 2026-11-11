@@ -821,16 +821,19 @@ class SeedMeta
                  VALUES (780, 820, 'YouTube 开发配置', 'youtube', '', 'youtubeConfig', '', 8, 1)"
             );
             DB::query("UPDATE navigation_menus SET parent_id=820, title='YouTube 开发配置', icon='youtube', path='', view='youtubeConfig', subview='', sort_order=8, visible=1 WHERE id=780");
+            // YouTube 账号：挂到账号中心 → 账号数据，与「账号列表」同级
             DB::query(
                 "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
-                 VALUES (781, 820, 'YouTube 账号', 'users', '', 'youtubeAccounts', '', 9, 1)"
+                 VALUES (781, 110, 'YouTube 账号', 'youtube', '', 'youtubeAccounts', '', 2, 1)"
             );
-            DB::query("UPDATE navigation_menus SET parent_id=820, title='YouTube 账号', icon='users', path='', view='youtubeAccounts', subview='', sort_order=9, visible=1 WHERE id=781");
+            DB::query("UPDATE navigation_menus SET parent_id=110, title='YouTube 账号', icon='youtube', path='', view='youtubeAccounts', subview='', sort_order=2, visible=1 WHERE id=781 OR view='youtubeAccounts'");
+            DB::query("UPDATE navigation_menus SET parent_id=110, title='导入导出', icon='upload', path='', view='accounts', subview='io', sort_order=3, visible=1 WHERE id=112");
+            // Youtube发布：挂到 AI矩阵 → 视频向导，与发布视频等同级
             DB::query(
                 "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
-                 VALUES (782, 820, 'YouTube 同步发布', 'upload', '', 'youtubeSync', '', 10, 1)"
+                 VALUES (782, 410, 'Youtube发布', 'youtube', '', 'youtubeSync', '', 7, 1)"
             );
-            DB::query("UPDATE navigation_menus SET parent_id=820, title='YouTube 同步发布', icon='upload', path='', view='youtubeSync', subview='', sort_order=10, visible=1 WHERE id=782");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='', sort_order=7, visible=1 WHERE id=782 OR view='youtubeSync'");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='帮助文档', icon='book', path='', view='helpDocs', subview='', sort_order=1, visible=1 WHERE id=680");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='工单处理', icon='ticket', path='', view='tickets', subview='', sort_order=2, visible=1 WHERE id=690");
             // 兼容：旧「权限管理中台 / 权限与角色中台」归并到用户角色
