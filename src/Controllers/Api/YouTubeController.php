@@ -1000,6 +1000,7 @@ class YouTubeController extends Controller
 
     /**
      * 创建任务：素材 × YouTube 账号 → youtube_publish_tasks（默认仅入队，由计划任务上传）。
+     * 支持 pairs:[{materialId,youtubeAccountId,tiktokAccountId?}] 一对一匹配；无 pairs 时仍为笛卡尔积。
      */
     public function enqueueSync(Request $request): Response
     {
@@ -1009,6 +1010,7 @@ class YouTubeController extends Controller
         YouTubeSchema::ensureSchema();
         $materialIds = $request->input('materialIds', $request->input('material_ids', []));
         $accountIds = $request->input('youtubeAccountIds', $request->input('accountIds', []));
+        $pairsIn = $request->input('pairs', null);
         if (!is_array($materialIds)) {
             $materialIds = [];
         }
@@ -1017,9 +1019,6 @@ class YouTubeController extends Controller
         }
         $materialIds = array_values(array_unique(array_filter(array_map('intval', $materialIds))));
         $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds))));
-        if (!$materialIds || !$accountIds) {
-            return $this->error('请选择 TikTok 视频与 YouTube 账号', 422);
-        }
         $tiktokAccountId = (int)$request->input('tiktokAccountId', $request->input('publishAccountId', 0));
         $privacy = strtolower(trim((string)$request->input('privacyStatus', $request->input('privacy_status', 'unlisted'))));
         if (!in_array($privacy, ['public', 'unlisted', 'private'], true)) {
@@ -1031,6 +1030,34 @@ class YouTubeController extends Controller
         $ownerId = DataScope::writeOwnerId();
         $taskName = trim((string)$request->input('name', $request->input('taskName', '')));
 
+        /** @var list<array{materialId:int,accountId:int,tiktokAccountId:int}> $jobs */
+        $jobs = [];
+        if (is_array($pairsIn) && $pairsIn) {
+            foreach ($pairsIn as $p) {
+                if (!is_array($p)) {
+                    continue;
+                }
+                $mid = (int)($p['materialId'] ?? $p['material_id'] ?? 0);
+                $aid = (int)($p['youtubeAccountId'] ?? $p['youtube_account_id'] ?? $p['accountId'] ?? $p['account_id'] ?? 0);
+                $tt = (int)($p['tiktokAccountId'] ?? $p['tiktok_account_id'] ?? $tiktokAccountId);
+                if ($mid > 0 && $aid > 0) {
+                    $jobs[] = ['materialId' => $mid, 'accountId' => $aid, 'tiktokAccountId' => $tt];
+                }
+            }
+        } else {
+            if (!$materialIds || !$accountIds) {
+                return $this->error('请选择 TikTok 视频与 YouTube 账号', 422);
+            }
+            foreach ($materialIds as $mid) {
+                foreach ($accountIds as $aid) {
+                    $jobs[] = ['materialId' => $mid, 'accountId' => $aid, 'tiktokAccountId' => $tiktokAccountId];
+                }
+            }
+        }
+        if (!$jobs) {
+            return $this->error('请选择 TikTok 视频与 YouTube 账号', 422);
+        }
+
         if ($tiktokAccountId > 0) {
             $ttAcc = DB::selectOne('SELECT * FROM accounts WHERE id=?', [$tiktokAccountId]);
             if (!$ttAcc || !DataScope::isAccountRowVisible($ttAcc)) {
@@ -1041,28 +1068,39 @@ class YouTubeController extends Controller
         $created = [];
         $skipped = [];
         $errors = [];
+        $matCache = [];
+        $accCache = [];
+        $reqSource = trim((string)$request->input('source', 'tiktok_sync')) ?: 'tiktok_sync';
 
-        foreach ($materialIds as $mid) {
-            $mat = DB::selectOne(
-                'SELECT id, name, file_path, file_name, mime_type, size_bytes, share_title, share_caption,
-                        publish_account_id, IFNULL(cdn_url,\'\') AS cdn_url, IFNULL(github_asset_url,\'\') AS github_asset_url
-                 FROM materials WHERE id=?',
-                [$mid]
-            );
+        foreach ($jobs as $job) {
+            $mid = (int)$job['materialId'];
+            $aid = (int)$job['accountId'];
+            $jobTt = (int)$job['tiktokAccountId'];
+
+            if (!isset($matCache[$mid])) {
+                $matCache[$mid] = DB::selectOne(
+                    'SELECT id, name, file_path, file_name, mime_type, size_bytes, share_title, share_caption,
+                            publish_account_id, IFNULL(cdn_url,\'\') AS cdn_url, IFNULL(github_asset_url,\'\') AS github_asset_url
+                     FROM materials WHERE id=?',
+                    [$mid]
+                );
+            }
+            $mat = $matCache[$mid];
             if (!$mat) {
-                $errors[] = ['materialId' => $mid, 'message' => '素材不存在'];
+                $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '素材不存在'];
                 continue;
             }
             $matTikTokId = (int)($mat['publish_account_id'] ?? 0);
-            if ($tiktokAccountId > 0 && $matTikTokId > 0 && $matTikTokId !== $tiktokAccountId) {
-                $errors[] = ['materialId' => $mid, 'message' => '素材不属于所选 TikTok 账号'];
+            $useTikTokId = $jobTt > 0 ? $jobTt : ($tiktokAccountId > 0 ? $tiktokAccountId : $matTikTokId);
+            // 素材已绑定其他 TikTok 账号时，仅在未显式指定本任务 TikTok 账号时拦截
+            if ($jobTt <= 0 && $tiktokAccountId > 0 && $matTikTokId > 0 && $matTikTokId !== $tiktokAccountId) {
+                $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '素材不属于所选 TikTok 账号'];
                 continue;
             }
-            $useTikTokId = $tiktokAccountId > 0 ? $tiktokAccountId : $matTikTokId;
             if ($useTikTokId > 0) {
                 $ttRow = DB::selectOne('SELECT * FROM accounts WHERE id=?', [$useTikTokId]);
                 if (!$ttRow || !DataScope::isAccountRowVisible($ttRow)) {
-                    $errors[] = ['materialId' => $mid, 'message' => '无权使用该素材所属 TikTok 账号'];
+                    $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '无权使用该素材所属 TikTok 账号'];
                     continue;
                 }
             }
@@ -1075,78 +1113,79 @@ class YouTubeController extends Controller
                 $cdn = trim((string)($mat['github_asset_url'] ?? ''));
             }
             if (($local === '' || !is_file($local)) && $cdn === '') {
-                $errors[] = ['materialId' => $mid, 'message' => '素材无本地文件且无 CDN，无法上传'];
+                $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '素材无本地文件且无 CDN，无法上传'];
                 continue;
             }
 
-            foreach ($accountIds as $aid) {
-                $acc = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
-                if (!$acc) {
-                    $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => 'YouTube 账号不存在'];
-                    continue;
-                }
-                if (trim((string)($acc['refresh_token'] ?? '')) === '') {
-                    $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '账号未完成 OAuth 授权'];
-                    continue;
-                }
-                if (!$force) {
-                    $dup = DB::selectOne(
-                        "SELECT id FROM youtube_publish_tasks
-                         WHERE account_id=? AND material_id=? AND status IN ('completed','running','pending','draft')
-                         ORDER BY id DESC LIMIT 1",
-                        [$aid, $mid]
-                    );
-                    if ($dup) {
-                        $skipped[] = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => (int)$dup['id']];
-                        continue;
-                    }
-                }
-                $name = $taskName !== ''
-                    ? mb_substr($taskName . ' · ' . $title, 0, 255)
-                    : mb_substr('Youtube发布 · ' . $title . ' → #' . $aid, 0, 255);
-                $reqJson = json_encode([
-                    'source' => 'tiktok_sync',
-                    'materialId' => $mid,
-                    'tiktokAccountId' => $useTikTokId,
-                    'sourceCdnUrl' => $cdn,
-                ], JSON_UNESCAPED_UNICODE);
-                DB::query(
-                    "INSERT INTO youtube_publish_tasks
-                     (owner_id, account_id, material_id, tiktok_account_id, name, status, title, description, tags_json, category_id,
-                      privacy_status, made_for_kids, local_file_path, source_cdn_url, mime_type, file_size, request_json)
-                     VALUES (?,?,?,?,?, 'pending', ?, ?, '[]', '22', ?, 0, ?, ?, ?, ?, ?)",
-                    [
-                        $ownerId,
-                        $aid,
-                        $mid,
-                        $useTikTokId > 0 ? $useTikTokId : null,
-                        $name,
-                        $title,
-                        $desc,
-                        $privacy,
-                        $local,
-                        $cdn,
-                        (string)($mat['mime_type'] ?? 'video/mp4'),
-                        (int)($mat['size_bytes'] ?? 0),
-                        $reqJson,
-                    ]
-                );
-                $taskId = (int)DB::getPdo()->lastInsertId();
-                $item = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => $taskId, 'status' => 'pending'];
-                if ($runNow) {
-                    try {
-                        $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
-                        $svc = new YouTubeApiService($acc);
-                        $svc->runPublishTask($taskId);
-                        $item['status'] = 'completed';
-                    } catch (\Throwable $e) {
-                        $item['status'] = 'failed';
-                        $item['error'] = $e->getMessage();
-                        $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => $taskId, 'message' => $e->getMessage()];
-                    }
-                }
-                $created[] = $item;
+            if (!isset($accCache[$aid])) {
+                $accCache[$aid] = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
             }
+            $acc = $accCache[$aid];
+            if (!$acc) {
+                $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => 'YouTube 账号不存在'];
+                continue;
+            }
+            if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+                $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'message' => '账号未完成 OAuth 授权'];
+                continue;
+            }
+            if (!$force) {
+                $dup = DB::selectOne(
+                    "SELECT id FROM youtube_publish_tasks
+                     WHERE account_id=? AND material_id=? AND status IN ('completed','running','pending','draft')
+                     ORDER BY id DESC LIMIT 1",
+                    [$aid, $mid]
+                );
+                if ($dup) {
+                    $skipped[] = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => (int)$dup['id']];
+                    continue;
+                }
+            }
+            $name = $taskName !== ''
+                ? mb_substr($taskName . ' · ' . $title, 0, 255)
+                : mb_substr('Youtube发布 · ' . $title . ' → #' . $aid, 0, 255);
+            $reqJson = json_encode([
+                'source' => $reqSource,
+                'materialId' => $mid,
+                'tiktokAccountId' => $useTikTokId,
+                'sourceCdnUrl' => $cdn,
+            ], JSON_UNESCAPED_UNICODE);
+            DB::query(
+                "INSERT INTO youtube_publish_tasks
+                 (owner_id, account_id, material_id, tiktok_account_id, name, status, title, description, tags_json, category_id,
+                  privacy_status, made_for_kids, local_file_path, source_cdn_url, mime_type, file_size, request_json)
+                 VALUES (?,?,?,?,?, 'pending', ?, ?, '[]', '22', ?, 0, ?, ?, ?, ?, ?)",
+                [
+                    $ownerId,
+                    $aid,
+                    $mid,
+                    $useTikTokId > 0 ? $useTikTokId : null,
+                    $name,
+                    $title,
+                    $desc,
+                    $privacy,
+                    $local,
+                    $cdn,
+                    (string)($mat['mime_type'] ?? 'video/mp4'),
+                    (int)($mat['size_bytes'] ?? 0),
+                    $reqJson,
+                ]
+            );
+            $taskId = (int)DB::getPdo()->lastInsertId();
+            $item = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => $taskId, 'status' => 'pending'];
+            if ($runNow) {
+                try {
+                    $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+                    $svc = new YouTubeApiService($acc);
+                    $svc->runPublishTask($taskId);
+                    $item['status'] = 'completed';
+                } catch (\Throwable $e) {
+                    $item['status'] = 'failed';
+                    $item['error'] = $e->getMessage();
+                    $errors[] = ['materialId' => $mid, 'accountId' => $aid, 'taskId' => $taskId, 'message' => $e->getMessage()];
+                }
+            }
+            $created[] = $item;
         }
 
         return $this->success([
