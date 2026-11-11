@@ -116,6 +116,15 @@ final class ScheduleRegistry
                 'args' => ['--limit=5'],
                 'defaultEnabled' => true,
             ],
+            [
+                'key' => 'youtube_comment_moderate',
+                'title' => 'YouTube 评论自动审核回复',
+                'description' => '处理未回复的观众顶层评论：AI 判定恶意低俗辱骂则删除，否则 AI 自动回复',
+                'command' => 'youtube:comment-moderate',
+                'cron' => '*/5 * * * *',
+                'args' => ['--limit=10'],
+                'defaultEnabled' => true,
+            ],
         ];
     }
 

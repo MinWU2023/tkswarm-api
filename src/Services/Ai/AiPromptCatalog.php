@@ -300,6 +300,26 @@ class AiPromptCatalog
                     ['key' => 'language', 'label' => '回复语言', 'required' => false, 'default' => 'same as the comment (prefer English if unclear)', 'type' => 'text'],
                 ],
             ],
+            [
+                'code' => 'youtube_comment_toxicity',
+                'name' => 'YouTube 恶意评论判定',
+                'category' => 'youtube',
+                'description' => '判定顶层评论是否恶意/低俗/辱骂/诋毁。变量：comment_text / author / video_title',
+                'content' => "You are a YouTube comment moderation assistant.\n"
+                    . "Decide whether the following top-level viewer comment should be removed.\n\n"
+                    . "Video title: {{video_title}}\n"
+                    . "Author: {{author}}\n"
+                    . "Comment: {{comment_text}}\n\n"
+                    . "Mark is_toxic=true ONLY if the comment clearly contains: severe insults, harassment, hate, sexual vulgarity, slander/defamation, threats, or extreme malicious attacks against the creator or others.\n"
+                    . "Do NOT mark as toxic for: normal criticism, disagreement, spammy mild promotion, questions, jokes without clear malice, or mildly rude but non-abusive tone.\n\n"
+                    . "Return ONLY one JSON object (no markdown):\n"
+                    . "{\"is_toxic\": true|false, \"confidence\": 0.0, \"reason\": \"brief reason in Chinese\", \"labels\": [\"insult|vulgar|slander|hate|threat|other\"]}",
+                'variables' => [
+                    ['key' => 'comment_text', 'label' => '评论内容', 'required' => true, 'type' => 'textarea'],
+                    ['key' => 'author', 'label' => '评论作者', 'required' => false, 'default' => '', 'type' => 'text'],
+                    ['key' => 'video_title', 'label' => '视频标题', 'required' => false, 'default' => '', 'type' => 'text'],
+                ],
+            ],
         ];
     }
 

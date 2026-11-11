@@ -159,6 +159,9 @@ final class YouTubeSchema
               `can_reply` TINYINT(1) NOT NULL DEFAULT 1,
               `is_creator_comment` TINYINT(1) NOT NULL DEFAULT 0,
               `creator_replied` TINYINT(1) NOT NULL DEFAULT 0,
+              `auto_handle_status` VARCHAR(32) NOT NULL DEFAULT '',
+              `auto_handle_note` VARCHAR(500) NOT NULL DEFAULT '',
+              `auto_handled_at` DATETIME NULL,
               `moderation_status` VARCHAR(32) NOT NULL DEFAULT '',
               `published_at` DATETIME NULL,
               `platform_updated_at` DATETIME NULL,
@@ -179,6 +182,7 @@ final class YouTubeSchema
         );
 
         self::ensureCommentCreatorColumns();
+        self::ensureCommentAutoHandleColumns();
         self::ensurePublishTaskExtraColumns();
 
         DB::query(
@@ -302,6 +306,40 @@ final class YouTubeSchema
             $idx2 = DB::select("SHOW INDEX FROM youtube_comments WHERE Key_name='idx_yt_cmt_creator_replied'");
             if (!$idx2) {
                 DB::query('ALTER TABLE youtube_comments ADD KEY idx_yt_cmt_creator_replied (creator_replied)');
+            }
+        } catch (\Throwable $e) {
+        }
+        self::ensureCommentAutoHandleColumns();
+    }
+
+    /** youtube_comments：自动审核/回复处理状态 */
+    public static function ensureCommentAutoHandleColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_comments') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols) {
+            return;
+        }
+        $alters = [
+            'auto_handle_status' => "ALTER TABLE youtube_comments ADD COLUMN auto_handle_status VARCHAR(32) NOT NULL DEFAULT '' AFTER creator_replied",
+            'auto_handle_note' => "ALTER TABLE youtube_comments ADD COLUMN auto_handle_note VARCHAR(500) NOT NULL DEFAULT '' AFTER auto_handle_status",
+            'auto_handled_at' => "ALTER TABLE youtube_comments ADD COLUMN auto_handled_at DATETIME NULL AFTER auto_handle_note",
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+        try {
+            $idx = DB::select("SHOW INDEX FROM youtube_comments WHERE Key_name='idx_yt_cmt_auto_handle'");
+            if (!$idx) {
+                DB::query('ALTER TABLE youtube_comments ADD KEY idx_yt_cmt_auto_handle (auto_handle_status)');
             }
         } catch (\Throwable $e) {
         }
