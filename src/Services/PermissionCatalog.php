@@ -155,6 +155,7 @@ class PermissionCatalog
             // —— 开发管理 · YouTube ——
             [184, 'system', 'system.youtube', '管理 YouTube OAuth 开发配置', 184],
             [185, 'system', 'system.youtube.use', '使用 YouTube 账号与发布', 185],
+            [186, 'system', 'system.youtube.panel', 'YouTube 数据面板（内容/评论）', 186],
         ];
     }
 
@@ -272,6 +273,11 @@ class PermissionCatalog
             'warm.create' => ['warm.tasks'],
             'warm.update' => ['warm.tasks'],
             'warm.delete' => ['warm.tasks'],
+            // YouTube：配置 / 使用 / 数据面板
+            'system.youtube' => [],
+            'system.youtube.use' => ['system.youtube', 'youtube.manage', 'system.youtube.panel', 'menu.781', 'menu.782', 'menu.783'],
+            'system.youtube.panel' => ['system.youtube.use', 'youtube.manage', 'menu.781'],
+            'youtube.manage' => ['system.youtube.use', 'system.youtube.panel'],
         ];
         return $legacy;
     }
@@ -594,6 +600,21 @@ class PermissionCatalog
             'videoBoost|edit' => [
                 'publish.video_boost', 'publish.video_boost.update',
             ],
+            'youtubeAccounts|' => [
+                'system.youtube.use', 'system.youtube.panel', 'youtube.manage',
+            ],
+            'youtubeSync|' => [
+                'system.youtube.use', 'youtube.manage',
+            ],
+            'youtubeSync|list' => [
+                'system.youtube.use', 'youtube.manage',
+            ],
+            'youtubeSync|create' => [
+                'system.youtube.use', 'youtube.manage',
+            ],
+            'youtubeConfig|' => [
+                'system.youtube',
+            ],
         ];
     }
 
@@ -711,8 +732,11 @@ class PermissionCatalog
     }
 
     /**
-     * YouTube：开发配置（system.youtube / menu.780）仅超管(*) + 运营管理；
-     * 账号与发布（system.youtube.use / menu.781–783）开放给运营管理 / 运营专员 / 企业客户。
+     * YouTube：
+     * - 开发配置（system.youtube / menu.780）：超管(*) + 运营管理
+     * - 账号/发布/数据面板（system.youtube.use / system.youtube.panel / menu.781–783）：
+     *   超管 / 运营管理 / 运营专员（通过权限节点，可在角色管理勾选）
+     * - 企业客户：保留账号与发布使用（不含开发配置）
      */
     private static function ensureYouTubePerms(): void
     {
@@ -768,16 +792,29 @@ class PermissionCatalog
         } catch (\Throwable $e) {
         }
         try {
+            DB::query(
+                "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                 VALUES (186, 'system', 'system.youtube.panel', 'YouTube 数据面板（内容/评论）', 186)
+                 ON DUPLICATE KEY UPDATE module='system', code='system.youtube.panel', name='YouTube 数据面板（内容/评论）', sort_order=186"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
             \App\Services\YouTube\YouTubeSchema::ensureSchema();
         } catch (\Throwable $e) {
         }
         $configCodes = ['system.youtube', 'menu.780'];
-        $useCodes = ['system.youtube.use', 'menu.781', 'menu.782', 'menu.783'];
-        // 运营管理：配置 + 使用
-        self::ensureRoleCodesByName('%运营管理%', array_merge($configCodes, $useCodes));
-        // 运营专员 / 企业客户：仅使用（不含开发配置）
-        self::ensureRoleCodesByName('%运营专员%', $useCodes);
-        self::ensureRoleCodesByName('%企业客户%', $useCodes);
+        $useCodes = ['system.youtube.use', 'system.youtube.panel', 'menu.781', 'menu.782', 'menu.783'];
+        $opsUseCodes = $useCodes;
+        // 超管 / 超级管理：配置 + 使用 + 数据面板（无 * 的角色也会补齐节点）
+        self::ensureRoleCodesByName('%超管%', array_merge($configCodes, $opsUseCodes));
+        self::ensureRoleCodesByName('%超级管理%', array_merge($configCodes, $opsUseCodes));
+        // 运营管理：配置 + 使用 + 数据面板
+        self::ensureRoleCodesByName('%运营管理%', array_merge($configCodes, $opsUseCodes));
+        // 运营专员：使用 + 数据面板（不含开发配置）
+        self::ensureRoleCodesByName('%运营专员%', $opsUseCodes);
+        // 企业客户：账号与发布（企业门户）；不含开发配置
+        self::ensureRoleCodesByName('%企业客户%', ['system.youtube.use', 'menu.781', 'menu.782', 'menu.783']);
         self::stripRoleCodesByName('%运营专员%', $configCodes);
         self::stripRoleCodesByName('%企业客户%', $configCodes);
     }

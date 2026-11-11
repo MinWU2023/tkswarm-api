@@ -44,12 +44,21 @@ class YouTubeController extends Controller
         $perms = $GLOBALS['auth_permissions'] ?? [];
         if (is_array($perms) && (in_array('*', $perms, true) || in_array('admin', $perms, true)
             || in_array('system.youtube.use', $perms, true)
+            || in_array('system.youtube.panel', $perms, true)
             || in_array('system.youtube', $perms, true)
             || in_array('youtube.manage', $perms, true)
             || in_array('menu.781', $perms, true)
             || in_array('menu.782', $perms, true)
             || in_array('menu.783', $perms, true))) {
             return null;
+        }
+        // 兼容角色勾了权限 id 而非 code：走 PermissionCatalog 别名
+        if (is_array($perms) && class_exists(\App\Services\PermissionCatalog::class)) {
+            foreach (['system.youtube.use', 'system.youtube.panel', 'system.youtube', 'youtube.manage'] as $code) {
+                if (\App\Services\PermissionCatalog::matchesCode($code, $perms)) {
+                    return null;
+                }
+            }
         }
         return $this->error('无权使用 YouTube 账号与发布', 403);
     }

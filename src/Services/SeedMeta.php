@@ -89,8 +89,8 @@ class SeedMeta
             ['nocaptchaKeys', ['system.nocaptcha', 'admin']],
             ['videoDeliveryTypes', ['system.video_delivery_types', 'admin']],
             ['youtubeConfig', ['system.youtube', 'admin']],
-            ['youtubeAccounts', ['system.youtube.use', 'system.youtube', 'youtube.manage', 'admin']],
-            ['youtubeSync', ['system.youtube.use', 'system.youtube', 'youtube.manage', 'admin']],
+            ['youtubeAccounts', ['system.youtube.use', 'system.youtube.panel', 'system.youtube', 'youtube.manage', 'admin']],
+            ['youtubeSync', ['system.youtube.use', 'system.youtube.panel', 'system.youtube', 'youtube.manage', 'admin']],
             ['tasks', [
                 'publish.tasks', 'publish.tasks.view', 'publish.mass', 'publish.mass.view',
                 'warm.tasks', 'warm.view', 'publish.materials', 'publish.materials.view',
