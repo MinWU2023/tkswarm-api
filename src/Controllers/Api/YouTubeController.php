@@ -441,6 +441,7 @@ class YouTubeController extends Controller
         }
         YouTubeSchema::ensureSchema();
         YouTubeSchema::ensureAccountStatsColumns();
+        YouTubeSchema::ensureCommentCreatorColumns();
         $row = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
         if (!$row) {
             return [null, $this->error('账号不存在', 404)];
@@ -848,6 +849,8 @@ class YouTubeController extends Controller
             'totalReplyCount' => (int)($row['total_reply_count'] ?? 0),
             'isPublic' => !empty($row['is_public']),
             'canReply' => !isset($row['can_reply']) || !empty($row['can_reply']),
+            'isCreatorComment' => !empty($row['is_creator_comment']),
+            'creatorReplied' => !empty($row['creator_replied']),
             'moderationStatus' => (string)($row['moderation_status'] ?? ''),
             'publishedAt' => (string)($row['published_at'] ?? ''),
             'platformUpdatedAt' => (string)($row['platform_updated_at'] ?? ''),

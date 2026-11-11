@@ -826,6 +826,23 @@ class YouTubeApiService
                 [$cnt, $localVideoId]
             );
         }
+        $creatorChannelId = trim((string)($this->account['channel_id'] ?? ''));
+        if ($creatorChannelId === '') {
+            try {
+                $this->getMineChannel('snippet');
+                $creatorChannelId = trim((string)($this->account['channel_id'] ?? ''));
+            } catch (\Throwable $e) {
+                // 无频道信息时跳过标记
+            }
+        }
+        if ($creatorChannelId !== '') {
+            YouTubeSchema::refreshCreatorCommentFlags(
+                $this->accountId(),
+                $localVideoId,
+                $youtubeVideoId,
+                $creatorChannelId
+            );
+        }
         return ['threads' => $threads, 'comments' => $comments, 'replies' => $replies];
     }
 
@@ -853,7 +870,7 @@ class YouTubeApiService
             ['Content-Type: application/json; charset=UTF-8']
         );
         $parent = DB::selectOne(
-            'SELECT id, video_id, youtube_video_id FROM youtube_comments WHERE youtube_comment_id=? LIMIT 1',
+            'SELECT id, video_id, youtube_video_id, is_creator_comment FROM youtube_comments WHERE youtube_comment_id=? LIMIT 1',
             [$parentYoutubeCommentId]
         );
         YouTubeSchema::upsertCommentFromApi(
@@ -865,6 +882,16 @@ class YouTubeApiService
             (int)($parent['id'] ?? 0),
             null
         );
+        // 创作者回复后，标记非创作者顶层评论为已回复
+        $creatorChannelId = trim((string)($this->account['channel_id'] ?? ''));
+        $parentLocalId = (int)($parent['id'] ?? 0);
+        if ($parentLocalId > 0 && empty($parent['is_creator_comment']) && $creatorChannelId !== '') {
+            YouTubeSchema::ensureCommentCreatorColumns();
+            DB::query(
+                'UPDATE youtube_comments SET creator_replied=1, updated_at=CURRENT_TIMESTAMP WHERE id=? AND parent_id=0 AND is_creator_comment=0',
+                [$parentLocalId]
+            );
+        }
         return $res;
     }
 

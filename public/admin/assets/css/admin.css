@@ -123,23 +123,152 @@ html { color-scheme: light; }
   -webkit-backdrop-filter: blur(14px);
 }
 
-/* ---------- 登录 ---------- */
-.login-shell {
-  min-height: 100%;
+/* ---------- 登录（对齐 tkswarm-node auth-gate） ---------- */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #070c18;
+  background-image: url('/images/login-bg.png');
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: cover;
+  background-attachment: fixed;
   display: grid;
   place-items: center;
-  padding: 28px 20px;
+  z-index: 50;
+  padding: 40px 24px;
+}
+.auth-gate::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(105deg, rgba(7, 12, 24, .55) 0%, rgba(7, 12, 24, .22) 48%, rgba(59, 158, 255, .14) 100%);
+  pointer-events: none;
+}
+.auth-split {
   position: relative;
+  z-index: 1;
+  width: min(1180px, 94vw);
+  min-height: 560px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 72px;
+  animation: authFadeUp .4s var(--px-ease);
 }
-.login-panel {
-  width: min(420px, 100%);
-  padding: 40px 36px 32px;
+@keyframes authFadeUp {
+  from { opacity: 0; transform: translateY(18px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.login-brand {
+.auth-hero {
+  flex: 1 1 55%;
+  min-width: 300px;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .55);
+}
+.auth-hero .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.auth-hero .brand-logo {
+  height: 48px;
+  width: auto;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .35));
+}
+.auth-hero .brand-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+  text-shadow: 0 0 12px rgba(125, 211, 252, .45);
+}
+.auth-hero h1 {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 0 0 14px;
+  letter-spacing: -.02em;
+}
+.auth-hero > p {
+  font-size: 15px;
+  line-height: 1.75;
+  color: rgba(241, 245, 249, .9);
+  margin: 0 0 26px;
+  max-width: 520px;
+}
+.auth-hero ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+.auth-hero li {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 26px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, .95);
+}
+.auth-hero li::before {
+  content: '✓';
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(59, 158, 255, .28);
+  color: #7dd3fc;
+  border: 1px solid rgba(125, 211, 252, .45);
+  font-size: 11px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.auth-panel {
+  flex: 0 0 440px;
+  max-width: 100%;
+  padding: 40px 36px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 25px 60px -10px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .12);
+}
+.auth-panel h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--px-ink);
+  margin: 0 0 6px;
+}
+.auth-panel .muted {
+  font-size: 13.5px;
+  color: var(--px-muted);
+  margin: 0 0 22px;
+}
+.auth-panel .el-form-item__label {
+  font-weight: 600 !important;
+  color: var(--px-text) !important;
+}
+.auth-panel .el-button--primary {
+  height: 44px !important;
+  font-weight: 700 !important;
+  letter-spacing: -.01em !important;
+  border-radius: 999px !important;
+  font-size: 15px !important;
+}
+.login-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 16px;
+  gap: 12px;
 }
 .brand-logo,
 .login-mark {
@@ -167,33 +296,11 @@ html { color-scheme: light; }
   box-shadow: none;
   background: transparent;
 }
-.login-brand .brand-logo-wide {
-  height: 52px;
-  max-width: 220px;
-}
-.login-title {
-  font-size: 22px;
-  font-weight: 750;
-  letter-spacing: -.03em;
-  color: var(--px-ink);
-  background: none;
-  -webkit-text-fill-color: unset;
-}
-.login-sub {
-  font-size: 13px;
-  color: var(--px-muted);
-  margin-top: 4px;
-  letter-spacing: 0;
-}
-.login-panel .el-form-item__label {
-  font-weight: 600 !important;
-  color: var(--px-text) !important;
-}
-.login-panel .el-button--primary {
-  height: 44px !important;
-  font-weight: 700 !important;
-  letter-spacing: -.01em !important;
-  border-radius: var(--px-radius-md) !important;
+@media (max-width: 960px) {
+  .auth-split { flex-direction: column; gap: 28px; min-height: auto; }
+  .auth-panel { flex: 1 1 auto; width: 100%; }
+  .auth-hero h1 { font-size: 28px; }
+  .auth-hero ul { display: none; }
 }
 
 /* ---------- 布局壳 ---------- */
@@ -398,16 +505,19 @@ html { color-scheme: light; }
 
 .captcha-box {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   width: 100%;
 }
 .captcha-box img {
-  height: 38px;
-  border-radius: var(--px-radius);
+  height: 40px;
+  width: 118px;
+  border-radius: 8px;
   cursor: pointer;
   border: 1px solid var(--px-line);
-  background: var(--px-surface-2);
+  background: #f8fafc;
+  object-fit: fill;
+  flex-shrink: 0;
 }
 
 /* ---------- Element Plus · 按钮 ---------- */

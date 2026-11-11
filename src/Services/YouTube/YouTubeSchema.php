@@ -157,6 +157,8 @@ final class YouTubeSchema
               `total_reply_count` INT NOT NULL DEFAULT 0,
               `is_public` TINYINT(1) NOT NULL DEFAULT 1,
               `can_reply` TINYINT(1) NOT NULL DEFAULT 1,
+              `is_creator_comment` TINYINT(1) NOT NULL DEFAULT 0,
+              `creator_replied` TINYINT(1) NOT NULL DEFAULT 0,
               `moderation_status` VARCHAR(32) NOT NULL DEFAULT '',
               `published_at` DATETIME NULL,
               `platform_updated_at` DATETIME NULL,
@@ -170,10 +172,13 @@ final class YouTubeSchema
               KEY `idx_yt_cmt_video` (`video_id`),
               KEY `idx_yt_cmt_ytvideo` (`youtube_video_id`),
               KEY `idx_yt_cmt_parent` (`parent_id`),
-              KEY `idx_yt_cmt_parent_yt` (`parent_youtube_comment_id`)
+              KEY `idx_yt_cmt_parent_yt` (`parent_youtube_comment_id`),
+              KEY `idx_yt_cmt_creator` (`is_creator_comment`),
+              KEY `idx_yt_cmt_creator_replied` (`creator_replied`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
 
+        self::ensureCommentCreatorColumns();
         self::ensurePublishTaskExtraColumns();
 
         DB::query(
@@ -263,12 +268,104 @@ final class YouTubeSchema
         }
     }
 
+    /** youtube_comments：创作者顶层评论 / 创作者是否已回复 */
+    public static function ensureCommentCreatorColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_comments') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols) {
+            return;
+        }
+        $alters = [
+            'is_creator_comment' => "ALTER TABLE youtube_comments ADD COLUMN is_creator_comment TINYINT(1) NOT NULL DEFAULT 0 AFTER can_reply",
+            'creator_replied' => "ALTER TABLE youtube_comments ADD COLUMN creator_replied TINYINT(1) NOT NULL DEFAULT 0 AFTER is_creator_comment",
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+        try {
+            $idx = DB::select("SHOW INDEX FROM youtube_comments WHERE Key_name='idx_yt_cmt_creator'");
+            if (!$idx) {
+                DB::query('ALTER TABLE youtube_comments ADD KEY idx_yt_cmt_creator (is_creator_comment)');
+            }
+        } catch (\Throwable $e) {
+        }
+        try {
+            $idx2 = DB::select("SHOW INDEX FROM youtube_comments WHERE Key_name='idx_yt_cmt_creator_replied'");
+            if (!$idx2) {
+                DB::query('ALTER TABLE youtube_comments ADD KEY idx_yt_cmt_creator_replied (creator_replied)');
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * 按频道 ID 回写顶层评论的 is_creator_comment / creator_replied。
+     */
+    public static function refreshCreatorCommentFlags(int $accountId, int $localVideoId, string $youtubeVideoId, string $creatorChannelId): void
+    {
+        self::ensureCommentCreatorColumns();
+        $creatorChannelId = trim($creatorChannelId);
+        if ($creatorChannelId === '' || ($localVideoId <= 0 && $youtubeVideoId === '')) {
+            return;
+        }
+        $scopeFilters = ['account_id=?'];
+        $scopeParams = [$accountId];
+        if ($localVideoId > 0) {
+            $scopeFilters[] = 'video_id=?';
+            $scopeParams[] = $localVideoId;
+        } else {
+            $scopeFilters[] = 'youtube_video_id=?';
+            $scopeParams[] = $youtubeVideoId;
+        }
+        $scopeWhere = implode(' AND ', $scopeFilters);
+        $tWhere = implode(' AND ', array_map(static fn ($f) => 't.' . $f, $scopeFilters));
+
+        // 全部评论（含回复）：标记是否创作者发言
+        DB::query(
+            "UPDATE youtube_comments
+             SET is_creator_comment=CASE WHEN author_channel_id=? THEN 1 ELSE 0 END,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE {$scopeWhere}",
+            array_merge([$creatorChannelId], $scopeParams)
+        );
+        // 顶层先清零「创作者已回复」；创作者自身顶层保持 0
+        DB::query(
+            "UPDATE youtube_comments
+             SET creator_replied=0, updated_at=CURRENT_TIMESTAMP
+             WHERE {$scopeWhere} AND parent_id=0",
+            $scopeParams
+        );
+        // 非创作者顶层：若存在创作者回复则标记已回复（派生表避免同表 UPDATE 限制）
+        DB::query(
+            "UPDATE youtube_comments t
+             INNER JOIN (
+               SELECT DISTINCT parent_id AS pid
+               FROM youtube_comments
+               WHERE {$scopeWhere}
+                 AND parent_id>0
+                 AND author_channel_id=?
+                 AND IFNULL(moderation_status,'') NOT IN ('deleted')
+             ) r ON r.pid=t.id
+             SET t.creator_replied=1, t.updated_at=CURRENT_TIMESTAMP
+             WHERE {$tWhere} AND t.parent_id=0 AND t.is_creator_comment=0",
+            array_merge($scopeParams, [$creatorChannelId], $scopeParams)
+        );
+    }
+
     /**
      * 将 channels resource 的 snippet/statistics 写回 youtube_accounts。
      * @param array<string,mixed> $item
      * @return array<string,mixed>
      */
-    public static function applyChannelStatsToAccount(int $accountId, array $item): array
     {
         self::ensureAccountStatsColumns();
         $snippet = is_array($item['snippet'] ?? null) ? $item['snippet'] : [];

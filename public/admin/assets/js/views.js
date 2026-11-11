@@ -83,25 +83,24 @@
     },
     render: function () {
       var self = this;
-      return h('div', { class: 'login-shell login-shell--split' }, [
-        h('aside', { class: 'login-atmosphere', 'aria-hidden': 'true' }, [
-          h('div', { class: 'login-atmosphere-grid' }),
-          h('div', { class: 'login-atmosphere-glow' }),
-          h('div', { class: 'login-atmosphere-brand' }, [
-            h('img', { src: '/images/icon.png?v=2', alt: '' }),
-            h('div', { class: 'login-atmosphere-name' }, 'TKSwarm')
-          ]),
-          h('div', { class: 'login-atmosphere-line' }, '运营控制台 · 工单 / 版本 / 帮助文档')
-        ]),
-        h('div', { class: 'login-stage' }, [
-          h('div', { class: 'glass-card login-panel' }, [
-            h('div', { class: 'login-brand' }, [
-              h('img', { class: 'brand-logo brand-logo-wide', src: '/images/logo.png?v=2', alt: 'TkSwarm' }),
-              h('div', [
-                h('div', { class: 'login-title' }, '登录控制台'),
-                h('div', { class: 'login-sub' }, '请使用管理员账号进入系统')
-              ])
+      return h('div', { class: 'auth-gate' }, [
+        h('div', { class: 'auth-split' }, [
+          h('section', { class: 'auth-hero' }, [
+            h('div', { class: 'brand' }, [
+              h('img', { class: 'brand-logo', src: '/images/logo.png?v=2', alt: 'TkSwarm', width: 168, height: 64 }),
+              h('span', { class: 'brand-tag' }, '运营控制台')
             ]),
+            h('h1', '扬帆出海 · 融通全球'),
+            h('p', '跨洋巨轮破浪远航，TikTok 矩阵全域赋能。将全球多账号调度、跨境代理与 AI 创作装载入统一的航海旗舰中台。'),
+            h('ul', [
+              h('li', '工单协同与版本发布一站管理'),
+              h('li', '帮助文档与运营资料统一沉淀'),
+              h('li', '企业门户与后台权限联动闭环')
+            ])
+          ]),
+          h('section', { class: 'auth-panel' }, [
+            h('h2', '登录控制台'),
+            h('p', { class: 'muted' }, '请使用管理员账号进入系统'),
             h(ElementPlus.ElForm, { labelPosition: 'top', onSubmit: function (e) { e.preventDefault(); self.submit(); } }, function () {
               return [
                 h(ElementPlus.ElFormItem, { label: '账号' }, function () {
@@ -131,7 +130,8 @@
                       'onUpdate:modelValue': function (v) { self.form.captchaCode = v; },
                       placeholder: '验证码',
                       size: 'large',
-                      style: 'flex:1'
+                      style: 'flex:1',
+                      maxlength: 4
                     }),
                     self.captchaSvg
                       ? h('img', { src: self.captchaSvg, title: '点击刷新', onClick: function () { self.refreshCaptcha(); } })
