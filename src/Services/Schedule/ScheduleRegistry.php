@@ -5,13 +5,14 @@ namespace App\Services\Schedule;
 
 /**
  * 代码内登记的计划任务（crontab 语义）；启停状态存 DB。
+ * admin「计划任务」页按本表动态渲染全部开关，新增任务只需在此登记。
  */
 final class ScheduleRegistry
 {
     /**
      * @return list<array{
      *   key:string,title:string,description:string,command:string,
-     *   cron:string,args:list<string>,defaultEnabled:bool
+     *   cron:string,args:list<string>,defaultEnabled:bool,group:string
      * }>
      */
     public static function definitions(): array
@@ -25,6 +26,7 @@ final class ScheduleRegistry
                 'cron' => '* * * * *',
                 'args' => [],
                 'defaultEnabled' => true,
+                'group' => '消息',
             ],
             [
                 'key' => 'auto_follow_dispatch',
@@ -34,6 +36,7 @@ final class ScheduleRegistry
                 'cron' => '* * * * *',
                 'args' => ['--limit=50'],
                 'defaultEnabled' => true,
+                'group' => '增长',
             ],
             [
                 'key' => 'video_boost_dispatch',
@@ -43,6 +46,7 @@ final class ScheduleRegistry
                 'cron' => '* * * * *',
                 'args' => ['--limit=50'],
                 'defaultEnabled' => true,
+                'group' => '增长',
             ],
             [
                 'key' => 'pull_analysis',
@@ -52,6 +56,7 @@ final class ScheduleRegistry
                 'cron' => '* * * * *',
                 'args' => ['--limit=5'],
                 'defaultEnabled' => true,
+                'group' => '数据',
             ],
             [
                 'key' => 'warm_recurring',
@@ -61,6 +66,7 @@ final class ScheduleRegistry
                 'cron' => '0 * * * *',
                 'args' => ['--limit=50'],
                 'defaultEnabled' => true,
+                'group' => '养号',
             ],
             [
                 'key' => 'env_pack_heal',
@@ -70,6 +76,17 @@ final class ScheduleRegistry
                 'cron' => '*/10 * * * *',
                 'args' => ['--limit=30'],
                 'defaultEnabled' => true,
+                'group' => '运维',
+            ],
+            [
+                'key' => 'ban_restore',
+                'title' => '封禁到期自动恢复',
+                'description' => '到解封时间自动恢复账号；顺带 AI 复核未判定违规通知与 NoCaptcha 日态',
+                'command' => 'ban:restore',
+                'cron' => '*/5 * * * *',
+                'args' => ['--assess-limit=3'],
+                'defaultEnabled' => true,
+                'group' => '运维',
             ],
             [
                 'key' => 'ai_lead_daily_quota',
@@ -79,6 +96,7 @@ final class ScheduleRegistry
                 'cron' => '5 0 * * *',
                 'args' => [],
                 'defaultEnabled' => true,
+                'group' => '拓客',
             ],
             [
                 'key' => 'ai_lead_dm_dispatch',
@@ -88,6 +106,17 @@ final class ScheduleRegistry
                 'cron' => '*/5 * * * *',
                 'args' => ['--limit=10'],
                 'defaultEnabled' => true,
+                'group' => '拓客',
+            ],
+            [
+                'key' => 'ai_lead_sync_stats',
+                'title' => 'AI拓客私信进度同步',
+                'description' => '刷新 active/completed 拓客任务 stats 中的私信进度',
+                'command' => 'ai-lead:sync-stats',
+                'cron' => '*/15 * * * *',
+                'args' => ['--limit=200'],
+                'defaultEnabled' => true,
+                'group' => '拓客',
             ],
             [
                 'key' => 'nocaptcha_daily_reset',
@@ -97,6 +126,7 @@ final class ScheduleRegistry
                 'cron' => '1 0 * * *',
                 'args' => [],
                 'defaultEnabled' => true,
+                'group' => '运维',
             ],
             [
                 'key' => 'video_delivery_auto_confirm',
@@ -106,15 +136,17 @@ final class ScheduleRegistry
                 'cron' => '15 * * * *',
                 'args' => ['--days=3'],
                 'defaultEnabled' => true,
+                'group' => '交付',
             ],
             [
                 'key' => 'youtube_publish_dispatch',
-                'title' => 'Youtube 发布任务上传',
-                'description' => '扫描 pending 的 Youtube 发布任务，下载 TikTok 素材并上传到 YouTube',
+                'title' => 'YouTube 发布任务上传',
+                'description' => '扫描 pending 的 YouTube 发布任务，下载 TikTok 素材并上传到 YouTube',
                 'command' => 'youtube:publish-dispatch',
                 'cron' => '* * * * *',
                 'args' => ['--limit=5'],
                 'defaultEnabled' => true,
+                'group' => 'YouTube',
             ],
             [
                 'key' => 'youtube_comment_moderate',
@@ -124,6 +156,7 @@ final class ScheduleRegistry
                 'cron' => '*/5 * * * *',
                 'args' => ['--limit=10'],
                 'defaultEnabled' => true,
+                'group' => 'YouTube',
             ],
             [
                 'key' => 'youtube_token_refresh',
@@ -133,6 +166,17 @@ final class ScheduleRegistry
                 'cron' => '20 * * * *',
                 'args' => ['--limit=20', '--days=3'],
                 'defaultEnabled' => true,
+                'group' => 'YouTube',
+            ],
+            [
+                'key' => 'proxy_probe',
+                'title' => '代理连通性探测',
+                'description' => '对全量代理 IP 做连通性与延迟检测，更新 proxies 状态',
+                'command' => 'proxy:probe',
+                'cron' => '*/30 * * * *',
+                'args' => [],
+                'defaultEnabled' => false,
+                'group' => '运维',
             ],
         ];
     }

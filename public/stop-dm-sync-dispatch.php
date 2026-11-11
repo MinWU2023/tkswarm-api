@@ -93,6 +93,18 @@ function setDmSyncFlag(PDO $pdo, bool $on): void
     $st->execute(['dmSyncDispatchEnabled', $val]);
 }
 
+function setScheduledJobEnabled(PDO $pdo, string $jobKey, bool $enabled): void
+{
+    if (!tableExists($pdo, 'scheduled_jobs')) {
+        return;
+    }
+    $st = $pdo->prepare(
+        'INSERT INTO scheduled_jobs(job_key, enabled) VALUES (?,?)
+         ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), updated_at=CURRENT_TIMESTAMP'
+    );
+    $st->execute([$jobKey, $enabled ? 1 : 0]);
+}
+
 function getDmSyncFlag(PDO $pdo): bool
 {
     if (!tableExists($pdo, 'settings')) {
@@ -150,6 +162,7 @@ $pendingWork = tableExists($pdo, 'account_work_items')
 if ($enable) {
     try {
         setDmSyncFlag($pdo, true);
+        setScheduledJobEnabled($pdo, 'dm_sync', true);
         $syncMsgRestored = 0;
         if (tableExists($pdo, 'chat_connections')) {
             $syncMsgRestored = (int)$pdo->exec(
@@ -167,6 +180,7 @@ if ($enable) {
           <h1 class="ok">已开启私信同步派发</h1>
           <ul>
             <li><code>dmSyncDispatchEnabled=1</code></li>
+            <li><code>scheduled_jobs.dm_sync</code> 已开启</li>
             <li>chat_connections.sync_messages 恢复：<b>' . $syncMsgRestored . '</b></li>
             <li>user_settings.privateMessageSync 恢复：<b>' . $userRestored . '</b></li>
           </ul>
@@ -210,6 +224,7 @@ if (!$confirm) {
 
 try {
     setDmSyncFlag($pdo, false);
+    setScheduledJobEnabled($pdo, 'dm_sync', false);
 
     // 旧版 DmSyncCommand 只认这两处，不认 dmSyncDispatchEnabled
     $syncMsgOff = 0;
@@ -305,6 +320,7 @@ try {
       <h1 class="ok">已终止私信同步派发</h1>
       <ul>
         <li>全局开关 dmSyncDispatchEnabled：<b>已关闭</b></li>
+        <li>admin 计划任务 <code>dm_sync</code>：<b>已关闭</b></li>
         <li>兼容旧 cron：sync_messages=0 影响行数 <b>' . $syncMsgOff . '</b></li>
         <li>兼容旧 cron：privateMessageSync=false 写入 <b>' . $userSyncOff . '</b></li>
         <li>取消 dm_sync 计划任务：<b>' . $tasksCancelled . '</b></li>

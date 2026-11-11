@@ -975,6 +975,15 @@ class NodeBridgeController extends Controller
     /** 计划任务：到解封时间自动恢复账号状态；顺带补跑「有未判定违规通知」的账号 AI 判定 + NoCaptchaAI 跨日重置/超30天报废 */
     public function maintenanceRestoreBans(Request $request): Response
     {
+        // 与 admin「计划任务」开关 ban_restore 联动（Node 定时器 / PHP schedule 共用）
+        if (!\App\Services\Schedule\ScheduleRunner::isEnabled('ban_restore')) {
+            return $this->success([
+                'skipped' => true,
+                'reason' => 'disabled',
+                'restored' => 0,
+                'assessed' => [],
+            ], '封禁恢复计划任务已关闭');
+        }
         try {
             NocaptchaKeyController::ensureDailyState();
         } catch (\Throwable $e) {

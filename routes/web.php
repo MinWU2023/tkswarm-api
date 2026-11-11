@@ -177,8 +177,19 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::post('/api/company/ops/youtube-accounts', CompanyPortalApiController::class . '@createYoutubeAccount');
     Router::put('/api/company/ops/youtube-accounts/{id}', CompanyPortalApiController::class . '@updateYoutubeAccount');
     Router::post('/api/company/ops/youtube-accounts/{id}', CompanyPortalApiController::class . '@updateYoutubeAccount');
+    Router::delete('/api/company/ops/youtube-accounts/{id}', CompanyPortalApiController::class . '@deleteYoutubeAccount');
     Router::post('/api/company/ops/youtube-accounts/{id}/auth', CompanyPortalApiController::class . '@startYoutubeAuth');
     Router::post('/api/company/ops/youtube-accounts/{id}/refresh-token', CompanyPortalApiController::class . '@refreshYoutubeToken');
+    Router::get('/api/company/ops/youtube-accounts/{id}/videos', CompanyPortalApiController::class . '@listYoutubeAccountVideos');
+    Router::post('/api/company/ops/youtube-accounts/{id}/videos/pull', CompanyPortalApiController::class . '@pullYoutubeAccountVideos');
+    Router::post('/api/company/ops/youtube-accounts/{id}/stats/pull', CompanyPortalApiController::class . '@pullYoutubeAccountStats');
+    Router::get('/api/company/ops/youtube-accounts/{id}/videos/{videoId}', CompanyPortalApiController::class . '@getYoutubeAccountVideo');
+    Router::delete('/api/company/ops/youtube-accounts/{id}/videos/{videoId}', CompanyPortalApiController::class . '@deleteYoutubeAccountVideo');
+    Router::get('/api/company/ops/youtube-accounts/{id}/videos/{videoId}/comments', CompanyPortalApiController::class . '@listYoutubeVideoComments');
+    Router::post('/api/company/ops/youtube-accounts/{id}/videos/{videoId}/comments/pull', CompanyPortalApiController::class . '@pullYoutubeVideoComments');
+    Router::post('/api/company/ops/youtube-accounts/{id}/comments/{commentId}/reply', CompanyPortalApiController::class . '@replyYoutubeComment');
+    Router::post('/api/company/ops/youtube-accounts/{id}/comments/{commentId}/ai-reply', CompanyPortalApiController::class . '@aiReplyYoutubeComment');
+    Router::delete('/api/company/ops/youtube-accounts/{id}/comments/{commentId}', CompanyPortalApiController::class . '@deleteYoutubeComment');
     Router::get('/api/company/chat/accounts', CompanyPortalApiController::class . '@chatAccounts');
     Router::get('/api/company/chat/friends', CompanyPortalApiController::class . '@chatFriends');
     Router::get('/api/company/chat/messages', CompanyPortalApiController::class . '@chatMessages');
@@ -835,6 +846,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
 
     Router::get('/admin/api/scheduled-jobs', ScheduleManageController::class . '@list');
     Router::put('/admin/api/scheduled-jobs/{key}', ScheduleManageController::class . '@update');
+    Router::post('/admin/api/scheduled-jobs/{key}', ScheduleManageController::class . '@update');
     Router::post('/admin/api/scheduled-jobs/{key}/run', ScheduleManageController::class . '@run');
 
     Router::get('/admin/api/github-configs', GithubConfigManageController::class . '@list');

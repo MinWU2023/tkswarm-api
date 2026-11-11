@@ -136,11 +136,53 @@
     updateYoutubeAccount: function (id, body) {
       return request('/api/company/ops/youtube-accounts/' + id, { method: 'PUT', body: body || {} });
     },
+    deleteYoutubeAccount: function (id) {
+      return request('/api/company/ops/youtube-accounts/' + id, { method: 'DELETE' });
+    },
     startYoutubeAuth: function (id) {
       return request('/api/company/ops/youtube-accounts/' + id + '/auth', { method: 'POST', body: {} });
     },
     refreshYoutubeToken: function (id) {
       return request('/api/company/ops/youtube-accounts/' + id + '/refresh-token', { method: 'POST', body: {} });
+    },
+    youtubeAccountVideos: function (id, params) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos' + qs(params), { method: 'GET' });
+    },
+    pullYoutubeAccountVideos: function (id, body) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos/pull', { method: 'POST', body: body || {} });
+    },
+    pullYoutubeAccountStats: function (id) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/stats/pull', { method: 'POST', body: {} });
+    },
+    youtubeAccountVideo: function (id, videoId, params) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos/' + videoId + qs(params), { method: 'GET' });
+    },
+    deleteYoutubeAccountVideo: function (id, videoId) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos/' + videoId, { method: 'DELETE' });
+    },
+    youtubeVideoComments: function (id, videoId) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos/' + videoId + '/comments', { method: 'GET' });
+    },
+    pullYoutubeVideoComments: function (id, videoId, body) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/videos/' + videoId + '/comments/pull', {
+        method: 'POST',
+        body: body || { maxPages: 5, fetchAllReplies: true }
+      });
+    },
+    replyYoutubeComment: function (id, commentId, body) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/comments/' + commentId + '/reply', {
+        method: 'POST',
+        body: body || {}
+      });
+    },
+    aiReplyYoutubeComment: function (id, commentId, body) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/comments/' + commentId + '/ai-reply', {
+        method: 'POST',
+        body: body || {}
+      });
+    },
+    deleteYoutubeComment: function (id, commentId) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/comments/' + commentId, { method: 'DELETE' });
     },
 
     chatAccounts: function (params) {

@@ -18,8 +18,10 @@ class ScheduleManageController extends Controller
         $jobs = ScheduleRunner::listJobs();
         return $this->success([
             'jobs' => $jobs,
+            'total' => count($jobs),
+            'enabledCount' => count(array_filter($jobs, static fn ($j) => !empty($j['enabled']))),
             'mountHint' => '* * * * * cd /path/to/tkswarm-api && php schedule.php >> /var/log/tkswarm-schedule.log 2>&1',
-            'note' => '服务器 crontab 只需挂载 schedule.php；下列任务仅在「开启」时由调度器按 cron 执行。',
+            'note' => '服务器 crontab 只需挂载 schedule.php；下列全部计划任务开关均在本页控制，开启后才按 cron 执行。',
         ]);
     }
 

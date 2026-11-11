@@ -1200,7 +1200,7 @@
             items: [
               {
                 title: '终止私信同步派发',
-                desc: '关闭全局 dmSyncDispatchEnabled，取消 dm_sync 计划/会话任务。清空后仍不断冒「私信同步」是因为 crontab 在跑 php artisan dm:sync。',
+                desc: '关闭 admin 计划任务 dm_sync + 全局 dmSyncDispatchEnabled，并取消 dm_sync 计划/会话任务。日常启停请优先用「计划任务」页开关。',
                 url: '/stop-dm-sync-dispatch.php',
                 danger: true,
                 confirm: true,
@@ -1600,9 +1600,35 @@
         jobs: [],
         mountHint: '',
         note: '',
+        groupFilter: '全部',
+        keyword: '',
         toggling: {},
         running: {}
       };
+    },
+    computed: {
+      groups: function () {
+        var set = {};
+        (this.jobs || []).forEach(function (j) {
+          set[j.group || '其他'] = true;
+        });
+        return ['全部'].concat(Object.keys(set).sort());
+      },
+      filteredJobs: function () {
+        var self = this;
+        var kw = String(self.keyword || '').trim().toLowerCase();
+        return (self.jobs || []).filter(function (j) {
+          if (self.groupFilter && self.groupFilter !== '全部' && (j.group || '其他') !== self.groupFilter) {
+            return false;
+          }
+          if (!kw) return true;
+          var hay = [j.title, j.key, j.command, j.description, j.group].join(' ').toLowerCase();
+          return hay.indexOf(kw) >= 0;
+        });
+      },
+      enabledCount: function () {
+        return (this.jobs || []).filter(function (j) { return !!j.enabled; }).length;
+      }
     },
     mounted: function () { this.load(); },
     methods: {
@@ -1678,6 +1704,14 @@
         } catch (e) {
           ElMessage.warning('复制失败，请手动选择文本');
         }
+      },
+      groupTagType: function (group) {
+        var g = String(group || '');
+        if (g === 'YouTube') return 'danger';
+        if (g === '拓客') return 'warning';
+        if (g === '运维') return 'info';
+        if (g === '增长' || g === '养号') return 'success';
+        return '';
       }
     },
     render: function () {
@@ -1685,7 +1719,8 @@
       return h('div', { class: 'page' }, [
         pageHead(
           '计划任务',
-          '统一调度入口：服务器 crontab 只挂 schedule.php；下方开关控制各任务是否执行。',
+          '统一调度入口：服务器 crontab 只挂 schedule.php；下方开关控制全部计划任务（含 YouTube / 拓客 / 封禁恢复等）。已开启 '
+            + self.enabledCount + ' / ' + (self.jobs || []).length,
           h(ElementPlus.ElButton, { onClick: function () { self.load(); } }, function () { return '刷新'; })
         ),
         h(ElementPlus.ElAlert, {
@@ -1705,12 +1740,46 @@
             }, function () { return '复制语句'; })
           ]);
         }),
+        h('div', {
+          style: 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px'
+        }, [
+          h(ElementPlus.ElRadioGroup, {
+            modelValue: self.groupFilter,
+            'onUpdate:modelValue': function (v) { self.groupFilter = v; },
+            size: 'small'
+          }, function () {
+            return self.groups.map(function (g) {
+              return h(ElementPlus.ElRadioButton, { label: g, key: g }, function () { return g; });
+            });
+          }),
+          h(ElementPlus.ElInput, {
+            modelValue: self.keyword,
+            'onUpdate:modelValue': function (v) { self.keyword = v; },
+            placeholder: '搜索任务名/命令/说明',
+            clearable: true,
+            style: 'width:220px;margin-left:auto'
+          })
+        ]),
         h(ElementPlus.ElCard, { shadow: 'never', vLoading: self.loading }, {
           default: function () {
-            return h(ElementPlus.ElTable, { data: self.jobs, stripe: true, style: 'width:100%' }, {
+            return h(ElementPlus.ElTable, {
+              data: self.filteredJobs,
+              stripe: true,
+              style: 'width:100%',
+              emptyText: '没有匹配的计划任务'
+            }, {
               default: function () {
                 return [
-                  h(ElementPlus.ElTableColumn, { prop: 'title', label: '任务', minWidth: 140 }, {
+                  h(ElementPlus.ElTableColumn, { label: '分组', width: 100 }, {
+                    default: function (scope) {
+                      return h(ElementPlus.ElTag, {
+                        size: 'small',
+                        type: self.groupTagType(scope.row.group),
+                        effect: 'plain'
+                      }, function () { return scope.row.group || '其他'; });
+                    }
+                  }),
+                  h(ElementPlus.ElTableColumn, { prop: 'title', label: '任务', minWidth: 160 }, {
                     default: function (scope) {
                       return h('div', [
                         h('div', { class: 'font-medium' }, scope.row.title),
@@ -1718,7 +1787,7 @@
                       ]);
                     }
                   }),
-                  h(ElementPlus.ElTableColumn, { prop: 'command', label: '命令', minWidth: 180 }, {
+                  h(ElementPlus.ElTableColumn, { prop: 'command', label: '命令', minWidth: 200 }, {
                     default: function (scope) {
                       var args = (scope.row.args || []).join(' ');
                       return h('code', { class: 'text-xs' }, scope.row.command + (args ? ' ' + args : ''));
@@ -1729,7 +1798,7 @@
                       return h('code', { class: 'text-xs' }, scope.row.cron);
                     }
                   }),
-                  h(ElementPlus.ElTableColumn, { prop: 'description', label: '说明', minWidth: 220 }),
+                  h(ElementPlus.ElTableColumn, { prop: 'description', label: '说明', minWidth: 240 }),
                   h(ElementPlus.ElTableColumn, { label: '开启', width: 90 }, {
                     default: function (scope) {
                       return h(ElementPlus.ElSwitch, {

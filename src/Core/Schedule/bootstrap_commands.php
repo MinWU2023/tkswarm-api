@@ -25,6 +25,7 @@ function tkswarm_register_commands(Scheduler $scheduler): Scheduler
     $scheduler->register(new App\Commands\YouTubePublishDispatchCommand());
     $scheduler->register(new App\Commands\YouTubeCommentModerateCommand());
     $scheduler->register(new App\Commands\YouTubeTokenRefreshCommand());
+    $scheduler->register(new App\Commands\BanRestoreCommand());
     $scheduler->register(new App\Commands\ScheduleRunCommand());
     return $scheduler;
 }

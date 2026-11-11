@@ -74,6 +74,7 @@ final class ScheduleRunner
                 'command' => (string)$def['command'],
                 'cron' => (string)$def['cron'],
                 'args' => $def['args'] ?? [],
+                'group' => (string)($def['group'] ?? '其他'),
                 'enabled' => isset($row['enabled']) ? ((int)$row['enabled'] === 1) : (bool)$def['defaultEnabled'],
                 'lastRunAt' => $row['last_run_at'] ?? null,
                 'lastStatus' => $row['last_status'] ?? null,
@@ -112,6 +113,16 @@ final class ScheduleRunner
                 'INSERT INTO scheduled_jobs(job_key, enabled) VALUES (?,?)',
                 [$key, $enabled ? 1 : 0]
             );
+        }
+        // 兼容旧双开关：dm:sync 命令仍读 settings.dmSyncDispatchEnabled
+        if ($key === 'dm_sync') {
+            try {
+                \App\Services\UserSettingsService::setSetting(
+                    'dmSyncDispatchEnabled',
+                    $enabled ? true : false
+                );
+            } catch (\Throwable $e) {
+            }
         }
         return true;
     }

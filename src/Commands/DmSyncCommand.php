@@ -22,6 +22,11 @@ class DmSyncCommand extends Command
     {
         $this->ensureSchema();
 
+        if (!\App\Services\Schedule\ScheduleRunner::isEnabled('dm_sync')) {
+            $this->warn('计划任务 dm_sync 已关闭（admin 计划任务开关），跳过入队');
+            return 0;
+        }
+
         $dispatchOn = filter_var(
             UserSettingsService::setting('dmSyncDispatchEnabled', true),
             FILTER_VALIDATE_BOOLEAN
