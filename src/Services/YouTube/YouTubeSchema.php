@@ -366,6 +366,7 @@ final class YouTubeSchema
      * @param array<string,mixed> $item
      * @return array<string,mixed>
      */
+    public static function applyChannelStatsToAccount(int $accountId, array $item): array
     {
         self::ensureAccountStatsColumns();
         $snippet = is_array($item['snippet'] ?? null) ? $item['snippet'] : [];
