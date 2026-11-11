@@ -208,18 +208,33 @@ class YouTubeApiService
     // -------------------------------------------------------------------------
 
     /**
-     * 拉取当前授权账号的频道信息（mine=true）。
+     * 拉取当前授权账号的频道信息。
+     * 先 mine=true（个人频道），再 managedByMe=true（Brand Account 等托管频道）。
      * @return array<string,mixed>
      */
     public function getMineChannel(string $part = 'snippet,contentDetails,statistics'): array
     {
-        $pack = $this->apiGet('/channels', [
-            'part' => $part,
-            'mine' => 'true',
-        ]);
-        $item = $pack['items'][0] ?? null;
+        $item = null;
+        foreach (['mine' => 'true', 'managedByMe' => 'true'] as $key => $val) {
+            try {
+                $pack = $this->apiGet('/channels', [
+                    'part' => $part,
+                    $key => $val,
+                ]);
+            } catch (\Throwable $e) {
+                // managedByMe 在无权限时可能 403，继续尝试/汇总
+                continue;
+            }
+            $candidate = $pack['items'][0] ?? null;
+            if (is_array($candidate)) {
+                $item = $candidate;
+                break;
+            }
+        }
         if (!is_array($item)) {
-            throw new \RuntimeException('未获取到频道信息，请确认 OAuth 授权与频道绑定');
+            throw new \RuntimeException(
+                '该 Google 账号下没有可用的 YouTube 频道。请用同一账号打开 https://www.youtube.com/create_channel 创建频道后，再回 TkSwarm 重新点「授权登录」'
+            );
         }
         $channelId = (string)($item['id'] ?? '');
         $title = (string)($item['snippet']['title'] ?? '');

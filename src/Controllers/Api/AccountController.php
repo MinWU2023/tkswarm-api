@@ -1824,7 +1824,19 @@ class AccountController extends Controller
     public function tiktokVideos(Request $request, string $id): Response
     {
         $this->ensureSchema();
-        $rows = DB::select('SELECT * FROM tiktok_videos WHERE account_id=? ORDER BY last_synced_at DESC, id DESC', [(int)$id]);
+        $aid = (int)$id;
+        // 按 video_id 去重，保留最新一行（防止历史缺 UNIQUE 时重复展示）
+        $rows = DB::select(
+            'SELECT t.* FROM tiktok_videos t
+             INNER JOIN (
+               SELECT account_id, video_id, MAX(id) AS max_id
+               FROM tiktok_videos
+               WHERE account_id=?
+               GROUP BY account_id, video_id
+             ) x ON t.id = x.max_id
+             ORDER BY t.last_synced_at DESC, t.id DESC',
+            [$aid]
+        ) ?: [];
         return $this->success($rows);
     }
 
@@ -1879,11 +1891,22 @@ class AccountController extends Controller
         $fromTiktok = false;
         if (!$matRows && $keyword === '' && $page === 1) {
             $tv = DB::select(
-                'SELECT id, video_id, video_url, description, thumbnail_url, views_count, likes_count, last_synced_at
-                 FROM tiktok_videos WHERE account_id=? ORDER BY last_synced_at DESC, id DESC LIMIT ?',
+                'SELECT t.id, t.video_id, t.video_url, t.description, t.thumbnail_url, t.views_count, t.likes_count, t.last_synced_at
+                 FROM tiktok_videos t
+                 INNER JOIN (
+                   SELECT account_id, video_id, MAX(id) AS max_id
+                   FROM tiktok_videos WHERE account_id=?
+                   GROUP BY account_id, video_id
+                 ) x ON t.id = x.max_id
+                 ORDER BY t.last_synced_at DESC, t.id DESC LIMIT ?',
                 [$aid, $pageSize]
             ) ?: [];
-            $total = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM tiktok_videos WHERE account_id=?', [$aid])['c'] ?? 0);
+            $total = (int)(DB::selectOne(
+                'SELECT COUNT(*) AS c FROM (
+                   SELECT video_id FROM tiktok_videos WHERE account_id=? GROUP BY video_id
+                 ) d',
+                [$aid]
+            )['c'] ?? 0);
             $fromTiktok = true;
             $matRows = array_map(static function ($r) {
                 return [
@@ -3432,6 +3455,8 @@ class AccountController extends Controller
             } catch (\Throwable $e) {
             }
         }
+        // tiktok_videos 唯一键：每次校验，避免常驻进程在缺 UNIQUE 时继续插重复行
+        $this->ensureTikTokVideosUniqueKey();
         static $done = false;
         if ($done) {
             return;
@@ -3556,7 +3581,8 @@ class AccountController extends Controller
           views_count INT NULL,
           likes_count INT NULL,
           last_synced_at DATETIME NULL,
-          KEY idx_tiktok_videos_account (account_id)
+          KEY idx_tiktok_videos_account (account_id),
+          UNIQUE KEY uk_tt_video (account_id, video_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         DB::query("CREATE TABLE IF NOT EXISTS tiktok_stat_snapshots (
           id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3693,6 +3719,37 @@ class AccountController extends Controller
         // 系统通知表 + 账号封禁字段（ban_reason / ban_until / ban_checked_at / ban_source / ban_ai_json）
         try {
             AccountBanService::ensureSchema();
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * tiktok_videos 必须以 (account_id, video_id) 唯一，否则 ON DUPLICATE KEY UPDATE 失效，每次拉取都会插重复行。
+     * AccountController 早期建表只有普通 KEY，CREATE IF NOT EXISTS 不会补 UNIQUE。
+     */
+    private function ensureTikTokVideosUniqueKey(): void
+    {
+        try {
+            $idx = DB::select("SHOW INDEX FROM tiktok_videos WHERE Key_name='uk_tt_video'");
+            if ($idx) {
+                return;
+            }
+        } catch (\Throwable $e) {
+            return;
+        }
+        try {
+            // 保留同账号同 video_id 的最新 id，删除其余
+            DB::query(
+                'DELETE t1 FROM tiktok_videos t1
+                 INNER JOIN tiktok_videos t2
+                   ON t1.account_id = t2.account_id
+                  AND t1.video_id = t2.video_id
+                  AND t1.id < t2.id'
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            DB::query('ALTER TABLE tiktok_videos ADD UNIQUE KEY uk_tt_video (account_id, video_id)');
         } catch (\Throwable $e) {
         }
     }

@@ -3074,6 +3074,8 @@ class NodeBridgeController extends Controller
 
     private function ensureTikTokTables(): void
     {
+        // UNIQUE 每次校验（表可能由 AccountController 先建成无 UNIQUE 版本）
+        $this->ensureTikTokVideosUniqueKey();
         static $done = false;
         if ($done) {
             return;
@@ -3854,6 +3856,33 @@ class NodeBridgeController extends Controller
             return $this->success($stats, '中心库环境数据已清空（本机浏览器环境需另行删除）');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage() ?: '清空失败', 500);
+        }
+    }
+
+    /** 补齐 tiktok_videos(account_id, video_id) UNIQUE，并清理历史重复行 */
+    private function ensureTikTokVideosUniqueKey(): void
+    {
+        try {
+            $idx = DB::select("SHOW INDEX FROM tiktok_videos WHERE Key_name='uk_tt_video'");
+            if ($idx) {
+                return;
+            }
+        } catch (\Throwable $e) {
+            return;
+        }
+        try {
+            DB::query(
+                'DELETE t1 FROM tiktok_videos t1
+                 INNER JOIN tiktok_videos t2
+                   ON t1.account_id = t2.account_id
+                  AND t1.video_id = t2.video_id
+                  AND t1.id < t2.id'
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            DB::query('ALTER TABLE tiktok_videos ADD UNIQUE KEY uk_tt_video (account_id, video_id)');
+        } catch (\Throwable $e) {
         }
     }
 }

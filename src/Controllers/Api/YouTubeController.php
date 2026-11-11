@@ -250,6 +250,16 @@ class YouTubeController extends Controller
             $row = YouTubeOAuthConfigService::applyToAccountRow($row);
             $svc = new YouTubeApiService($row);
             $svc->exchangeAuthorizationCode($code);
+        } catch (\Throwable $e) {
+            DB::query(
+                "UPDATE youtube_accounts SET status='error', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [mb_substr($e->getMessage(), 0, 500), $aid]
+            );
+            return $this->oauthHtml(false, '换取 token 失败：' . $e->getMessage());
+        }
+
+        // token 已落库；频道拉取失败时不要抹掉 token，便于创建频道后点「刷新」补齐
+        try {
             $channel = $svc->getMineChannel();
             $title = (string)($channel['snippet']['title'] ?? '');
             $channelId = (string)($channel['id'] ?? '');
@@ -270,11 +280,20 @@ class YouTubeController extends Controller
             );
             return $this->oauthHtml(true, '授权成功：' . ($title !== '' ? $title : ('账号 #' . $aid)) . '。可关闭本页返回 Node。');
         } catch (\Throwable $e) {
+            unset($extra['oauthState']);
+            $extra['oauthTokenAt'] = date('Y-m-d H:i:s');
+            $extra['pendingChannel'] = true;
             DB::query(
-                "UPDATE youtube_accounts SET status='error', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                [mb_substr($e->getMessage(), 0, 500), $aid]
+                "UPDATE youtube_accounts
+                 SET status='authorizing', last_error=?, extra_json=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?",
+                [
+                    mb_substr($e->getMessage(), 0, 500),
+                    json_encode($extra, JSON_UNESCAPED_UNICODE),
+                    $aid,
+                ]
             );
-            return $this->oauthHtml(false, '换取 token 失败：' . $e->getMessage());
+            return $this->oauthHtml(false, $e->getMessage());
         }
     }
 
