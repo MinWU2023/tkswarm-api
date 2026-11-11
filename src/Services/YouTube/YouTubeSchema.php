@@ -168,6 +168,8 @@ final class YouTubeSchema
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
 
+        self::ensurePublishTaskExtraColumns();
+
         DB::query(
             "CREATE TABLE IF NOT EXISTS `youtube_comment_reply_tasks` (
               `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -195,6 +197,38 @@ final class YouTubeSchema
               KEY `idx_yt_crt_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+    }
+
+    /** TikTok 素材同步：给发布任务补 material_id / source_cdn_url */
+    public static function ensurePublishTaskExtraColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_publish_tasks') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols) {
+            return;
+        }
+        $alters = [
+            'material_id' => "ALTER TABLE youtube_publish_tasks ADD COLUMN material_id INT UNSIGNED NULL AFTER video_id",
+            'source_cdn_url' => "ALTER TABLE youtube_publish_tasks ADD COLUMN source_cdn_url VARCHAR(1000) NOT NULL DEFAULT '' AFTER local_file_path",
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+        try {
+            $idx = DB::select("SHOW INDEX FROM youtube_publish_tasks WHERE Key_name='idx_yt_pub_material'");
+            if (!$idx) {
+                DB::query('ALTER TABLE youtube_publish_tasks ADD KEY idx_yt_pub_material (material_id)');
+            }
+        } catch (\Throwable $e) {
+        }
     }
 
     /**

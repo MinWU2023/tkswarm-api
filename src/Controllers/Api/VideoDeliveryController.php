@@ -150,6 +150,34 @@ class VideoDeliveryController extends Controller
         );
     }
 
+    /**
+     * 守护者企业查询：按本地企业名 POST company/search，入库是否创建与关联运营用户。
+     * force=1 强制刷新；默认仅在运营用户为空时请求。
+     */
+    public function syncShouhuzheCompany(Request $request, string $id): Response
+    {
+        $mapped = $this->loadClientMapped((int)$id);
+        if ($mapped instanceof Response) {
+            return $mapped;
+        }
+        $force = filter_var($request->input('force', $request->get('force', false)), FILTER_VALIDATE_BOOLEAN)
+            || (string)$request->input('force', '') === '1';
+        $result = VideoDeliveryService::syncShouhuzheCompany((int)$id, $force);
+        $client = $result['client'] ?? $mapped;
+        if (empty($result['ok'])) {
+            return $this->error((string)($result['message'] ?? '守护者企业查询失败'), 422, [
+                'client' => $client,
+                'match' => $result['match'] ?? null,
+            ]);
+        }
+        return $this->success([
+            'client' => $client,
+            'match' => $result['match'] ?? null,
+            'skipped' => !empty($result['skipped']),
+            'message' => (string)($result['message'] ?? '已同步'),
+        ], (string)($result['message'] ?? '已同步'));
+    }
+
     public function checkLink(Request $request, string $id): Response
     {
         $mapped = $this->loadClientMapped((int)$id);

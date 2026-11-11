@@ -371,10 +371,27 @@ class YouTubeApiService
             "UPDATE youtube_publish_tasks SET status='running', started_at=NOW(), error_message='', updated_at=CURRENT_TIMESTAMP WHERE id=?",
             [$taskId]
         );
+        $tempFile = '';
         try {
             $tags = json_decode((string)($task['tags_json'] ?? '[]'), true);
             if (!is_array($tags)) {
                 $tags = [];
+            }
+            $filePath = trim((string)($task['local_file_path'] ?? ''));
+            $mime = (string)($task['mime_type'] ?? 'video/*');
+            if ($filePath === '' || !is_file($filePath)) {
+                $resolved = $this->resolvePublishTaskFile($task);
+                $filePath = (string)($resolved['filePath'] ?? '');
+                $tempFile = (string)($resolved['tempFile'] ?? '');
+                if (!empty($resolved['mimeType'])) {
+                    $mime = (string)$resolved['mimeType'];
+                }
+                if ($filePath !== '' && is_file($filePath)) {
+                    DB::query(
+                        'UPDATE youtube_publish_tasks SET local_file_path=?, mime_type=?, file_size=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                        [$filePath, $mime, (int)@filesize($filePath), $taskId]
+                    );
+                }
             }
             $result = $this->publishVideo([
                 'title' => (string)($task['title'] ?? ''),
@@ -384,8 +401,8 @@ class YouTubeApiService
                 'privacyStatus' => (string)($task['privacy_status'] ?? 'private'),
                 'publishAt' => $task['publish_at'] ?? null,
                 'madeForKids' => !empty($task['made_for_kids']),
-                'filePath' => (string)($task['local_file_path'] ?? ''),
-                'mimeType' => (string)($task['mime_type'] ?? 'video/*'),
+                'filePath' => $filePath,
+                'mimeType' => $mime,
             ], function (int $pct) use ($taskId) {
                 DB::query(
                     'UPDATE youtube_publish_tasks SET progress_percent=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
@@ -413,6 +430,98 @@ class YouTubeApiService
                 [mb_substr($e->getMessage(), 0, 1000), $taskId]
             );
             throw $e;
+        } finally {
+            if ($tempFile !== '' && is_file($tempFile)) {
+                @unlink($tempFile);
+            }
+        }
+    }
+
+    /**
+     * 解析发布任务视频文件：本地路径 → 素材表 → CDN 下载到临时文件。
+     * @param array<string,mixed> $task
+     * @return array{filePath:string,tempFile?:string,mimeType?:string}
+     */
+    private function resolvePublishTaskFile(array $task): array
+    {
+        $filePath = trim((string)($task['local_file_path'] ?? ''));
+        if ($filePath !== '' && is_file($filePath)) {
+            return ['filePath' => $filePath];
+        }
+        $cdnUrl = trim((string)($task['source_cdn_url'] ?? ''));
+        $mime = trim((string)($task['mime_type'] ?? ''));
+        $materialId = (int)($task['material_id'] ?? 0);
+        if ($materialId > 0) {
+            $mat = DB::selectOne(
+                'SELECT id, file_path, mime_type, file_name, cdn_url, github_asset_url FROM materials WHERE id=?',
+                [$materialId]
+            );
+            if ($mat) {
+                $local = trim((string)($mat['file_path'] ?? ''));
+                if ($local !== '' && is_file($local)) {
+                    return [
+                        'filePath' => $local,
+                        'mimeType' => (string)($mat['mime_type'] ?? $mime),
+                    ];
+                }
+                if ($cdnUrl === '') {
+                    $cdnUrl = trim((string)($mat['cdn_url'] ?? ''));
+                }
+                if ($cdnUrl === '') {
+                    $cdnUrl = trim((string)($mat['github_asset_url'] ?? ''));
+                }
+                if ($mime === '') {
+                    $mime = (string)($mat['mime_type'] ?? '');
+                }
+            }
+        }
+        if ($cdnUrl === '') {
+            $req = json_decode((string)($task['request_json'] ?? '{}'), true);
+            if (is_array($req)) {
+                $cdnUrl = trim((string)($req['sourceCdnUrl'] ?? $req['cdnUrl'] ?? ''));
+            }
+        }
+        if ($cdnUrl === '') {
+            throw new \RuntimeException('发布任务缺少本地视频文件，且无法从 CDN/素材解析下载地址');
+        }
+        $ext = pathinfo(parse_url($cdnUrl, PHP_URL_PATH) ?: '', PATHINFO_EXTENSION) ?: 'mp4';
+        $ext = preg_replace('/[^a-zA-Z0-9]+/', '', (string)$ext) ?: 'mp4';
+        $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tkswarm-yt-upload';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+        $tempFile = $dir . DIRECTORY_SEPARATOR . 'task_' . (int)($task['id'] ?? 0) . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $this->downloadUrlToFile($cdnUrl, $tempFile);
+        return [
+            'filePath' => $tempFile,
+            'tempFile' => $tempFile,
+            'mimeType' => $mime !== '' ? $mime : 'video/' . ($ext === 'mov' ? 'quicktime' : $ext),
+        ];
+    }
+
+    private function downloadUrlToFile(string $url, string $dest): void
+    {
+        $fp = fopen($dest, 'wb');
+        if (!$fp) {
+            throw new \RuntimeException('无法创建临时文件: ' . $dest);
+        }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 600,
+            CURLOPT_CONNECTTIMEOUT => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_USERAGENT => 'TkSwarm-YouTubeSync/1.0',
+        ]);
+        $ok = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+        fclose($fp);
+        if ($ok === false || $code >= 400 || !is_file($dest) || filesize($dest) < 1) {
+            @unlink($dest);
+            throw new \RuntimeException('下载视频失败 HTTP ' . $code . ($err !== '' ? (': ' . $err) : ''));
         }
     }
 

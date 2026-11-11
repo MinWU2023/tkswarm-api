@@ -6,12 +6,13 @@ namespace App\Services;
 use App\Core\Database\DB;
 
 /**
- * 守护者（dyyemail）视频积分 / Token 接口客户端。
- * 对齐 dyyweb ShouhuzheVideoPointService：
+ * 守护者（dyyemail）视频积分 / Token / 企业查找接口客户端。
+ * 对齐 dyyweb ShouhuzheVideoPointService + ShouhuzheCompanySearchController：
  * - POST video/binding/check
  * - POST video/points/balance
  * - POST video/payment-login  （充值登录页）
  * - POST video/points/deduct
+ * - POST company/search       （按企业名查是否创建及关联运营）
  */
 class ShouhuzheVideoApiService
 {
@@ -91,6 +92,24 @@ class ShouhuzheVideoApiService
             'source_id' => $sourceId,
             'title' => $title,
             'remark' => $remark,
+        ]);
+    }
+
+    /**
+     * 按关键字查找守护者企业（是否已创建、关联运营用户）。
+     * 对齐 dyyweb：POST {base}/company/search，header token，form keyword/limit。
+     *
+     * @return array{status:bool,error_msg?:string,message?:string,data?:list<array>,count?:int}
+     */
+    public static function searchCompany(string $keyword, int $limit = 20): array
+    {
+        $keyword = trim($keyword);
+        if (mb_strlen($keyword) < 2) {
+            return ['status' => false, 'error_msg' => '请输入至少2个字符的企业名称'];
+        }
+        return self::post('company/search', [
+            'keyword' => $keyword,
+            'limit' => min(50, max(1, $limit)),
         ]);
     }
 

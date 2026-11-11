@@ -30,6 +30,7 @@ use App\Controllers\Api\AiPlatformController;
 use App\Controllers\Api\SmtpConfigController;
 use App\Controllers\Api\DmWeightConfigController;
 use App\Controllers\Api\NocaptchaKeyController;
+use App\Controllers\Api\YouTubeController;
 use App\Controllers\Api\AiPromptTemplateController;
 use App\Controllers\Api\AiCallLogController;
 use App\Controllers\Api\NodeBridgeController;
@@ -88,6 +89,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::post('/api/tickets', TicketController::class . '@submit');
     Router::post('/api/contact-inquiries', ContactInquiryController::class . '@submit');
     Router::get('/api/public/site-config', SystemController::class . '@publicSiteConfig');
+
+    // YouTube OAuth 回调（浏览器直达，无登录）
+    Router::get('/api/youtube/oauth/callback', YouTubeController::class . '@oauthCallback');
 
     // 运维审计：查 proxies 表缺密码记录
     Router::get('/api/debug/proxies-missing-password', ProxyController::class . '@missingPasswordAudit');
@@ -199,6 +203,19 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/smtp-config', SmtpConfigController::class . '@save');
     Router::post('/api/smtp-config/test', SmtpConfigController::class . '@test');
 
+    Router::get('/api/youtube/oauth-config', YouTubeController::class . '@getOAuthConfig');
+    Router::put('/api/youtube/oauth-config', YouTubeController::class . '@saveOAuthConfig');
+    Router::post('/api/youtube/oauth-config', YouTubeController::class . '@saveOAuthConfig');
+    Router::get('/api/youtube/accounts', YouTubeController::class . '@listAccounts');
+    Router::post('/api/youtube/accounts', YouTubeController::class . '@createAccount');
+    Router::delete('/api/youtube/accounts/{id}', YouTubeController::class . '@deleteAccount');
+    Router::post('/api/youtube/accounts/{id}/auth', YouTubeController::class . '@startAuth');
+    Router::post('/api/youtube/accounts/{id}/refresh-token', YouTubeController::class . '@refreshAccountToken');
+    Router::get('/api/youtube/sync/materials', YouTubeController::class . '@listSyncMaterials');
+    Router::post('/api/youtube/sync', YouTubeController::class . '@enqueueSync');
+    Router::get('/api/youtube/publish-tasks', YouTubeController::class . '@listPublishTasks');
+    Router::post('/api/youtube/publish-tasks/{id}/run', YouTubeController::class . '@runPublishTask');
+
     // 开发管理 · 日私信权重规则（仅超管）
     Router::get('/api/dm-weight-config', DmWeightConfigController::class . '@get');
     Router::put('/api/dm-weight-config', DmWeightConfigController::class . '@save');
@@ -297,6 +314,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/video-delivery-clients/{id}/token', VideoDeliveryController::class . '@generateToken');
     Router::get('/api/video-delivery-clients/{id}/token', VideoDeliveryController::class . '@getToken');
     Router::post('/api/video-delivery-clients/{id}/check-link', VideoDeliveryController::class . '@checkLink');
+    Router::post('/api/video-delivery-clients/{id}/shouhuzhe-company', VideoDeliveryController::class . '@syncShouhuzheCompany');
     Router::post('/api/video-delivery-clients/{id}/recharge', VideoDeliveryController::class . '@recharge');
     Router::get('/api/video-delivery-clients/{id}/point-records', VideoDeliveryController::class . '@pointRecords');
     Router::get('/api/video-delivery-clients/{id}', VideoDeliveryController::class . '@show');

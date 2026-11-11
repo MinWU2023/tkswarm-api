@@ -24,6 +24,10 @@ class UserSettingsService
         'smtp.password',
         'smtp.from_email',
         'smtp.from_name',
+        'youtube.oauth.clientId',
+        'youtube.oauth.clientSecret',
+        'youtube.oauth.redirectUri',
+        'youtube.oauth.scopes',
     ];
 
     /** @var array<string,bool> */
@@ -54,7 +58,8 @@ class UserSettingsService
     {
         return in_array($key, self::GLOBAL_KEYS, true)
             || str_starts_with($key, 'captcha:')
-            || str_starts_with($key, 'smtp.');
+            || str_starts_with($key, 'smtp.')
+            || str_starts_with($key, 'youtube.oauth.');
     }
 
     /** 设置归属登录用户（不受身份切换影响） */
@@ -115,6 +120,10 @@ class UserSettingsService
             'smtp.password' => '',
             'smtp.from_email' => '',
             'smtp.from_name' => 'TkSwarm',
+            'youtube.oauth.clientId' => '',
+            'youtube.oauth.clientSecret' => '',
+            'youtube.oauth.redirectUri' => '',
+            'youtube.oauth.scopes' => '',
         ];
     }
 
@@ -147,6 +156,9 @@ class UserSettingsService
             }
             if (!empty($map['smtp.password'])) {
                 $map['smtp.password'] = '******';
+            }
+            if (!empty($map['youtube.oauth.clientSecret'])) {
+                $map['youtube.oauth.clientSecret'] = '******';
             }
         }
         return $map;

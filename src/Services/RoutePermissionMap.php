@@ -98,6 +98,11 @@ class RoutePermissionMap
             ['method' => 'GET', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'POST', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
             ['method' => 'PUT', 'pattern' => '#^/api/smtp-config#', 'codes' => ['system.smtp', 'admin']],
+            // YouTube：中间件已登录即可（[]）；控制器校验 system.youtube / 超管 / 运营管理
+            ['method' => 'GET', 'pattern' => '#^/api/youtube/#', 'codes' => []],
+            ['method' => 'POST', 'pattern' => '#^/api/youtube/#', 'codes' => []],
+            ['method' => 'PUT', 'pattern' => '#^/api/youtube/#', 'codes' => []],
+            ['method' => 'DELETE', 'pattern' => '#^/api/youtube/#', 'codes' => []],
             // NoCaptchaAI：中间件已登录即可（[]）；控制器按登录账号校验 system.nocaptcha（不受身份切换影响）
             ['method' => 'GET', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
             ['method' => 'POST', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],

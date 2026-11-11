@@ -47,6 +47,12 @@ class CompanyService
                 'service_version' => "ALTER TABLE `companies` ADD COLUMN `service_version` VARCHAR(32) NOT NULL DEFAULT 'standard' COMMENT '服务版本 standard/pro/enterprise' AFTER `status`",
                 'auth_start' => "ALTER TABLE `companies` ADD COLUMN `auth_start` DATE NULL COMMENT '服务开始日期' AFTER `service_version`",
                 'auth_end' => "ALTER TABLE `companies` ADD COLUMN `auth_end` DATE NULL COMMENT '服务结束日期' AFTER `auth_start`",
+                'shouhuzhe_exists' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_exists` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '守护者是否已创建企业' AFTER `auth_end`",
+                'shouhuzhe_company_id' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_company_id` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '守护者企业ID' AFTER `shouhuzhe_exists`",
+                'shouhuzhe_company_name' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_company_name` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '守护者匹配企业名' AFTER `shouhuzhe_company_id`",
+                'shouhuzhe_operator_name' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_operator_name` VARCHAR(120) NOT NULL DEFAULT '' COMMENT '守护者关联运营用户' AFTER `shouhuzhe_company_name`",
+                'shouhuzhe_synced_at' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_synced_at` DATETIME NULL COMMENT '守护者企业信息最近同步时间' AFTER `shouhuzhe_operator_name`",
+                'shouhuzhe_last_error' => "ALTER TABLE `companies` ADD COLUMN `shouhuzhe_last_error` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '守护者企业查询最近错误' AFTER `shouhuzhe_synced_at`",
             ];
             foreach ($companyAlters as $col => $sql) {
                 $exists = DB::select("SHOW COLUMNS FROM companies LIKE '{$col}'");
@@ -104,9 +110,46 @@ class CompanyService
             'serviceVersionLabel' => VideoDeliveryService::versionLabel($version),
             'authStart' => $authStart,
             'authEnd' => $authEnd,
+            'shouhuzheExists' => !empty($row['shouhuzhe_exists']),
+            'shouhuzheCompanyId' => (string)($row['shouhuzhe_company_id'] ?? ''),
+            'shouhuzheCompanyName' => (string)($row['shouhuzhe_company_name'] ?? ''),
+            'shouhuzheOperatorName' => (string)($row['shouhuzhe_operator_name'] ?? ''),
+            'shouhuzheSyncedAt' => (string)($row['shouhuzhe_synced_at'] ?? ''),
+            'shouhuzheLastError' => (string)($row['shouhuzhe_last_error'] ?? ''),
             'createdAt' => $row['created_at'] ?? null,
             'updatedAt' => $row['updated_at'] ?? null,
         ];
+    }
+
+    /**
+     * 写入守护者企业查询结果（是否创建 / 关联运营）。
+     *
+     * @param array{exists?:bool,company_id?:string|int,company_name?:string,operator_name?:string,error?:string} $data
+     */
+    public static function saveShouhuzheLookup(int $companyId, array $data): ?array
+    {
+        self::ensureSchema();
+        if ($companyId <= 0) {
+            return null;
+        }
+        $exists = !empty($data['exists']) ? 1 : 0;
+        $remoteId = mb_substr(trim((string)($data['company_id'] ?? '')), 0, 64);
+        $remoteName = mb_substr(trim((string)($data['company_name'] ?? '')), 0, 255);
+        $operator = mb_substr(trim((string)($data['operator_name'] ?? '')), 0, 120);
+        $error = mb_substr(trim((string)($data['error'] ?? '')), 0, 500);
+        DB::query(
+            "UPDATE companies SET
+               shouhuzhe_exists=?,
+               shouhuzhe_company_id=?,
+               shouhuzhe_company_name=?,
+               shouhuzhe_operator_name=?,
+               shouhuzhe_synced_at=NOW(),
+               shouhuzhe_last_error=?,
+               updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [$exists, $remoteId, $remoteName, $operator, $error, $companyId]
+        );
+        return self::find($companyId);
     }
 
     /**

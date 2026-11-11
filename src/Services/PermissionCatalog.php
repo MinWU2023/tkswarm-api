@@ -151,6 +151,9 @@ class PermissionCatalog
 
             // —— 开发管理 · 视频交付类型 ——
             [183, 'system', 'system.video_delivery_types', '管理视频交付类型', 183],
+
+            // —— 开发管理 · YouTube ——
+            [184, 'system', 'system.youtube', '管理 YouTube OAuth 与同步发布', 184],
         ];
     }
 
@@ -298,6 +301,7 @@ class PermissionCatalog
             self::ensureVideoBoostPerms();
             self::ensureImageWizardPerms();
             self::ensureVideoDeliveryTypesPerms();
+            self::ensureYouTubePerms();
             self::ensureAccountWizardMenuPerms();
             self::seedPermDicts();
         } catch (\Throwable $e) {
@@ -702,6 +706,46 @@ class PermissionCatalog
         self::ensureRoleCodesByName('%运营管理%', [
             'system.video_delivery_types',
             'menu.770',
+        ]);
+    }
+
+    /** 开发管理 · YouTube：运营管理可配；企业客户不授予 */
+    private static function ensureYouTubePerms(): void
+    {
+        $menus = [
+            [780, 'YouTube 开发配置', 'youtubeConfig'],
+            [781, 'YouTube 账号', 'youtubeAccounts'],
+            [782, 'YouTube 同步发布', 'youtubeSync'],
+        ];
+        foreach ($menus as [$id, $title, $view]) {
+            try {
+                MenuPermissionService::syncOne([
+                    'id' => $id,
+                    'title' => $title,
+                    'view' => $view,
+                    'subview' => '',
+                    'permission_code' => '',
+                ]);
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            DB::query(
+                "INSERT INTO admin_permissions (id, module, code, name, sort_order)
+                 VALUES (184, 'system', 'system.youtube', '管理 YouTube OAuth 与同步发布', 184)
+                 ON DUPLICATE KEY UPDATE module='system', code='system.youtube', name='管理 YouTube OAuth 与同步发布', sort_order=184"
+            );
+        } catch (\Throwable $e) {
+        }
+        try {
+            \App\Services\YouTube\YouTubeSchema::ensureSchema();
+        } catch (\Throwable $e) {
+        }
+        self::ensureRoleCodesByName('%运营管理%', [
+            'system.youtube',
+            'menu.780',
+            'menu.781',
+            'menu.782',
         ]);
     }
 

@@ -565,7 +565,158 @@ class VideoDeliveryService
         $mapped['auditStatus'] = $audit;
         $mapped['registeredAt'] = $registered;
         $mapped['lastLoginAt'] = $lastLogin;
+        return self::attachCompanyShouhuzheFields($mapped);
+    }
+
+    /**
+     * 把本地企业表上的守护者查询结果挂到客户映射上。
+     *
+     * @param array<string,mixed> $mapped
+     * @return array<string,mixed>
+     */
+    public static function attachCompanyShouhuzheFields(array $mapped, ?array $company = null): array
+    {
+        $companyId = (int)($mapped['companyId'] ?? 0);
+        if ($company === null && $companyId > 0) {
+            $company = CompanyService::find($companyId);
+        }
+        $mapped['shouhuzheExists'] = !empty($company['shouhuzheExists']);
+        $mapped['shouhuzheCompanyId'] = (string)($company['shouhuzheCompanyId'] ?? '');
+        $mapped['shouhuzheCompanyName'] = (string)($company['shouhuzheCompanyName'] ?? '');
+        $mapped['shouhuzheOperatorName'] = (string)($company['shouhuzheOperatorName'] ?? '');
+        $mapped['shouhuzheSyncedAt'] = (string)($company['shouhuzheSyncedAt'] ?? '');
+        $mapped['shouhuzheLastError'] = (string)($company['shouhuzheLastError'] ?? '');
         return $mapped;
+    }
+
+    /**
+     * 用企业名称请求守护者 company/search，入库是否创建与关联运营用户。
+     * $force=false 且已有运营用户时跳过远程请求。
+     *
+     * @return array{ok:bool,skipped?:bool,message:string,client:array<string,mixed>,match?:array<string,mixed>|null}
+     */
+    public static function syncShouhuzheCompany(int $adminUserId, bool $force = false): array
+    {
+        $mapped = self::ensureProfileForAdminUser($adminUserId);
+        $companyId = (int)($mapped['companyId'] ?? 0);
+        $companyName = trim((string)($mapped['companyName'] ?? $mapped['linkedinCompany'] ?? ''));
+        if ($companyId <= 0) {
+            return ['ok' => false, 'message' => '未关联本地企业，无法查询守护者', 'client' => $mapped, 'match' => null];
+        }
+        $company = CompanyService::find($companyId);
+        $opsName = trim((string)($company['shouhuzheOperatorName'] ?? ''));
+        if (!$force && $opsName !== '') {
+            $client = self::attachCompanyShouhuzheFields($mapped, $company);
+            return [
+                'ok' => true,
+                'skipped' => true,
+                'message' => '已有关联运营用户，未重新请求',
+                'client' => $client,
+                'match' => [
+                    'id' => $client['shouhuzheCompanyId'],
+                    'company_name' => $client['shouhuzheCompanyName'],
+                    'operator_name' => $client['shouhuzheOperatorName'],
+                ],
+            ];
+        }
+        if ($companyName === '') {
+            return ['ok' => false, 'message' => '企业名称为空，无法查询守护者', 'client' => $mapped, 'match' => null];
+        }
+
+        $resp = ShouhuzheVideoApiService::searchCompany($companyName, 20);
+        if (empty($resp['status'])) {
+            $err = (string)($resp['error_msg'] ?? $resp['message'] ?? '守护者公司查找失败');
+            // 网络/接口失败：保留原数据，只记错误
+            CompanyService::saveShouhuzheLookup($companyId, [
+                'exists' => !empty($company['shouhuzheExists']),
+                'company_id' => (string)($company['shouhuzheCompanyId'] ?? ''),
+                'company_name' => (string)($company['shouhuzheCompanyName'] ?? ''),
+                'operator_name' => (string)($company['shouhuzheOperatorName'] ?? ''),
+                'error' => $err,
+            ]);
+            $client = self::attachCompanyShouhuzheFields(self::ensureProfileForAdminUser($adminUserId));
+            return ['ok' => false, 'message' => $err, 'client' => $client, 'match' => null];
+        }
+
+        $rows = is_array($resp['data'] ?? null) ? $resp['data'] : [];
+        $best = self::pickBestShouhuzheCompanyMatch($companyName, $rows);
+        if ($best === null) {
+            CompanyService::saveShouhuzheLookup($companyId, [
+                'exists' => false,
+                'company_id' => '',
+                'company_name' => '',
+                'operator_name' => '',
+                'error' => '',
+            ]);
+            $client = self::attachCompanyShouhuzheFields(self::ensureProfileForAdminUser($adminUserId));
+            return [
+                'ok' => true,
+                'message' => '守护者未找到匹配企业',
+                'client' => $client,
+                'match' => null,
+            ];
+        }
+
+        CompanyService::saveShouhuzheLookup($companyId, [
+            'exists' => true,
+            'company_id' => (string)($best['id'] ?? ''),
+            'company_name' => (string)($best['company_name'] ?? ''),
+            'operator_name' => (string)($best['operator_name'] ?? ''),
+            'error' => '',
+        ]);
+        $client = self::attachCompanyShouhuzheFields(self::ensureProfileForAdminUser($adminUserId));
+        $ops = trim((string)($client['shouhuzheOperatorName'] ?? ''));
+        return [
+            'ok' => true,
+            'message' => $ops !== ''
+                ? ('已同步：守护者已创建，运营用户 ' . $ops)
+                : '已同步：守护者已创建，但未返回运营用户',
+            'client' => $client,
+            'match' => [
+                'id' => (string)($best['id'] ?? ''),
+                'company_name' => (string)($best['company_name'] ?? ''),
+                'operator_name' => (string)($best['operator_name'] ?? ''),
+            ],
+        ];
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rows
+     * @return array<string,mixed>|null
+     */
+    private static function pickBestShouhuzheCompanyMatch(string $companyName, array $rows): ?array
+    {
+        $norm = mb_strtolower(trim($companyName));
+        if ($norm === '' || !$rows) {
+            return null;
+        }
+        foreach ($rows as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $n = mb_strtolower(trim((string)($item['company_name'] ?? '')));
+            if ($n !== '' && $n === $norm && !empty($item['id'])) {
+                return $item;
+            }
+        }
+        foreach ($rows as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $n = mb_strtolower(trim((string)($item['company_name'] ?? '')));
+            if ($n === '' || empty($item['id'])) {
+                continue;
+            }
+            if (mb_strpos($n, $norm) !== false || mb_strpos($norm, $n) !== false) {
+                return $item;
+            }
+        }
+        foreach ($rows as $item) {
+            if (is_array($item) && !empty($item['id']) && trim((string)($item['company_name'] ?? '')) !== '') {
+                return $item;
+            }
+        }
+        return null;
     }
 
     /**
