@@ -269,6 +269,104 @@ class NodeBridgeController extends Controller
         return $this->success(['id' => (int)$id], '指纹已保存');
     }
 
+    /**
+     * 平台视频 ID 归一化（本类内部用）。
+     * 各来源给过来可能是纯数字、`<id>_photo`、带查询串的 URL，
+     * 不统一就会出现「同一个作品两个 video_id」→ 列表里两行封面标题一样。
+     */
+    private static function normalizeVideoIdPublic(string $rawId, string $videoUrl = ''): string
+    {
+        $id = trim($rawId);
+        if ($id !== '' && preg_match('/^(\d{8,})(?:[_-].*)?$/', $id, $m)) {
+            return $m[1];
+        }
+        if ($videoUrl !== '' && preg_match('#/(?:video|photo)/(\d{8,})#', $videoUrl, $m)) {
+            return $m[1];
+        }
+        if ($id !== '' && preg_match('/(\d{8,})/', $id, $m)) {
+            return $m[1];
+        }
+        return $id;
+    }
+
+    /**
+     * 主页同步后的清理：
+     *  1) 先把库里的 video_id 归一化（历史上的 `123_photo`、带参数的 URL 统一成纯数字），
+     *     归并后同 ID 只留最新一行 —— 这就是「原库里的重复也要去掉」；
+     *  2) 再删掉本次主页没抓到的行，让列表和主页保持一致。
+     * 只处理明确来自主页同步的行，避免误删发布回写但主页尚未展示的作品。
+     *
+     * @param list<string> $keepIds 本次主页同步成功抓到的视频 ID
+     */
+    private static function pruneProfileVideos(int $accountId, array $keepIds): void
+    {
+        if ($accountId < 1) {
+            return;
+        }
+        try {
+            $rows = DB::select(
+                'SELECT id, video_id, video_url, thumbnail_url, description FROM tiktok_videos WHERE account_id=? ORDER BY id ASC',
+                [$accountId]
+            ) ?: [];
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$rows) {
+            return;
+        }
+
+        // 1) 归一化 + 去重：同一个数字 ID 只保留 id 最大的那一行
+        $latest = [];
+        foreach ($rows as $row) {
+            $norm = self::normalizeVideoIdPublic((string)($row['video_id'] ?? ''), (string)($row['video_url'] ?? ''));
+            if ($norm === '') {
+                continue;
+            }
+            $latest[$norm] = (int)$row['id'];
+        }
+        $dropIds = [];
+        foreach ($rows as $row) {
+            $norm = self::normalizeVideoIdPublic((string)($row['video_id'] ?? ''), (string)($row['video_url'] ?? ''));
+            if ($norm === '') {
+                continue;
+            }
+            if ((int)$row['id'] !== $latest[$norm]) {
+                $dropIds[] = (int)$row['id'];
+            }
+        }
+
+        // 2) 主页同步：本次没抓到的也删掉
+        if ($keepIds) {
+            $keepMap = [];
+            foreach ($keepIds as $k) {
+                $n = self::normalizeVideoIdPublic((string)$k, '');
+                if ($n !== '') {
+                    $keepMap[$n] = true;
+                }
+            }
+            if ($keepMap) {
+                foreach ($rows as $row) {
+                    $norm = self::normalizeVideoIdPublic((string)($row['video_id'] ?? ''), (string)($row['video_url'] ?? ''));
+                    if ($norm !== '' && !isset($keepMap[$norm]) && !in_array((int)$row['id'], $dropIds, true)) {
+                        $dropIds[] = (int)$row['id'];
+                    }
+                }
+            }
+        }
+
+        foreach (array_chunk(array_values(array_unique($dropIds)), 200) as $chunk) {
+            if (!$chunk) {
+                continue;
+            }
+            $ph = implode(',', array_fill(0, count($chunk), '?'));
+            try {
+                DB::query("DELETE FROM tiktok_videos WHERE account_id=? AND id IN ({$ph})", [$accountId, ...$chunk]);
+            } catch (\Throwable $e) {
+                // 清理失败不影响本次同步结果
+            }
+        }
+    }
+
     public function tiktokSync(Request $request, string $id): Response
     {
         DataScope::ensureColumns();
@@ -343,17 +441,23 @@ class NodeBridgeController extends Controller
         }
 
         if (is_array($videos)) {
+            $syncedIds = [];
             foreach ($videos as $v) {
                 if (!is_array($v)) {
                     continue;
                 }
-                $vid = self::normalizeVideoId(
+                $vid = self::normalizeVideoIdPublic(
                     (string)($v['videoId'] ?? $v['video_id'] ?? ''),
                     (string)($v['videoUrl'] ?? $v['video_url'] ?? '')
                 );
                 if ($vid === '') {
                     continue;
                 }
+                // 同一批里同一个作品只入一次（主页置顶/推荐会导致重复链接）
+                if (isset($syncedIds[$vid])) {
+                    continue;
+                }
+                $syncedIds[$vid] = true;
                 DB::query(
                     "INSERT INTO tiktok_videos(account_id, video_id, video_url, description, thumbnail_url, last_synced_at)
                      VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
@@ -361,12 +465,16 @@ class NodeBridgeController extends Controller
                        thumbnail_url=VALUES(thumbnail_url), last_synced_at=CURRENT_TIMESTAMP",
                     [
                         $aid,
-                        $vid,
+                        mb_substr($vid, 0, 191),
                         (string)($v['videoUrl'] ?? $v['video_url'] ?? ''),
                         (string)($v['description'] ?? ''),
                         (string)($v['thumbnailUrl'] ?? $v['thumbnail_url'] ?? ''),
                     ]
                 );
+            }
+            // 主页同步：清掉库里原有的重复行 + 本次没抓到的主页视频
+            if ($request->input('pruneProfileVideos') === true || $request->input('prune_profile_videos') === true) {
+                self::pruneProfileVideos($aid, array_keys($syncedIds));
             }
         }
 
