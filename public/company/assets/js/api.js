@@ -127,6 +127,22 @@
       return request('/api/company/ops/video-delivery/' + id + '/confirm', { method: 'POST', body: {} });
     },
 
+    youtubeAccounts: function (params) {
+      return request('/api/company/ops/youtube-accounts' + qs(params), { method: 'GET' });
+    },
+    createYoutubeAccount: function (body) {
+      return request('/api/company/ops/youtube-accounts', { method: 'POST', body: body || {} });
+    },
+    updateYoutubeAccount: function (id, body) {
+      return request('/api/company/ops/youtube-accounts/' + id, { method: 'PUT', body: body || {} });
+    },
+    startYoutubeAuth: function (id) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/auth', { method: 'POST', body: {} });
+    },
+    refreshYoutubeToken: function (id) {
+      return request('/api/company/ops/youtube-accounts/' + id + '/refresh-token', { method: 'POST', body: {} });
+    },
+
     chatAccounts: function (params) {
       return request('/api/company/chat/accounts' + qs(params), { method: 'GET' });
     },

@@ -18,6 +18,9 @@ use App\Services\RedisCache;
 use App\Services\TikTokVideoScreenshotService;
 use App\Services\CustomVideoTypeService;
 use App\Services\VideoDeliveryService;
+use App\Services\YouTube\YouTubeApiService;
+use App\Services\YouTube\YouTubeOAuthConfigService;
+use App\Services\YouTube\YouTubeSchema;
 
 /**
  * 企业客户门户业务 API（数据范围由 DataScope 企业客户规则过滤）
@@ -3227,5 +3230,290 @@ class PortalApiController extends Controller
             return Response::make('', 302, ['Location' => $remote]);
         }
         return $this->error('暂无 GitHub/CDN 链接，无法在线预览', 422);
+    }
+
+    // -------------------------------------------------------------------------
+    // YouTube 账号（企业门户 · 视频运营）
+    // -------------------------------------------------------------------------
+
+    /** @return array{0:list<int>,1:?Response} */
+    private function youtubeCompanyScope(Request $request): array
+    {
+        if ($err = $this->gate($request)) {
+            return [[], $err];
+        }
+        $userId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        if ($userId <= 0) {
+            return [[], $this->error('未登录', 401)];
+        }
+        CompanyService::ensureSchema();
+        $companyIds = CompanyService::companyIdsOfUser($userId);
+        if (!$companyIds) {
+            $cid = (int)(($GLOBALS['auth_user']['company_id'] ?? 0));
+            if ($cid > 0) {
+                $companyIds = [$cid];
+            }
+        }
+        if (!$companyIds) {
+            return [[], $this->error('当前账号未绑定企业，无法管理 YouTube 账号', 422)];
+        }
+        return [$companyIds, null];
+    }
+
+    /** @param list<int> $companyIds */
+    private function youtubeOwnedAccount(int $aid, array $companyIds): ?array
+    {
+        if ($aid <= 0 || !$companyIds) {
+            return null;
+        }
+        $ph = implode(',', array_fill(0, count($companyIds), '?'));
+        return DB::selectOne(
+            "SELECT y.*, c.name AS company_name
+             FROM youtube_accounts y
+             LEFT JOIN companies c ON c.id = y.company_id
+             WHERE y.id=? AND y.company_id IN ({$ph})
+             LIMIT 1",
+            array_merge([$aid], $companyIds)
+        ) ?: null;
+    }
+
+    /** @param array<string,mixed> $row */
+    private function mapYoutubeAccount(array $row): array
+    {
+        $hasRefresh = trim((string)($row['refresh_token'] ?? '')) !== '';
+        $expiresAt = (string)($row['token_expires_at'] ?? '');
+        $extra = json_decode((string)($row['extra_json'] ?? '{}'), true);
+        if (!is_array($extra)) {
+            $extra = [];
+        }
+        $companyId = (int)($row['company_id'] ?? 0);
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'companyId' => $companyId > 0 ? $companyId : null,
+            'companyName' => trim((string)($row['company_name'] ?? '')),
+            'username' => (string)($row['username'] ?? ''),
+            'nickname' => (string)($row['nickname'] ?? ''),
+            'notes' => (string)($extra['notes'] ?? ''),
+            'channelId' => (string)($row['channel_id'] ?? ''),
+            'channelTitle' => (string)($row['channel_title'] ?? ''),
+            'channelCustomUrl' => (string)($row['channel_custom_url'] ?? ''),
+            'status' => (string)($row['status'] ?? ''),
+            'lastError' => (string)($row['last_error'] ?? ''),
+            'lastLoginAt' => (string)($row['last_login_at'] ?? ''),
+            'tokenExpiresAt' => $expiresAt,
+            'authorized' => $hasRefresh,
+            'tokenValid' => $hasRefresh && ($expiresAt === '' || strtotime($expiresAt) > time()),
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+        ];
+    }
+
+    public function youtubeAccounts(Request $request): Response
+    {
+        [$companyIds, $err] = $this->youtubeCompanyScope($request);
+        if ($err) {
+            return $err;
+        }
+        YouTubeSchema::ensureSchema();
+        $keyword = trim((string)$request->get('keyword', ''));
+        $ph = implode(',', array_fill(0, count($companyIds), '?'));
+        $filters = ["y.company_id IN ({$ph})"];
+        $params = $companyIds;
+        if ($keyword !== '') {
+            $filters[] = '(y.username LIKE ? OR y.nickname LIKE ? OR y.channel_title LIKE ? OR y.channel_id LIKE ? OR CAST(y.id AS CHAR) LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($params, $like, $like, $like, $like, $like);
+        }
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $rows = DB::select(
+            "SELECT y.*, c.name AS company_name
+             FROM youtube_accounts y
+             LEFT JOIN companies c ON c.id = y.company_id
+             {$where}
+             ORDER BY y.id DESC
+             LIMIT 500",
+            $params
+        ) ?: [];
+        $companies = [];
+        foreach ($companyIds as $cid) {
+            $c = CompanyService::find((int)$cid);
+            if ($c) {
+                $companies[] = [
+                    'id' => (int)$c['id'],
+                    'name' => (string)($c['name'] ?? ('#' . $c['id'])),
+                ];
+            }
+        }
+        return $this->success([
+            'items' => array_map([$this, 'mapYoutubeAccount'], $rows),
+            'companies' => $companies,
+            'oauthConfigured' => YouTubeOAuthConfigService::isConfigured(),
+        ]);
+    }
+
+    public function createYoutubeAccount(Request $request): Response
+    {
+        [$companyIds, $err] = $this->youtubeCompanyScope($request);
+        if ($err) {
+            return $err;
+        }
+        YouTubeSchema::ensureSchema();
+        if (!YouTubeOAuthConfigService::isConfigured()) {
+            return $this->error('平台尚未配置 YouTube OAuth，请联系运营在 Node 后台完成「YouTube 开发配置」', 422);
+        }
+        $reqCompanyId = (int)$request->input('companyId', $request->input('company_id', 0));
+        $companyId = $reqCompanyId > 0 ? $reqCompanyId : (int)$companyIds[0];
+        if (!in_array($companyId, $companyIds, true)) {
+            return $this->error('无权绑定该企业', 403);
+        }
+        $cfg = YouTubeOAuthConfigService::get();
+        $username = trim((string)$request->input('username', $request->input('label', '')));
+        $nickname = trim((string)$request->input('nickname', ''));
+        $notes = trim((string)$request->input('notes', ''));
+        $ownerId = DataScope::writeOwnerId();
+        $extra = json_encode(['notes' => $notes, 'source' => 'company_portal'], JSON_UNESCAPED_UNICODE);
+        DB::query(
+            "INSERT INTO youtube_accounts
+             (owner_id, company_id, username, nickname, google_cloud_project_id, oauth_client_id, oauth_client_secret,
+              oauth_redirect_uri, oauth_scopes, status, extra_json)
+             VALUES (?,?,?,?,?,?,?,?,?, 'pending', ?)",
+            [
+                $ownerId,
+                $companyId,
+                $username,
+                $nickname,
+                '',
+                $cfg['clientId'],
+                $cfg['clientSecret'],
+                $cfg['redirectUri'],
+                $cfg['scopes'],
+                $extra,
+            ]
+        );
+        $id = (int)DB::getPdo()->lastInsertId();
+        $row = $this->youtubeOwnedAccount($id, $companyIds);
+        return $this->success($this->mapYoutubeAccount($row ?: ['id' => $id, 'company_id' => $companyId]), '账号已创建，请点击授权');
+    }
+
+    public function updateYoutubeAccount(Request $request, string $id): Response
+    {
+        [$companyIds, $err] = $this->youtubeCompanyScope($request);
+        if ($err) {
+            return $err;
+        }
+        YouTubeSchema::ensureSchema();
+        $aid = (int)$id;
+        $row = $this->youtubeOwnedAccount($aid, $companyIds);
+        if (!$row) {
+            return $this->error('账号不存在或无权操作', 404);
+        }
+        $all = $request->all();
+        $username = array_key_exists('username', $all)
+            ? trim((string)$all['username'])
+            : (string)($row['username'] ?? '');
+        $nickname = array_key_exists('nickname', $all)
+            ? trim((string)$all['nickname'])
+            : (string)($row['nickname'] ?? '');
+        $extra = json_decode((string)($row['extra_json'] ?? '{}'), true);
+        if (!is_array($extra)) {
+            $extra = [];
+        }
+        if (array_key_exists('notes', $all)) {
+            $extra['notes'] = trim((string)$all['notes']);
+        }
+        $companyId = (int)($row['company_id'] ?? 0);
+        if (array_key_exists('companyId', $all) || array_key_exists('company_id', $all)) {
+            $reqCid = (int)($all['companyId'] ?? $all['company_id'] ?? 0);
+            if ($reqCid > 0) {
+                if (!in_array($reqCid, $companyIds, true)) {
+                    return $this->error('无权绑定该企业', 403);
+                }
+                $companyId = $reqCid;
+            }
+        }
+        DB::query(
+            'UPDATE youtube_accounts SET username=?, nickname=?, company_id=?, extra_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [
+                $username,
+                $nickname,
+                $companyId > 0 ? $companyId : null,
+                json_encode($extra, JSON_UNESCAPED_UNICODE),
+                $aid,
+            ]
+        );
+        $fresh = $this->youtubeOwnedAccount($aid, $companyIds);
+        return $this->success($this->mapYoutubeAccount($fresh ?: $row), '已保存');
+    }
+
+    public function startYoutubeAuth(Request $request, string $id): Response
+    {
+        [$companyIds, $err] = $this->youtubeCompanyScope($request);
+        if ($err) {
+            return $err;
+        }
+        YouTubeSchema::ensureSchema();
+        if (!YouTubeOAuthConfigService::isConfigured()) {
+            return $this->error('平台尚未配置 YouTube OAuth，请联系运营', 422);
+        }
+        $aid = (int)$id;
+        $row = $this->youtubeOwnedAccount($aid, $companyIds);
+        if (!$row) {
+            return $this->error('账号不存在或无权操作', 404);
+        }
+        $row = YouTubeOAuthConfigService::applyToAccountRow($row);
+        DB::query(
+            'UPDATE youtube_accounts SET oauth_client_id=?, oauth_client_secret=?, oauth_redirect_uri=?, oauth_scopes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [
+                $row['oauth_client_id'],
+                $row['oauth_client_secret'],
+                $row['oauth_redirect_uri'],
+                $row['oauth_scopes'],
+                $aid,
+            ]
+        );
+        $nonce = bin2hex(random_bytes(8));
+        $state = 'yt_acc_' . $aid . '.' . $nonce;
+        $extra = json_decode((string)($row['extra_json'] ?? '{}'), true);
+        if (!is_array($extra)) {
+            $extra = [];
+        }
+        $extra['oauthState'] = $nonce;
+        $extra['oauthStartedAt'] = date('Y-m-d H:i:s');
+        $extra['oauthReturn'] = 'company_portal';
+        DB::query(
+            "UPDATE youtube_accounts SET extra_json=?, status='authorizing', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [json_encode($extra, JSON_UNESCAPED_UNICODE), $aid]
+        );
+        $svc = new YouTubeApiService($row);
+        $authUrl = $svc->buildAuthUrl([], $state);
+        return $this->success([
+            'accountId' => $aid,
+            'authUrl' => $authUrl,
+            'state' => $state,
+        ], '请在浏览器完成 Google 授权');
+    }
+
+    public function refreshYoutubeToken(Request $request, string $id): Response
+    {
+        [$companyIds, $err] = $this->youtubeCompanyScope($request);
+        if ($err) {
+            return $err;
+        }
+        YouTubeSchema::ensureSchema();
+        $aid = (int)$id;
+        $row = $this->youtubeOwnedAccount($aid, $companyIds);
+        if (!$row) {
+            return $this->error('账号不存在或无权操作', 404);
+        }
+        try {
+            $row = YouTubeOAuthConfigService::applyToAccountRow($row);
+            $svc = new YouTubeApiService($row);
+            $svc->refreshAccessToken();
+            $svc->getMineChannel();
+            $fresh = $this->youtubeOwnedAccount($aid, $companyIds);
+            return $this->success($this->mapYoutubeAccount($fresh ?: $row), '已刷新 token 与频道信息');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
     }
 }

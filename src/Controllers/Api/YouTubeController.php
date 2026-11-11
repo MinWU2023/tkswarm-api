@@ -966,7 +966,7 @@ class YouTubeController extends Controller
             . '</title></head><body style="font-family:system-ui,sans-serif;padding:48px;max-width:560px;margin:0 auto">'
             . '<h1 style="color:' . $color . ';font-size:22px">' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>'
             . '<p style="line-height:1.6;color:#334155">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</p>'
-            . '<p style="color:#64748b;font-size:13px">可关闭此窗口，返回 TkSwarm Node 刷新账号列表。</p>'
+            . '<p style="color:#64748b;font-size:13px">可关闭此窗口，返回企业门户或 Node 后台刷新账号列表。</p>'
             . '</body></html>';
         return new Response($html, 200, ['Content-Type' => 'text/html; charset=utf-8']);
     }

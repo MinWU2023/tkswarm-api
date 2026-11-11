@@ -137,6 +137,7 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/company/ops/pull-video-detail', CompanyPortalController::class . '@spa');
     Router::get('/company/ops/video-delivery', CompanyPortalController::class . '@spa');
     Router::get('/company/ops/video-delivery/{id}', CompanyPortalController::class . '@spa');
+    Router::get('/company/ops/youtube-accounts', CompanyPortalController::class . '@spa');
 
     Router::get('/api/company/auth/captcha', CompanyAuthController::class . '@captcha');
     Router::get('/api/company/auth/status', CompanyAuthController::class . '@status');
@@ -172,6 +173,12 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/company/ops/video-delivery/{id}', CompanyPortalApiController::class . '@videoDeliveryDetail');
     Router::post('/api/company/ops/video-delivery/{id}/confirm', CompanyPortalApiController::class . '@videoDeliveryConfirm');
     Router::get('/api/company/ops/video-delivery-files/{id}/stream', CompanyPortalApiController::class . '@videoDeliveryStream');
+    Router::get('/api/company/ops/youtube-accounts', CompanyPortalApiController::class . '@youtubeAccounts');
+    Router::post('/api/company/ops/youtube-accounts', CompanyPortalApiController::class . '@createYoutubeAccount');
+    Router::put('/api/company/ops/youtube-accounts/{id}', CompanyPortalApiController::class . '@updateYoutubeAccount');
+    Router::post('/api/company/ops/youtube-accounts/{id}', CompanyPortalApiController::class . '@updateYoutubeAccount');
+    Router::post('/api/company/ops/youtube-accounts/{id}/auth', CompanyPortalApiController::class . '@startYoutubeAuth');
+    Router::post('/api/company/ops/youtube-accounts/{id}/refresh-token', CompanyPortalApiController::class . '@refreshYoutubeToken');
     Router::get('/api/company/chat/accounts', CompanyPortalApiController::class . '@chatAccounts');
     Router::get('/api/company/chat/friends', CompanyPortalApiController::class . '@chatFriends');
     Router::get('/api/company/chat/messages', CompanyPortalApiController::class . '@chatMessages');
