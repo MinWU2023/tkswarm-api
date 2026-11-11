@@ -12,8 +12,9 @@ final class YouTubeSchema
 {
     public static function ensureSchema(): void
     {
-        // 企业绑定列：每次校验，避免常驻进程漏迁移
+        // 企业绑定列 / token 刷新时间：每次校验，避免常驻进程漏迁移
         self::ensureAccountCompanyColumn();
+        self::ensureAccountTokenRefreshColumn();
         static $done = false;
         if ($done) {
             return;
@@ -41,6 +42,7 @@ final class YouTubeSchema
               `refresh_token` TEXT NULL,
               `token_type` VARCHAR(32) NOT NULL DEFAULT 'Bearer',
               `token_expires_at` DATETIME NULL,
+              `token_refreshed_at` DATETIME NULL,
               `last_login_at` DATETIME NULL,
               `status` VARCHAR(32) NOT NULL DEFAULT 'enabled',
               `last_error` VARCHAR(500) NOT NULL DEFAULT '',
@@ -57,6 +59,7 @@ final class YouTubeSchema
         );
         self::ensureAccountCompanyColumn();
         self::ensureAccountStatsColumns();
+        self::ensureAccountTokenRefreshColumn();
 
         DB::query(
             "CREATE TABLE IF NOT EXISTS `youtube_videos` (
@@ -212,6 +215,32 @@ final class YouTubeSchema
               KEY `idx_yt_crt_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+    }
+
+    /** youtube_accounts：最近一次成功刷新 token 时间 */
+    public static function ensureAccountTokenRefreshColumn(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_accounts') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols || in_array('token_refreshed_at', $cols, true)) {
+            return;
+        }
+        try {
+            DB::query('ALTER TABLE youtube_accounts ADD COLUMN token_refreshed_at DATETIME NULL AFTER token_expires_at');
+        } catch (\Throwable $e) {
+        }
+        // 存量：用 last_login_at 回填，避免计划任务一次性全刷
+        try {
+            DB::query(
+                'UPDATE youtube_accounts
+                 SET token_refreshed_at=last_login_at
+                 WHERE token_refreshed_at IS NULL AND last_login_at IS NOT NULL'
+            );
+        } catch (\Throwable $e) {
+        }
     }
 
     /** youtube_accounts 关联企业 */

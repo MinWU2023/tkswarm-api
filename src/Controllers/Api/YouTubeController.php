@@ -1555,6 +1555,7 @@ class YouTubeController extends Controller
             'lastError' => (string)($row['last_error'] ?? ''),
             'lastLoginAt' => (string)($row['last_login_at'] ?? ''),
             'tokenExpiresAt' => $expiresAt,
+            'tokenRefreshedAt' => (string)($row['token_refreshed_at'] ?? ''),
             'authorized' => $hasRefresh,
             'tokenValid' => $hasRefresh && ($expiresAt === '' || strtotime($expiresAt) > time()),
             'createdAt' => (string)($row['created_at'] ?? ''),

@@ -125,6 +125,15 @@ final class ScheduleRegistry
                 'args' => ['--limit=10'],
                 'defaultEnabled' => true,
             ],
+            [
+                'key' => 'youtube_token_refresh',
+                'title' => 'YouTube Token 定时刷新',
+                'description' => '已授权账号每 3 天自动刷新 access_token（Google 测试应用 refresh_token 约 7 天失效，3 天更稳妥；界面手动刷新也会重置计时）',
+                'command' => 'youtube:token-refresh',
+                'cron' => '20 * * * *',
+                'args' => ['--limit=20', '--days=3'],
+                'defaultEnabled' => true,
+            ],
         ];
     }
 

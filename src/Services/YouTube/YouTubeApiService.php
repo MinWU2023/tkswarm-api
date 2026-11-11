@@ -95,21 +95,25 @@ class YouTubeApiService
 
         $expiresIn = max(60, (int)($res['expires_in'] ?? 3600));
         $expiresAt = date('Y-m-d H:i:s', time() + $expiresIn - 60);
+        YouTubeSchema::ensureAccountTokenRefreshColumn();
+        $refreshedAt = date('Y-m-d H:i:s');
         DB::query(
             "UPDATE youtube_accounts
-             SET access_token=?, token_type=?, token_expires_at=?, last_login_at=NOW(),
+             SET access_token=?, token_type=?, token_expires_at=?, token_refreshed_at=?, last_login_at=NOW(),
                  status='enabled', last_error='', updated_at=CURRENT_TIMESTAMP
              WHERE id=?",
             [
                 (string)$res['access_token'],
                 (string)($res['token_type'] ?? 'Bearer'),
                 $expiresAt,
+                $refreshedAt,
                 $this->accountId(),
             ]
         );
         $this->account['access_token'] = (string)$res['access_token'];
         $this->account['token_type'] = (string)($res['token_type'] ?? 'Bearer');
         $this->account['token_expires_at'] = $expiresAt;
+        $this->account['token_refreshed_at'] = $refreshedAt;
         $this->account['status'] = 'enabled';
         return $res;
     }
@@ -158,10 +162,11 @@ class YouTubeApiService
         $expiresIn = max(60, (int)($res['expires_in'] ?? 3600));
         $expiresAt = date('Y-m-d H:i:s', time() + $expiresIn - 60);
         $refresh = (string)($res['refresh_token'] ?? $this->account['refresh_token'] ?? '');
+        YouTubeSchema::ensureAccountTokenRefreshColumn();
         DB::query(
             "UPDATE youtube_accounts
              SET access_token=?, refresh_token=IF(?='', refresh_token, ?), token_type=?,
-                 token_expires_at=?, last_login_at=NOW(), status='enabled', last_error='',
+                 token_expires_at=?, token_refreshed_at=NOW(), last_login_at=NOW(), status='enabled', last_error='',
                  updated_at=CURRENT_TIMESTAMP
              WHERE id=?",
             [
