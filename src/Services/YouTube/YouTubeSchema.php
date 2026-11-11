@@ -56,6 +56,7 @@ final class YouTubeSchema
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
         self::ensureAccountCompanyColumn();
+        self::ensureAccountStatsColumns();
 
         DB::query(
             "CREATE TABLE IF NOT EXISTS `youtube_videos` (
@@ -228,6 +229,107 @@ final class YouTubeSchema
             }
         } catch (\Throwable $e) {
         }
+    }
+
+    /** youtube_accounts 频道基础数据（订阅/浏览/视频数等） */
+    public static function ensureAccountStatsColumns(): void
+    {
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM youtube_accounts') ?: [], 'Field');
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$cols) {
+            return;
+        }
+        $alters = [
+            'subscriber_count' => "ALTER TABLE youtube_accounts ADD COLUMN subscriber_count BIGINT NOT NULL DEFAULT 0 AFTER channel_custom_url",
+            'channel_view_count' => "ALTER TABLE youtube_accounts ADD COLUMN channel_view_count BIGINT NOT NULL DEFAULT 0 AFTER subscriber_count",
+            'channel_video_count' => "ALTER TABLE youtube_accounts ADD COLUMN channel_video_count INT NOT NULL DEFAULT 0 AFTER channel_view_count",
+            'hidden_subscriber_count' => "ALTER TABLE youtube_accounts ADD COLUMN hidden_subscriber_count TINYINT(1) NOT NULL DEFAULT 0 AFTER channel_video_count",
+            'channel_thumb_url' => "ALTER TABLE youtube_accounts ADD COLUMN channel_thumb_url VARCHAR(500) NOT NULL DEFAULT '' AFTER hidden_subscriber_count",
+            'channel_description' => "ALTER TABLE youtube_accounts ADD COLUMN channel_description TEXT NULL AFTER channel_thumb_url",
+            'channel_country' => "ALTER TABLE youtube_accounts ADD COLUMN channel_country VARCHAR(16) NOT NULL DEFAULT '' AFTER channel_description",
+            'channel_published_at' => "ALTER TABLE youtube_accounts ADD COLUMN channel_published_at DATETIME NULL AFTER channel_country",
+            'channel_stats_synced_at' => "ALTER TABLE youtube_accounts ADD COLUMN channel_stats_synced_at DATETIME NULL AFTER channel_published_at",
+        ];
+        foreach ($alters as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    DB::query($sql);
+                } catch (\Throwable $e) {
+                }
+            }
+        }
+    }
+
+    /**
+     * 将 channels resource 的 snippet/statistics 写回 youtube_accounts。
+     * @param array<string,mixed> $item
+     * @return array<string,mixed>
+     */
+    public static function applyChannelStatsToAccount(int $accountId, array $item): array
+    {
+        self::ensureAccountStatsColumns();
+        $snippet = is_array($item['snippet'] ?? null) ? $item['snippet'] : [];
+        $stats = is_array($item['statistics'] ?? null) ? $item['statistics'] : [];
+        $thumbs = is_array($snippet['thumbnails'] ?? null) ? $snippet['thumbnails'] : [];
+        $thumb = '';
+        foreach (['high', 'medium', 'default'] as $k) {
+            $u = trim((string)($thumbs[$k]['url'] ?? ''));
+            if ($u !== '') {
+                $thumb = $u;
+                break;
+            }
+        }
+        $publishedRaw = trim((string)($snippet['publishedAt'] ?? ''));
+        $publishedAt = null;
+        if ($publishedRaw !== '') {
+            $ts = strtotime($publishedRaw);
+            if ($ts) {
+                $publishedAt = date('Y-m-d H:i:s', $ts);
+            }
+        }
+        $syncedAt = date('Y-m-d H:i:s');
+        $payload = [
+            'channel_id' => (string)($item['id'] ?? ''),
+            'channel_title' => (string)($snippet['title'] ?? ''),
+            'channel_custom_url' => (string)($snippet['customUrl'] ?? ''),
+            'subscriber_count' => (int)($stats['subscriberCount'] ?? 0),
+            'channel_view_count' => (int)($stats['viewCount'] ?? 0),
+            'channel_video_count' => (int)($stats['videoCount'] ?? 0),
+            'hidden_subscriber_count' => !empty($stats['hiddenSubscriberCount']) ? 1 : 0,
+            'channel_thumb_url' => $thumb,
+            'channel_description' => (string)($snippet['description'] ?? ''),
+            'channel_country' => (string)($snippet['country'] ?? ''),
+            'channel_published_at' => $publishedAt,
+            'channel_stats_synced_at' => $syncedAt,
+        ];
+        DB::query(
+            'UPDATE youtube_accounts SET
+                channel_id=?, channel_title=?, channel_custom_url=?,
+                subscriber_count=?, channel_view_count=?, channel_video_count=?,
+                hidden_subscriber_count=?, channel_thumb_url=?, channel_description=?,
+                channel_country=?, channel_published_at=?, channel_stats_synced_at=?,
+                updated_at=CURRENT_TIMESTAMP
+             WHERE id=?',
+            [
+                $payload['channel_id'],
+                $payload['channel_title'],
+                $payload['channel_custom_url'],
+                $payload['subscriber_count'],
+                $payload['channel_view_count'],
+                $payload['channel_video_count'],
+                $payload['hidden_subscriber_count'],
+                $payload['channel_thumb_url'],
+                $payload['channel_description'],
+                $payload['channel_country'],
+                $payload['channel_published_at'],
+                $payload['channel_stats_synced_at'],
+                $accountId,
+            ]
+        );
+        return $payload;
     }
 
     /** TikTok 素材同步：给发布任务补 material_id / source_cdn_url */

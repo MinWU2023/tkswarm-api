@@ -222,6 +222,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/youtube/accounts/{id}/refresh-token', YouTubeController::class . '@refreshAccountToken');
     Router::get('/api/youtube/accounts/{id}/videos', YouTubeController::class . '@listAccountVideos');
     Router::post('/api/youtube/accounts/{id}/videos/pull', YouTubeController::class . '@pullAccountVideos');
+    Router::post('/api/youtube/accounts/{id}/stats/pull', YouTubeController::class . '@pullAccountStats');
     Router::get('/api/youtube/accounts/{id}/videos/{videoId}', YouTubeController::class . '@getAccountVideo');
     Router::delete('/api/youtube/accounts/{id}/videos/{videoId}', YouTubeController::class . '@deleteAccountVideo');
     Router::get('/api/youtube/accounts/{id}/videos/{videoId}/comments', YouTubeController::class . '@listVideoComments');

@@ -236,17 +236,34 @@ class YouTubeApiService
                 '该 Google 账号下没有可用的 YouTube 频道。请用同一账号打开 https://www.youtube.com/create_channel 创建频道后，再回 TkSwarm 重新点「授权登录」'
             );
         }
-        $channelId = (string)($item['id'] ?? '');
-        $title = (string)($item['snippet']['title'] ?? '');
-        $customUrl = (string)($item['snippet']['customUrl'] ?? '');
-        DB::query(
-            'UPDATE youtube_accounts SET channel_id=?, channel_title=?, channel_custom_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-            [$channelId, $title, $customUrl, $this->accountId()]
-        );
-        $this->account['channel_id'] = $channelId;
-        $this->account['channel_title'] = $title;
-        $this->account['channel_custom_url'] = $customUrl;
+        $saved = YouTubeSchema::applyChannelStatsToAccount($this->accountId(), $item);
+        foreach ($saved as $k => $v) {
+            $this->account[$k] = $v;
+        }
         return $item;
+    }
+
+    /**
+     * 拉取并落库频道基础数据（订阅/浏览/视频数/头像等）。
+     * @return array<string,mixed>
+     */
+    public function pullChannelStats(): array
+    {
+        $this->getMineChannel('snippet,contentDetails,statistics');
+        return [
+            'channel_id' => (string)($this->account['channel_id'] ?? ''),
+            'channel_title' => (string)($this->account['channel_title'] ?? ''),
+            'channel_custom_url' => (string)($this->account['channel_custom_url'] ?? ''),
+            'subscriber_count' => (int)($this->account['subscriber_count'] ?? 0),
+            'channel_view_count' => (int)($this->account['channel_view_count'] ?? 0),
+            'channel_video_count' => (int)($this->account['channel_video_count'] ?? 0),
+            'hidden_subscriber_count' => (int)($this->account['hidden_subscriber_count'] ?? 0),
+            'channel_thumb_url' => (string)($this->account['channel_thumb_url'] ?? ''),
+            'channel_description' => (string)($this->account['channel_description'] ?? ''),
+            'channel_country' => (string)($this->account['channel_country'] ?? ''),
+            'channel_published_at' => (string)($this->account['channel_published_at'] ?? ''),
+            'channel_stats_synced_at' => (string)($this->account['channel_stats_synced_at'] ?? ''),
+        ];
     }
 
     /**

@@ -440,6 +440,7 @@ class YouTubeController extends Controller
             return [null, $this->error('账号无效', 422)];
         }
         YouTubeSchema::ensureSchema();
+        YouTubeSchema::ensureAccountStatsColumns();
         $row = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
         if (!$row) {
             return [null, $this->error('账号不存在', 404)];
@@ -508,6 +509,32 @@ class YouTubeController extends Controller
             $maxPages = max(1, min(40, (int)$request->input('maxPages', 10)));
             $result = $svc->pullChannelVideos($maxPages);
             return $this->success($result, '已拉取 ' . (int)($result['pulled'] ?? 0) . ' 条内容');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    public function pullAccountStats(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        try {
+            YouTubeSchema::ensureAccountStatsColumns();
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $svc->pullChannelStats();
+            $fresh = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [(int)$acc['id']]);
+            return $this->success([
+                'account' => $this->mapAccount($fresh ?: $acc),
+            ], '已同步频道基础数据');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);
         }
@@ -1336,6 +1363,15 @@ class YouTubeController extends Controller
             'channelId' => (string)($row['channel_id'] ?? ''),
             'channelTitle' => (string)($row['channel_title'] ?? ''),
             'channelCustomUrl' => (string)($row['channel_custom_url'] ?? ''),
+            'subscriberCount' => (int)($row['subscriber_count'] ?? 0),
+            'channelViewCount' => (int)($row['channel_view_count'] ?? 0),
+            'channelVideoCount' => (int)($row['channel_video_count'] ?? 0),
+            'hiddenSubscriberCount' => !empty($row['hidden_subscriber_count']),
+            'channelThumbUrl' => (string)($row['channel_thumb_url'] ?? ''),
+            'channelDescription' => (string)($row['channel_description'] ?? ''),
+            'channelCountry' => (string)($row['channel_country'] ?? ''),
+            'channelPublishedAt' => (string)($row['channel_published_at'] ?? ''),
+            'channelStatsSyncedAt' => (string)($row['channel_stats_synced_at'] ?? ''),
             'status' => (string)($row['status'] ?? ''),
             'lastError' => (string)($row['last_error'] ?? ''),
             'lastLoginAt' => (string)($row['last_login_at'] ?? ''),
