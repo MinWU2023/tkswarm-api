@@ -99,7 +99,7 @@ class ShouhuzheVideoApiService
      * 按关键字查找守护者企业（是否已创建、关联运营用户）。
      * 对齐 dyyweb：POST {base}/company/search，header token，form keyword/limit。
      *
-     * @return array{status:bool,error_msg?:string,message?:string,data?:list<array>,count?:int}
+     * @return array{status:bool,error_msg?:string,message?:string,data?:list<array<string,mixed>>,count?:int}
      */
     public static function searchCompany(string $keyword, int $limit = 20): array
     {
@@ -107,10 +107,64 @@ class ShouhuzheVideoApiService
         if (mb_strlen($keyword) < 2) {
             return ['status' => false, 'error_msg' => '请输入至少2个字符的企业名称'];
         }
-        return self::post('company/search', [
+        $resp = self::post('company/search', [
             'keyword' => $keyword,
             'limit' => min(50, max(1, $limit)),
         ]);
+        // 兼容：有的返回缺 status 但带 data；字段可能是 camelCase
+        $hasData = isset($resp['data']) && (is_array($resp['data']) || is_object($resp['data']));
+        $statusOk = self::isTruthyStatus($resp['status'] ?? null)
+            || (($resp['code'] ?? null) === 0 || ($resp['code'] ?? null) === '0')
+            || ($hasData && !array_key_exists('status', $resp) && !array_key_exists('error_msg', $resp));
+        if (!$statusOk) {
+            return [
+                'status' => false,
+                'error_msg' => (string)($resp['error_msg'] ?? $resp['message'] ?? $resp['msg'] ?? '守护者公司查找失败'),
+                'data' => [],
+                'count' => 0,
+            ];
+        }
+        $rawRows = $resp['data'] ?? [];
+        if (is_object($rawRows)) {
+            $rawRows = (array)$rawRows;
+        }
+        if (!is_array($rawRows)) {
+            $rawRows = [];
+        }
+        $rows = [];
+        foreach ($rawRows as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $id = $item['id'] ?? $item['company_id'] ?? $item['companyId'] ?? null;
+            $name = trim((string)($item['company_name'] ?? $item['companyName'] ?? $item['name'] ?? ''));
+            $ops = trim((string)($item['operator_name'] ?? $item['operatorName'] ?? $item['ops_name'] ?? $item['opsName'] ?? ''));
+            if ($id === null || $id === '' || $name === '') {
+                continue;
+            }
+            $rows[] = [
+                'id' => $id,
+                'company_name' => $name,
+                'operator_name' => $ops,
+            ];
+        }
+        return [
+            'status' => true,
+            'data' => $rows,
+            'count' => (int)($resp['count'] ?? count($rows)),
+        ];
+    }
+
+    /** @param mixed $status */
+    private static function isTruthyStatus($status): bool
+    {
+        if ($status === true || $status === 1 || $status === '1') {
+            return true;
+        }
+        if (is_string($status) && strtolower(trim($status)) === 'true') {
+            return true;
+        }
+        return false;
     }
 
     /**

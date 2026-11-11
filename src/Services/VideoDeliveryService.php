@@ -623,23 +623,38 @@ class VideoDeliveryService
             return ['ok' => false, 'message' => '企业名称为空，无法查询守护者', 'client' => $mapped, 'match' => null];
         }
 
-        $resp = ShouhuzheVideoApiService::searchCompany($companyName, 20);
-        if (empty($resp['status'])) {
-            $err = (string)($resp['error_msg'] ?? $resp['message'] ?? '守护者公司查找失败');
-            // 网络/接口失败：保留原数据，只记错误
+        // 守护者检索对短关键词更友好（如「思诺威」），全称常搜不到；多关键词重试
+        $keywords = self::buildShouhuzheSearchKeywords($companyName);
+        $best = null;
+        $lastErr = '';
+        $triedAnyOk = false;
+        foreach ($keywords as $kw) {
+            $resp = ShouhuzheVideoApiService::searchCompany($kw, 30);
+            if (empty($resp['status'])) {
+                $lastErr = (string)($resp['error_msg'] ?? $resp['message'] ?? '守护者公司查找失败');
+                continue;
+            }
+            $triedAnyOk = true;
+            $rows = is_array($resp['data'] ?? null) ? $resp['data'] : [];
+            $hit = self::pickBestShouhuzheCompanyMatch($companyName, $rows, $kw);
+            if ($hit !== null) {
+                $best = $hit;
+                break;
+            }
+        }
+
+        if ($best === null && !$triedAnyOk && $lastErr !== '') {
             CompanyService::saveShouhuzheLookup($companyId, [
                 'exists' => !empty($company['shouhuzheExists']),
                 'company_id' => (string)($company['shouhuzheCompanyId'] ?? ''),
                 'company_name' => (string)($company['shouhuzheCompanyName'] ?? ''),
                 'operator_name' => (string)($company['shouhuzheOperatorName'] ?? ''),
-                'error' => $err,
+                'error' => $lastErr,
             ]);
             $client = self::attachCompanyShouhuzheFields(self::ensureProfileForAdminUser($adminUserId));
-            return ['ok' => false, 'message' => $err, 'client' => $client, 'match' => null];
+            return ['ok' => false, 'message' => $lastErr, 'client' => $client, 'match' => null];
         }
 
-        $rows = is_array($resp['data'] ?? null) ? $resp['data'] : [];
-        $best = self::pickBestShouhuzheCompanyMatch($companyName, $rows);
         if ($best === null) {
             CompanyService::saveShouhuzheLookup($companyId, [
                 'exists' => false,
@@ -651,7 +666,7 @@ class VideoDeliveryService
             $client = self::attachCompanyShouhuzheFields(self::ensureProfileForAdminUser($adminUserId));
             return [
                 'ok' => true,
-                'message' => '守护者未找到匹配企业',
+                'message' => '守护者未找到匹配企业（已尝试：' . implode(' / ', $keywords) . '）',
                 'client' => $client,
                 'match' => null,
             ];
@@ -681,42 +696,171 @@ class VideoDeliveryService
     }
 
     /**
+     * 生成守护者检索关键词：全称 → 去法人后缀 → 再去省市前缀 → 核心短名。
+     * 例：厦门思诺威自动化科技有限公司 → 思诺威自动化科技 → 思诺威
+     *
+     * @return list<string>
+     */
+    private static function buildShouhuzheSearchKeywords(string $companyName): array
+    {
+        $name = trim(preg_replace('/\s+/u', '', $companyName) ?? $companyName);
+        $out = [];
+        $push = static function (string $k) use (&$out): void {
+            $k = trim($k);
+            if (mb_strlen($k) < 2) {
+                return;
+            }
+            foreach ($out as $exist) {
+                if ($exist === $k) {
+                    return;
+                }
+            }
+            $out[] = $k;
+        };
+
+        $push($name);
+
+        $noSuffix = preg_replace(
+            '/(股份有限公司|有限责任公司|有限公司|集团股份|集团公司|集团|分公司|公司|厂|店)$/u',
+            '',
+            $name
+        );
+        $noSuffix = trim((string)$noSuffix);
+        $push($noSuffix);
+
+        $noRegion = self::stripLeadingRegion($noSuffix !== '' ? $noSuffix : $name);
+        $push($noRegion);
+
+        // 再剥一层常见行业后缀，尽量得到品牌短名（思诺威）
+        $core = preg_replace(
+            '/(自动化科技|科技发展|信息技术|网络科技|电子商务|电子科技|智能科技|生物科技|环保科技|技术|科技|实业|贸易|商贸|工业|自动化|软件|网络|电子|机械|设备|材料|工程|服务|咨询|投资|控股|国际|控股集团)$/u',
+            '',
+            $noRegion !== '' ? $noRegion : $noSuffix
+        );
+        $core = trim((string)$core);
+        // 行业后缀去掉后可能仍带「厦门」等前缀
+        $core = self::stripLeadingRegion($core);
+        $push($core);
+
+        // 若核心仍较长，取前 2~6 个汉字作为兜底短词（对齐页面手输短关键词）
+        $base = $core !== '' ? $core : ($noRegion !== '' ? $noRegion : $noSuffix);
+        if (mb_strlen($base) >= 4) {
+            for ($len = min(6, mb_strlen($base)); $len >= 2; $len--) {
+                $push(mb_substr($base, 0, $len));
+            }
+        }
+
+        return $out;
+    }
+
+    /** 去掉省/市/自治区前缀（含「厦门」这类不带「市」的常见写法） */
+    private static function stripLeadingRegion(string $name): string
+    {
+        $s = trim($name);
+        if ($s === '') {
+            return '';
+        }
+        $s = (string)preg_replace(
+            '/^(北京市|上海市|天津市|重庆市|香港特别行政区|澳门特别行政区|[\x{4e00}-\x{9fff}]{2,12}(?:省|自治区|特别行政区))([\x{4e00}-\x{9fff}]{2,12}市|[\x{4e00}-\x{9fff}]{2,12}州|[\x{4e00}-\x{9fff}]{2,12}地区|[\x{4e00}-\x{9fff}]{1,12}县)?/u',
+            '',
+            $s
+        );
+        $s = trim($s);
+        $s = (string)preg_replace(
+            '/^([\x{4e00}-\x{9fff}]{2,12}市|[\x{4e00}-\x{9fff}]{2,12}州|[\x{4e00}-\x{9fff}]{2,12}地区)/u',
+            '',
+            $s
+        );
+        $s = trim($s);
+        // 常见城市简写（无「市」）：厦门思诺威… → 思诺威…
+        $s = (string)preg_replace(
+            '/^(北京|上海|天津|重庆|香港|澳门|厦门|深圳|广州|杭州|成都|武汉|南京|苏州|青岛|大连|宁波|福州|济南|长沙|郑州|西安|沈阳|哈尔滨|长春|石家庄|合肥|南昌|昆明|贵阳|南宁|海口|兰州|西宁|银川|乌鲁木齐|呼和浩特|拉萨)/u',
+            '',
+            $s
+        );
+        return trim($s);
+    }
+
+    /**
      * @param list<array<string,mixed>> $rows
      * @return array<string,mixed>|null
      */
-    private static function pickBestShouhuzheCompanyMatch(string $companyName, array $rows): ?array
+    private static function pickBestShouhuzheCompanyMatch(string $companyName, array $rows, string $keyword = ''): ?array
     {
-        $norm = mb_strtolower(trim($companyName));
-        if ($norm === '' || !$rows) {
+        if (!$rows) {
             return null;
         }
+        $norm = self::normalizeCompanyKey($companyName);
+        $kw = self::normalizeCompanyKey($keyword !== '' ? $keyword : $companyName);
+        $best = null;
+        $bestScore = -1;
         foreach ($rows as $item) {
-            if (!is_array($item)) {
+            if (!is_array($item) || empty($item['id'])) {
                 continue;
             }
-            $n = mb_strtolower(trim((string)($item['company_name'] ?? '')));
-            if ($n !== '' && $n === $norm && !empty($item['id'])) {
-                return $item;
+            $remoteName = trim((string)($item['company_name'] ?? ''));
+            if ($remoteName === '') {
+                continue;
+            }
+            $rn = self::normalizeCompanyKey($remoteName);
+            $score = 0;
+            if ($rn === $norm) {
+                $score = 100;
+            } elseif ($norm !== '' && (mb_strpos($rn, $norm) !== false || mb_strpos($norm, $rn) !== false)) {
+                $score = 80;
+            } elseif ($kw !== '' && mb_strpos($rn, $kw) !== false) {
+                $score = 70;
+            } elseif ($kw !== '' && mb_strpos($kw, $rn) !== false) {
+                $score = 60;
+            } else {
+                // 去后缀后的核心互含
+                $coreLocal = self::normalizeCompanyKey(self::stripCompanyDecorations($companyName));
+                $coreRemote = self::normalizeCompanyKey(self::stripCompanyDecorations($remoteName));
+                if ($coreLocal !== '' && $coreRemote !== '' && (
+                    $coreLocal === $coreRemote
+                    || mb_strpos($coreRemote, $coreLocal) !== false
+                    || mb_strpos($coreLocal, $coreRemote) !== false
+                )) {
+                    $score = 75;
+                }
+            }
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $item;
             }
         }
-        foreach ($rows as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-            $n = mb_strtolower(trim((string)($item['company_name'] ?? '')));
-            if ($n === '' || empty($item['id'])) {
-                continue;
-            }
-            if (mb_strpos($n, $norm) !== false || mb_strpos($norm, $n) !== false) {
-                return $item;
-            }
+        // 有关键词命中时至少要有一点相关分；否则不把无关第一条当命中
+        if ($best !== null && $bestScore >= 60) {
+            return $best;
         }
-        foreach ($rows as $item) {
-            if (is_array($item) && !empty($item['id']) && trim((string)($item['company_name'] ?? '')) !== '') {
-                return $item;
-            }
+        // 仅当结果唯一时接受（守护者短词搜索常只返回 1 条）
+        if (count($rows) === 1 && is_array($rows[0]) && !empty($rows[0]['id'])) {
+            return $rows[0];
         }
         return null;
+    }
+
+    private static function normalizeCompanyKey(string $name): string
+    {
+        $s = mb_strtolower(trim(preg_replace('/\s+/u', '', $name) ?? $name));
+        return self::stripCompanyDecorations($s);
+    }
+
+    private static function stripCompanyDecorations(string $name): string
+    {
+        $s = trim($name);
+        $s = (string)preg_replace(
+            '/(股份有限公司|有限责任公司|有限公司|集团股份|集团公司|集团|分公司|公司|厂|店)$/u',
+            '',
+            $s
+        );
+        $s = self::stripLeadingRegion($s);
+        $s = (string)preg_replace(
+            '/(自动化科技|科技发展|信息技术|网络科技|电子商务|电子科技|智能科技|生物科技|环保科技|技术|科技|实业|贸易|商贸|工业|自动化|软件|网络|电子|机械|设备|材料|工程|服务|咨询|投资|控股|国际)$/u',
+            '',
+            $s
+        );
+        return trim($s);
     }
 
     /**
