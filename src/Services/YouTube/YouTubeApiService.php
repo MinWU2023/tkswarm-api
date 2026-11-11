@@ -300,7 +300,7 @@ class YouTubeApiService
         if ($filePath === '' || !is_file($filePath)) {
             throw new \InvalidArgumentException('视频文件不存在: ' . $filePath);
         }
-        $title = trim((string)($meta['title'] ?? ''));
+        $title = self::sanitizeVideoTitle((string)($meta['title'] ?? ''), (string)($meta['fallbackTitle'] ?? 'Untitled Video'));
         if ($title === '') {
             throw new \InvalidArgumentException('title 不能为空');
         }
@@ -408,9 +408,23 @@ class YouTubeApiService
                     );
                 }
             }
+            $rawTitle = trim((string)($task['title'] ?? ''));
+            $fallback = trim((string)($task['name'] ?? ''));
+            if ($fallback === '') {
+                $fallback = 'Youtube #' . $taskId;
+            }
+            $safeTitle = self::sanitizeVideoTitle($rawTitle, $fallback);
+            // 回写清洗后的标题，避免下次仍带非法字符/超长
+            if ($safeTitle !== $rawTitle) {
+                DB::query(
+                    'UPDATE youtube_publish_tasks SET title=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    [$safeTitle, $taskId]
+                );
+            }
             $result = $this->publishVideo([
-                'title' => (string)($task['title'] ?? ''),
-                'description' => (string)($task['description'] ?? ''),
+                'title' => $safeTitle,
+                'fallbackTitle' => $fallback,
+                'description' => self::sanitizeVideoDescription((string)($task['description'] ?? '')),
                 'tags' => $tags,
                 'categoryId' => (string)($task['category_id'] ?? '22'),
                 'privacyStatus' => (string)($task['privacy_status'] ?? 'private'),
@@ -851,6 +865,48 @@ class YouTubeApiService
     // -------------------------------------------------------------------------
     // HTTP helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * YouTube 标题规则：最长 100；禁止 <>；不可为空。
+     * @see https://developers.google.com/youtube/v3/docs/videos#snippet.title
+     */
+    public static function sanitizeVideoTitle(string $title, string $fallback = 'Untitled Video'): string
+    {
+        $t = trim($title);
+        // 去掉控制字符与 YouTube 禁止的 <>
+        $t = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $t) ?? $t;
+        $t = str_replace(['<', '>'], ['', ''], $t);
+        $t = preg_replace('/\s+/u', ' ', $t) ?? $t;
+        $t = trim($t);
+        if ($t === '') {
+            $t = trim($fallback);
+            $t = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $t) ?? $t;
+            $t = str_replace(['<', '>'], ['', ''], $t);
+            $t = preg_replace('/\s+/u', ' ', $t) ?? $t;
+            $t = trim($t);
+        }
+        if ($t === '') {
+            $t = 'Untitled Video';
+        }
+        if (function_exists('mb_substr')) {
+            $t = mb_substr($t, 0, 100);
+        } else {
+            $t = substr($t, 0, 100);
+        }
+        return trim($t) !== '' ? trim($t) : 'Untitled Video';
+    }
+
+    /** 描述最长约 5000；去掉控制字符与 <> */
+    public static function sanitizeVideoDescription(string $description): string
+    {
+        $d = str_replace(["\r\n", "\r"], "\n", $description);
+        $d = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $d) ?? $d;
+        $d = str_replace(['<', '>'], ['', ''], $d);
+        if (function_exists('mb_substr')) {
+            return mb_substr($d, 0, 5000);
+        }
+        return substr($d, 0, 5000);
+    }
 
     /** @param array<string,scalar|null> $query */
     private function apiGet(string $path, array $query): array

@@ -528,11 +528,9 @@ class YouTubeController extends Controller
                     continue;
                 }
             }
-            $title = trim((string)(($mat['share_title'] ?? '') !== '' ? $mat['share_title'] : ($mat['name'] ?? '')));
-            if ($title === '') {
-                $title = 'TikTok #' . $mid;
-            }
-            $desc = trim((string)($mat['share_caption'] ?? ''));
+            $rawTitle = trim((string)(($mat['share_title'] ?? '') !== '' ? $mat['share_title'] : ($mat['name'] ?? '')));
+            $title = YouTubeApiService::sanitizeVideoTitle($rawTitle, 'TikTok #' . $mid);
+            $desc = YouTubeApiService::sanitizeVideoDescription(trim((string)($mat['share_caption'] ?? '')));
             $local = trim((string)($mat['file_path'] ?? ''));
             $cdn = trim((string)($mat['cdn_url'] ?? ''));
             if ($cdn === '') {
@@ -585,7 +583,7 @@ class YouTubeController extends Controller
                         $mid,
                         $useTikTokId > 0 ? $useTikTokId : null,
                         $name,
-                        mb_substr($title, 0, 255),
+                        $title,
                         $desc,
                         $privacy,
                         $local,
@@ -722,10 +720,13 @@ class YouTubeController extends Controller
         }
         $all = $request->all();
         $name = array_key_exists('name', $all) ? trim((string)$all['name']) : (string)($task['name'] ?? '');
-        $title = array_key_exists('title', $all) ? trim((string)$all['title']) : (string)($task['title'] ?? '');
-        $description = array_key_exists('description', $all)
-            ? (string)$all['description']
-            : (string)($task['description'] ?? '');
+        $rawTitle = array_key_exists('title', $all) ? trim((string)$all['title']) : (string)($task['title'] ?? '');
+        $title = YouTubeApiService::sanitizeVideoTitle($rawTitle, $name !== '' ? $name : ('Task #' . $taskId));
+        $description = YouTubeApiService::sanitizeVideoDescription(
+            array_key_exists('description', $all)
+                ? (string)$all['description']
+                : (string)($task['description'] ?? '')
+        );
         $privacy = array_key_exists('privacyStatus', $all)
             ? strtolower(trim((string)$all['privacyStatus']))
             : (array_key_exists('privacy_status', $all)
@@ -752,7 +753,7 @@ class YouTubeController extends Controller
              WHERE id=?",
             [
                 mb_substr($name !== '' ? $name : $title, 0, 255),
-                mb_substr($title, 0, 255),
+                $title,
                 $description,
                 $privacy,
                 $newStatus,
