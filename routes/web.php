@@ -228,6 +228,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/youtube/accounts/{id}/videos/{videoId}/comments', YouTubeController::class . '@listVideoComments');
     Router::post('/api/youtube/accounts/{id}/videos/{videoId}/comments/pull', YouTubeController::class . '@pullVideoComments');
     Router::post('/api/youtube/accounts/{id}/comments/{commentId}/reply', YouTubeController::class . '@replyVideoComment');
+    Router::post('/api/youtube/accounts/{id}/comments/{commentId}/ai-reply', YouTubeController::class . '@aiReplyVideoComment');
     Router::delete('/api/youtube/accounts/{id}/comments/{commentId}', YouTubeController::class . '@deleteVideoComment');
     Router::get('/api/youtube/sync/tiktok-accounts', YouTubeController::class . '@listTikTokPublishAccounts');
     Router::get('/api/youtube/sync/materials', YouTubeController::class . '@listSyncMaterials');

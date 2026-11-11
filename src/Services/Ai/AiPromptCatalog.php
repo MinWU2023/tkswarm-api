@@ -271,6 +271,35 @@ class AiPromptCatalog
                     ['key' => 'candidates_json', 'label' => '候选音乐 JSON', 'required' => true, 'type' => 'textarea', 'example' => '[{"index":0,"name":"Song A","artist":"Artist"}]'],
                 ],
             ],
+            [
+                'code' => 'youtube_comment_reply',
+                'name' => 'YouTube 评论回复',
+                'category' => 'youtube',
+                'description' => '根据观众评论与视频信息生成创作者回复。变量：comment_text / author / video_title / video_desc / channel_title / tone / language',
+                'content' => "You are the creator of a YouTube channel \"{{channel_title}}\".\n"
+                    . "Write ONE short reply to a viewer comment under your video.\n\n"
+                    . "Video title: {{video_title}}\n"
+                    . "Video description: {{video_desc}}\n"
+                    . "Viewer name: {{author}}\n"
+                    . "Viewer comment: {{comment_text}}\n"
+                    . "Tone: {{tone}}\n"
+                    . "Reply language: {{language}}\n\n"
+                    . "Rules:\n"
+                    . "1. Reply as the creator, friendly and natural\n"
+                    . "2. 1–3 sentences, about 8–60 words (or equivalent in target language)\n"
+                    . "3. Address the comment specifically; optional 1 emoji\n"
+                    . "4. No ads, no links, no politics, no spam\n"
+                    . "5. Output ONLY the reply text — no quotes, no explanation",
+                'variables' => [
+                    ['key' => 'comment_text', 'label' => '观众评论', 'required' => true, 'type' => 'textarea', 'example' => 'Great video, thanks!'],
+                    ['key' => 'author', 'label' => '评论作者', 'required' => false, 'default' => '', 'type' => 'text'],
+                    ['key' => 'video_title', 'label' => '视频标题', 'required' => false, 'default' => '', 'type' => 'text'],
+                    ['key' => 'video_desc', 'label' => '视频描述', 'required' => false, 'default' => '', 'type' => 'textarea'],
+                    ['key' => 'channel_title', 'label' => '频道名称', 'required' => false, 'default' => 'my channel', 'type' => 'text'],
+                    ['key' => 'tone', 'label' => '语气', 'required' => false, 'default' => 'friendly and professional', 'type' => 'text'],
+                    ['key' => 'language', 'label' => '回复语言', 'required' => false, 'default' => 'same as the comment (prefer English if unclear)', 'type' => 'text'],
+                ],
+            ],
         ];
     }
 
@@ -285,6 +314,7 @@ class AiPromptCatalog
             ['code' => 'agent', 'label' => '智能体'],
             ['code' => 'lead', 'label' => '拓客'],
             ['code' => 'account', 'label' => '账号'],
+            ['code' => 'youtube', 'label' => 'YouTube'],
         ];
     }
 }

@@ -8,6 +8,9 @@ use App\Core\Database\DB;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Auth\RBAC;
+use App\Services\Ai\AiClient;
+use App\Services\Ai\AiPromptCatalog;
+use App\Services\Ai\AiPromptHelper;
 use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\PermissionCatalog;
@@ -678,6 +681,30 @@ class YouTubeController extends Controller
         }
     }
 
+    /** @return array{0:?array<string,mixed>,1:?Response} */
+    private function findAccountComment(array $acc, string $commentId): array
+    {
+        $aid = (int)($acc['id'] ?? 0);
+        $cid = (int)$commentId;
+        $comment = null;
+        if ($cid > 0) {
+            $comment = DB::selectOne(
+                'SELECT * FROM youtube_comments WHERE id=? AND account_id=? LIMIT 1',
+                [$cid, $aid]
+            );
+        }
+        if (!$comment) {
+            $comment = DB::selectOne(
+                'SELECT * FROM youtube_comments WHERE youtube_comment_id=? AND account_id=? LIMIT 1',
+                [trim($commentId), $aid]
+            );
+        }
+        if (!$comment) {
+            return [null, $this->error('评论不存在', 404)];
+        }
+        return [$comment, null];
+    }
+
     public function replyVideoComment(Request $request, string $id, string $commentId): Response
     {
         if ($deny = $this->denyUnlessCanUse()) {
@@ -687,20 +714,9 @@ class YouTubeController extends Controller
         if ($err) {
             return $err;
         }
-        $cid = (int)$commentId;
-        $comment = DB::selectOne(
-            'SELECT * FROM youtube_comments WHERE id=? AND account_id=? LIMIT 1',
-            [$cid, (int)$acc['id']]
-        );
-        if (!$comment) {
-            // 也允许传 youtube_comment_id
-            $comment = DB::selectOne(
-                'SELECT * FROM youtube_comments WHERE youtube_comment_id=? AND account_id=? LIMIT 1',
-                [trim($commentId), (int)$acc['id']]
-            );
-        }
-        if (!$comment) {
-            return $this->error('评论不存在', 404);
+        [$comment, $cerr] = $this->findAccountComment($acc, $commentId);
+        if ($cerr) {
+            return $cerr;
         }
         $text = trim((string)$request->input('text', $request->input('replyText', '')));
         if ($text === '') {
@@ -724,6 +740,124 @@ class YouTubeController extends Controller
             ], '已回复');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /**
+     * AI 生成 YouTube 评论回复（不落库、不发到平台；前端确认后再调 reply）。
+     * 默认使用内置提示词 youtube_comment_reply，可传 templateId / prompt 覆盖。
+     */
+    public function aiReplyVideoComment(Request $request, string $id, string $commentId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        [$comment, $cerr] = $this->findAccountComment($acc, $commentId);
+        if ($cerr) {
+            return $cerr;
+        }
+        $video = null;
+        $localVid = (int)($comment['video_id'] ?? 0);
+        $ytVid = (string)($comment['youtube_video_id'] ?? '');
+        if ($localVid > 0) {
+            $video = DB::selectOne('SELECT * FROM youtube_videos WHERE id=? AND account_id=? LIMIT 1', [$localVid, (int)$acc['id']]);
+        }
+        if (!$video && $ytVid !== '') {
+            $video = DB::selectOne(
+                'SELECT * FROM youtube_videos WHERE youtube_video_id=? AND account_id=? LIMIT 1',
+                [$ytVid, (int)$acc['id']]
+            );
+        }
+
+        AiPromptCatalog::ensure();
+        $templateId = (int)$request->input('templateId', $request->input('template_id', 0));
+        $templateCode = trim((string)$request->input('templateCode', $request->input('code', 'youtube_comment_reply')));
+        if ($templateCode === '') {
+            $templateCode = 'youtube_comment_reply';
+        }
+        $tpl = null;
+        if ($templateId > 0) {
+            $tpl = DB::selectOne('SELECT * FROM ai_prompt_templates WHERE id=? AND enabled=1 LIMIT 1', [$templateId]);
+        }
+        if (!$tpl) {
+            $tpl = DB::selectOne('SELECT * FROM ai_prompt_templates WHERE code=? AND enabled=1 LIMIT 1', [$templateCode]);
+        }
+        $customPrompt = trim((string)$request->input('prompt', $request->input('aiPrompt', '')));
+        $promptTemplate = $customPrompt !== ''
+            ? $customPrompt
+            : trim((string)($tpl['content'] ?? ''));
+        if ($promptTemplate === '') {
+            return $this->error('未找到可用的 AI 提示词模板', 422);
+        }
+
+        $varsIn = $request->input('variables', []);
+        if (!is_array($varsIn)) {
+            $varsIn = [];
+        }
+        $commentText = trim((string)($comment['text_original'] ?? ''));
+        if ($commentText === '') {
+            $commentText = trim(strip_tags((string)($comment['text_display'] ?? '')));
+        }
+        $defaults = [
+            'comment_text' => $commentText,
+            'author' => (string)($comment['author_display_name'] ?? ''),
+            'video_title' => (string)($video['title'] ?? ''),
+            'video_desc' => mb_substr((string)($video['description'] ?? ''), 0, 800),
+            'channel_title' => (string)($acc['channel_title'] ?? $acc['nickname'] ?? ''),
+            'tone' => (string)($varsIn['tone'] ?? 'friendly and professional'),
+            'language' => (string)($varsIn['language'] ?? 'same as the comment (prefer English if unclear)'),
+        ];
+        foreach ($defaults as $k => $v) {
+            if (!isset($varsIn[$k]) || trim((string)$varsIn[$k]) === '') {
+                $varsIn[$k] = $v;
+            }
+        }
+        $declared = [];
+        if ($tpl) {
+            $decoded = json_decode((string)($tpl['variables_json'] ?? '[]'), true);
+            if (is_array($decoded)) {
+                $declared = $decoded;
+            }
+        }
+        $resolved = AiPromptHelper::resolveValues(
+            AiPromptHelper::normalizeVariables($declared, $promptTemplate),
+            $varsIn
+        );
+        $rendered = AiPromptHelper::render($promptTemplate, $resolved['values'], false);
+        $system = 'You write YouTube creator comment replies. Output the reply text alone — no quotes, no markdown, no explanation.';
+        try {
+            $result = AiClient::chat(
+                [
+                    ['role' => 'system', 'content' => $system],
+                    ['role' => 'user', 'content' => $rendered],
+                ],
+                ['operation' => 'youtube_comment_reply', 'timeout' => 45]
+            );
+            $reply = trim((string)($result['content'] ?? ''));
+            $reply = preg_replace('/^["“”\'`]+|["“”\'`]+$/u', '', $reply) ?? $reply;
+            $reply = trim(preg_replace('/\s+/u', ' ', $reply) ?? $reply);
+            if ($reply === '') {
+                return $this->error('AI 未返回有效回复', 422);
+            }
+            return $this->success([
+                'reply' => $reply,
+                'prompt' => $rendered,
+                'model' => isset($result['model']) ? (string)$result['model'] : null,
+                'template' => $tpl ? [
+                    'id' => (int)$tpl['id'],
+                    'code' => (string)($tpl['code'] ?? ''),
+                    'name' => (string)($tpl['name'] ?? ''),
+                ] : null,
+                'variables' => $resolved['values'],
+                'comment' => $this->mapComment($comment),
+                'video' => $video ? $this->mapVideo($video) : null,
+            ], '已生成回复草稿');
+        } catch (\Throwable $e) {
+            return $this->error('AI 生成失败：' . $e->getMessage(), 422);
         }
     }
 
