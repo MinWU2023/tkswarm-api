@@ -22,6 +22,7 @@ function tkswarm_register_commands(Scheduler $scheduler): Scheduler
     $scheduler->register(new App\Commands\EnvPackHealCommand());
     $scheduler->register(new App\Commands\NocaptchaDailyResetCommand());
     $scheduler->register(new App\Commands\VideoDeliveryAutoConfirmCommand());
+    $scheduler->register(new App\Commands\YouTubePublishDispatchCommand());
     $scheduler->register(new App\Commands\ScheduleRunCommand());
     return $scheduler;
 }

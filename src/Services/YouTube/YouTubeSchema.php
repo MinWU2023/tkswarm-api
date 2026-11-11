@@ -212,6 +212,7 @@ final class YouTubeSchema
         }
         $alters = [
             'material_id' => "ALTER TABLE youtube_publish_tasks ADD COLUMN material_id INT UNSIGNED NULL AFTER video_id",
+            'tiktok_account_id' => "ALTER TABLE youtube_publish_tasks ADD COLUMN tiktok_account_id INT UNSIGNED NULL AFTER material_id",
             'source_cdn_url' => "ALTER TABLE youtube_publish_tasks ADD COLUMN source_cdn_url VARCHAR(1000) NOT NULL DEFAULT '' AFTER local_file_path",
         ];
         foreach ($alters as $col => $sql) {
@@ -226,6 +227,13 @@ final class YouTubeSchema
             $idx = DB::select("SHOW INDEX FROM youtube_publish_tasks WHERE Key_name='idx_yt_pub_material'");
             if (!$idx) {
                 DB::query('ALTER TABLE youtube_publish_tasks ADD KEY idx_yt_pub_material (material_id)');
+            }
+        } catch (\Throwable $e) {
+        }
+        try {
+            $idx2 = DB::select("SHOW INDEX FROM youtube_publish_tasks WHERE Key_name='idx_yt_pub_tiktok_acc'");
+            if (!$idx2) {
+                DB::query('ALTER TABLE youtube_publish_tasks ADD KEY idx_yt_pub_tiktok_acc (tiktok_account_id)');
             }
         } catch (\Throwable $e) {
         }

@@ -828,12 +828,19 @@ class SeedMeta
             );
             DB::query("UPDATE navigation_menus SET parent_id=110, title='YouTube 账号', icon='youtube', path='', view='youtubeAccounts', subview='', sort_order=2, visible=1 WHERE id=781 OR view='youtubeAccounts'");
             DB::query("UPDATE navigation_menus SET parent_id=110, title='导入导出', icon='upload', path='', view='accounts', subview='io', sort_order=3, visible=1 WHERE id=112");
-            // Youtube发布：挂到 AI矩阵 → 视频向导，与发布视频等同级
+            // Youtube发布：挂到 AI矩阵 → 视频向导；列表 + 创建任务
             DB::query(
                 "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
-                 VALUES (782, 410, 'Youtube发布', 'youtube', '', 'youtubeSync', '', 7, 1)"
+                 VALUES (782, 410, 'Youtube发布', 'youtube', '', 'youtubeSync', 'list', 7, 1)"
             );
-            DB::query("UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='', sort_order=7, visible=1 WHERE id=782 OR view='youtubeSync'");
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='list', sort_order=7, visible=1 WHERE id=782");
+            DB::query(
+                "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (783, 410, '创建Youtube发布', 'plus', '', 'youtubeSync', 'create', 8, 1)"
+            );
+            DB::query("UPDATE navigation_menus SET parent_id=410, title='创建Youtube发布', icon='plus', path='', view='youtubeSync', subview='create', sort_order=8, visible=1 WHERE id=783 OR (view='youtubeSync' AND subview='create')");
+            // 兼容旧「同步发布」直挂开发管理的残留
+            DB::query("UPDATE navigation_menus SET visible=0 WHERE parent_id=820 AND view='youtubeSync'");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='帮助文档', icon='book', path='', view='helpDocs', subview='', sort_order=1, visible=1 WHERE id=680");
             DB::query("UPDATE navigation_menus SET parent_id=830, title='工单处理', icon='ticket', path='', view='tickets', subview='', sort_order=2, visible=1 WHERE id=690");
             // 兼容：旧「权限管理中台 / 权限与角色中台」归并到用户角色

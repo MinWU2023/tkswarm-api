@@ -713,17 +713,18 @@ class PermissionCatalog
     private static function ensureYouTubePerms(): void
     {
         $menus = [
-            [780, 'YouTube 开发配置', 'youtubeConfig'],
-            [781, 'YouTube 账号', 'youtubeAccounts'],
-            [782, 'Youtube发布', 'youtubeSync'],
+            [780, 'YouTube 开发配置', 'youtubeConfig', ''],
+            [781, 'YouTube 账号', 'youtubeAccounts', ''],
+            [782, 'Youtube发布', 'youtubeSync', 'list'],
+            [783, '创建Youtube发布', 'youtubeSync', 'create'],
         ];
-        foreach ($menus as [$id, $title, $view]) {
+        foreach ($menus as [$id, $title, $view, $subview]) {
             try {
                 MenuPermissionService::syncOne([
                     'id' => $id,
                     'title' => $title,
                     'view' => $view,
-                    'subview' => '',
+                    'subview' => $subview,
                     'permission_code' => '',
                 ]);
             } catch (\Throwable $e) {
@@ -739,7 +740,10 @@ class PermissionCatalog
         // Youtube发布挂到「AI矩阵 → 视频向导」(parent 410)
         try {
             DB::query(
-                "UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='', sort_order=7, visible=1 WHERE id=782 OR view='youtubeSync'"
+                "UPDATE navigation_menus SET parent_id=410, title='Youtube发布', icon='youtube', path='', view='youtubeSync', subview='list', sort_order=7, visible=1 WHERE id=782"
+            );
+            DB::query(
+                "UPDATE navigation_menus SET parent_id=410, title='创建Youtube发布', icon='plus', path='', view='youtubeSync', subview='create', sort_order=8, visible=1 WHERE id=783 OR (view='youtubeSync' AND subview='create')"
             );
         } catch (\Throwable $e) {
         }
@@ -760,6 +764,7 @@ class PermissionCatalog
             'menu.780',
             'menu.781',
             'menu.782',
+            'menu.783',
         ]);
     }
 

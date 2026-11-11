@@ -211,6 +211,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::delete('/api/youtube/accounts/{id}', YouTubeController::class . '@deleteAccount');
     Router::post('/api/youtube/accounts/{id}/auth', YouTubeController::class . '@startAuth');
     Router::post('/api/youtube/accounts/{id}/refresh-token', YouTubeController::class . '@refreshAccountToken');
+    Router::get('/api/youtube/sync/tiktok-accounts', YouTubeController::class . '@listTikTokPublishAccounts');
     Router::get('/api/youtube/sync/materials', YouTubeController::class . '@listSyncMaterials');
     Router::post('/api/youtube/sync', YouTubeController::class . '@enqueueSync');
     Router::get('/api/youtube/publish-tasks', YouTubeController::class . '@listPublishTasks');

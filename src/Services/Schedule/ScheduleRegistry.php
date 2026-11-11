@@ -107,6 +107,15 @@ final class ScheduleRegistry
                 'args' => ['--days=3'],
                 'defaultEnabled' => true,
             ],
+            [
+                'key' => 'youtube_publish_dispatch',
+                'title' => 'Youtube 发布任务上传',
+                'description' => '扫描 pending 的 Youtube 发布任务，下载 TikTok 素材并上传到 YouTube',
+                'command' => 'youtube:publish-dispatch',
+                'cron' => '* * * * *',
+                'args' => ['--limit=5'],
+                'defaultEnabled' => true,
+            ],
         ];
     }
 

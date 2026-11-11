@@ -283,7 +283,54 @@ class YouTubeController extends Controller
     // TikTok → YouTube 同步
     // -------------------------------------------------------------------------
 
-    /** 可选已发布素材（含 CDN） */
+    /** 有已发布可上传素材的 TikTok 账号列表（创建任务第一步） */
+    public function listTikTokPublishAccounts(Request $request): Response
+    {
+        if ($deny = $this->denyUnlessCanManage()) {
+            return $deny;
+        }
+        $keyword = trim((string)$request->get('keyword', ''));
+        $filters = [
+            "m.publish_status='published'",
+            'm.publish_account_id IS NOT NULL',
+            'm.publish_account_id > 0',
+            "(TRIM(IFNULL(m.file_path,''))<>'' OR TRIM(IFNULL(m.cdn_url,''))<>'' OR TRIM(IFNULL(m.github_asset_url,''))<>'')",
+        ];
+        $params = [];
+        DataScope::applyOwnerFilter('a.owner_id', $filters, $params);
+        if ($keyword !== '') {
+            $filters[] = '(a.username LIKE ? OR a.nickname LIKE ? OR CAST(a.id AS CHAR) LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($params, $like, $like, $like);
+        }
+        $where = 'WHERE ' . implode(' AND ', $filters);
+        $rows = DB::select(
+            "SELECT a.id, a.username, a.nickname, a.status,
+                    COUNT(DISTINCT m.id) AS video_count
+             FROM materials m
+             INNER JOIN accounts a ON a.id = m.publish_account_id
+             {$where}
+             GROUP BY a.id, a.username, a.nickname, a.status
+             ORDER BY video_count DESC, a.id DESC
+             LIMIT 500",
+            $params
+        ) ?: [];
+        return $this->success([
+            'items' => array_map(static function (array $r): array {
+                return [
+                    'id' => (int)$r['id'],
+                    'username' => (string)($r['username'] ?? ''),
+                    'nickname' => (string)($r['nickname'] ?? ''),
+                    'status' => (string)($r['status'] ?? ''),
+                    'videoCount' => (int)($r['video_count'] ?? 0),
+                    'label' => trim((string)(($r['nickname'] ?? '') !== '' ? $r['nickname'] : ($r['username'] ?? '')))
+                        ?: ('账号 #' . (int)$r['id']),
+                ];
+            }, $rows),
+        ]);
+    }
+
+    /** 可选已发布素材（含本地/CDN）；可按 TikTok 发布账号过滤 */
     public function listSyncMaterials(Request $request): Response
     {
         if ($deny = $this->denyUnlessCanManage()) {
@@ -292,13 +339,18 @@ class YouTubeController extends Controller
         $page = max(1, (int)$request->get('page', 1));
         $pageSize = min(100, max(1, (int)$request->get('pageSize', 20)));
         $keyword = trim((string)$request->get('keyword', ''));
+        $publishAccountId = (int)$request->get('publishAccountId', $request->get('tiktokAccountId', 0));
         \App\Services\Github\GithubReleaseCdnService::ensureSchema();
         $filters = ["m.publish_status='published'"];
         $params = [];
+        if ($publishAccountId > 0) {
+            $filters[] = 'm.publish_account_id=?';
+            $params[] = $publishAccountId;
+        }
         if ($keyword !== '') {
-            $filters[] = '(m.name LIKE ? OR m.share_title LIKE ? OR m.file_name LIKE ? OR CAST(m.id AS CHAR) LIKE ?)';
+            $filters[] = '(m.name LIKE ? OR m.share_title LIKE ? OR m.file_name LIKE ? OR m.platform_video_id LIKE ? OR CAST(m.id AS CHAR) LIKE ?)';
             $like = '%' . $keyword . '%';
-            array_push($params, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like);
         }
         DataScope::applyOwnerFilter('m.owner_id', $filters, $params);
         $where = 'WHERE ' . implode(' AND ', $filters);
@@ -308,12 +360,13 @@ class YouTubeController extends Controller
         $offset = ($page - 1) * $pageSize;
         $rows = DB::select(
             "SELECT m.id, m.name, m.file_name, m.file_path, m.mime_type, m.size_bytes,
-                    m.share_title, m.share_caption, m.publish_status,
+                    m.share_title, m.share_caption, m.publish_status, m.publish_account_id,
                     IFNULL(m.cdn_url,'') AS cdn_url, IFNULL(m.github_asset_url,'') AS github_asset_url,
-                    m.publish_account, m.created_at
+                    IFNULL(m.platform_video_id,'') AS platform_video_id,
+                    m.publish_account, m.created_at, m.platform_published_at
              FROM materials m
              {$where}
-             ORDER BY m.id DESC
+             ORDER BY COALESCE(m.platform_published_at, m.created_at) DESC, m.id DESC
              LIMIT {$pageSize} OFFSET {$offset}",
             $params
         ) ?: [];
@@ -324,6 +377,7 @@ class YouTubeController extends Controller
                     $cdn = trim((string)($r['github_asset_url'] ?? ''));
                 }
                 $local = trim((string)($r['file_path'] ?? ''));
+                $hasLocal = $local !== '' && is_file($local);
                 return [
                     'id' => (int)$r['id'],
                     'name' => (string)($r['name'] ?? ''),
@@ -331,24 +385,28 @@ class YouTubeController extends Controller
                     'title' => (string)(($r['share_title'] ?? '') !== '' ? $r['share_title'] : ($r['name'] ?? '')),
                     'caption' => (string)($r['share_caption'] ?? ''),
                     'cdnUrl' => $cdn,
-                    'hasLocalFile' => $local !== '' && is_file($local),
+                    'hasLocalFile' => $hasLocal,
                     'hasCdn' => $cdn !== '',
+                    'uploadable' => $hasLocal || $cdn !== '',
                     'publishStatus' => (string)($r['publish_status'] ?? ''),
-                    'platformVideoId' => '',
+                    'platformVideoId' => (string)($r['platform_video_id'] ?? ''),
+                    'publishAccountId' => (int)($r['publish_account_id'] ?? 0),
                     'publishAccount' => (string)($r['publish_account'] ?? ''),
                     'sizeBytes' => (int)($r['size_bytes'] ?? 0),
                     'createdAt' => (string)($r['created_at'] ?? ''),
+                    'postedAt' => (string)($r['platform_published_at'] ?? ''),
                 ];
             }, $rows),
             'total' => $total,
             'page' => $page,
             'pages' => $pages,
             'pageSize' => $pageSize,
+            'publishAccountId' => $publishAccountId,
         ]);
     }
 
     /**
-     * 入队：素材 × YouTube 账号 → youtube_publish_tasks，并可立即执行。
+     * 创建任务：素材 × YouTube 账号 → youtube_publish_tasks（默认仅入队，由计划任务上传）。
      */
     public function enqueueSync(Request $request): Response
     {
@@ -367,15 +425,18 @@ class YouTubeController extends Controller
         $materialIds = array_values(array_unique(array_filter(array_map('intval', $materialIds))));
         $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds))));
         if (!$materialIds || !$accountIds) {
-            return $this->error('请选择素材与 YouTube 账号', 422);
+            return $this->error('请选择 TikTok 视频与 YouTube 账号', 422);
         }
+        $tiktokAccountId = (int)$request->input('tiktokAccountId', $request->input('publishAccountId', 0));
         $privacy = strtolower(trim((string)$request->input('privacyStatus', $request->input('privacy_status', 'unlisted'))));
         if (!in_array($privacy, ['public', 'unlisted', 'private'], true)) {
             $privacy = 'unlisted';
         }
         $force = filter_var($request->input('force', false), FILTER_VALIDATE_BOOLEAN);
-        $runNow = filter_var($request->input('runNow', true), FILTER_VALIDATE_BOOLEAN);
+        // 默认不立即上传：交给 php artisan youtube:publish-dispatch
+        $runNow = filter_var($request->input('runNow', false), FILTER_VALIDATE_BOOLEAN);
         $ownerId = DataScope::writeOwnerId();
+        $taskName = trim((string)$request->input('name', $request->input('taskName', '')));
 
         $created = [];
         $skipped = [];
@@ -384,7 +445,7 @@ class YouTubeController extends Controller
         foreach ($materialIds as $mid) {
             $mat = DB::selectOne(
                 'SELECT id, name, file_path, file_name, mime_type, size_bytes, share_title, share_caption,
-                        IFNULL(cdn_url,\'\') AS cdn_url, IFNULL(github_asset_url,\'\') AS github_asset_url
+                        publish_account_id, IFNULL(cdn_url,\'\') AS cdn_url, IFNULL(github_asset_url,\'\') AS github_asset_url
                  FROM materials WHERE id=?',
                 [$mid]
             );
@@ -392,6 +453,12 @@ class YouTubeController extends Controller
                 $errors[] = ['materialId' => $mid, 'message' => '素材不存在'];
                 continue;
             }
+            $matTikTokId = (int)($mat['publish_account_id'] ?? 0);
+            if ($tiktokAccountId > 0 && $matTikTokId > 0 && $matTikTokId !== $tiktokAccountId) {
+                $errors[] = ['materialId' => $mid, 'message' => '素材不属于所选 TikTok 账号'];
+                continue;
+            }
+            $useTikTokId = $tiktokAccountId > 0 ? $tiktokAccountId : $matTikTokId;
             $title = trim((string)(($mat['share_title'] ?? '') !== '' ? $mat['share_title'] : ($mat['name'] ?? '')));
             if ($title === '') {
                 $title = 'TikTok #' . $mid;
@@ -429,21 +496,26 @@ class YouTubeController extends Controller
                         continue;
                     }
                 }
+                $name = $taskName !== ''
+                    ? mb_substr($taskName . ' · ' . $title, 0, 255)
+                    : mb_substr('Youtube发布 · ' . $title . ' → #' . $aid, 0, 255);
                 $reqJson = json_encode([
                     'source' => 'tiktok_sync',
                     'materialId' => $mid,
+                    'tiktokAccountId' => $useTikTokId,
                     'sourceCdnUrl' => $cdn,
                 ], JSON_UNESCAPED_UNICODE);
                 DB::query(
                     "INSERT INTO youtube_publish_tasks
-                     (owner_id, account_id, material_id, name, status, title, description, tags_json, category_id,
+                     (owner_id, account_id, material_id, tiktok_account_id, name, status, title, description, tags_json, category_id,
                       privacy_status, made_for_kids, local_file_path, source_cdn_url, mime_type, file_size, request_json)
-                     VALUES (?,?,?,?, 'pending', ?, ?, '[]', '22', ?, 0, ?, ?, ?, ?, ?)",
+                     VALUES (?,?,?,?,?, 'pending', ?, ?, '[]', '22', ?, 0, ?, ?, ?, ?, ?)",
                     [
                         $ownerId,
                         $aid,
                         $mid,
-                        mb_substr('同步 · ' . $title . ' → #' . $aid, 0, 255),
+                        $useTikTokId > 0 ? $useTikTokId : null,
+                        $name,
                         mb_substr($title, 0, 255),
                         $desc,
                         $privacy,
@@ -479,7 +551,8 @@ class YouTubeController extends Controller
             'createdCount' => count($created),
             'skippedCount' => count($skipped),
             'errorCount' => count($errors),
-        ], '同步任务已处理');
+            'runNow' => $runNow,
+        ], $runNow ? '同步任务已处理' : '已创建发布任务，等待计划任务上传');
     }
 
     public function listPublishTasks(Request $request): Response
@@ -508,9 +581,11 @@ class YouTubeController extends Controller
         $page = min($page, $pages);
         $offset = ($page - 1) * $pageSize;
         $rows = DB::select(
-            "SELECT t.*, a.channel_title, a.channel_id, a.nickname AS account_nickname
+            "SELECT t.*, a.channel_title, a.channel_id, a.nickname AS account_nickname,
+                    ta.username AS tiktok_username, ta.nickname AS tiktok_nickname
              FROM youtube_publish_tasks t
              LEFT JOIN youtube_accounts a ON a.id=t.account_id
+             LEFT JOIN accounts ta ON ta.id=t.tiktok_account_id
              {$where}
              ORDER BY t.id DESC
              LIMIT {$pageSize} OFFSET {$offset}",
@@ -591,13 +666,18 @@ class YouTubeController extends Controller
     /** @param array<string,mixed> $row */
     private function mapPublishTask(array $row): array
     {
+        $tikTokNick = trim((string)($row['tiktok_nickname'] ?? ''));
+        $tikTokUser = trim((string)($row['tiktok_username'] ?? ''));
         return [
             'id' => (int)($row['id'] ?? 0),
             'accountId' => (int)($row['account_id'] ?? 0),
             'materialId' => (int)($row['material_id'] ?? 0),
+            'tiktokAccountId' => (int)($row['tiktok_account_id'] ?? 0),
+            'tiktokAccountLabel' => $tikTokNick !== '' ? $tikTokNick : ($tikTokUser !== '' ? $tikTokUser : ''),
             'name' => (string)($row['name'] ?? ''),
             'status' => (string)($row['status'] ?? ''),
             'title' => (string)($row['title'] ?? ''),
+            'description' => (string)($row['description'] ?? ''),
             'privacyStatus' => (string)($row['privacy_status'] ?? ''),
             'progressPercent' => (int)($row['progress_percent'] ?? 0),
             'youtubeVideoId' => (string)($row['youtube_video_id'] ?? ''),
