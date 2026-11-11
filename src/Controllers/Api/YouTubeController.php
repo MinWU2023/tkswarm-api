@@ -7,8 +7,10 @@ use App\Core\Controller;
 use App\Core\Database\DB;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Auth\RBAC;
 use App\Services\CompanyService;
 use App\Services\DataScope;
+use App\Services\PermissionCatalog;
 use App\Services\YouTube\YouTubeApiService;
 use App\Services\YouTube\YouTubeOAuthConfigService;
 use App\Services\YouTube\YouTubeSchema;
@@ -18,6 +20,21 @@ use App\Services\YouTube\YouTubeSchema;
  */
 class YouTubeController extends Controller
 {
+    /** @return list<string> */
+    private function heldPermissionCodes(): array
+    {
+        $user = DataScope::loginUser() ?: ($GLOBALS['auth_user'] ?? null);
+        $uid = (int)($user['id'] ?? 0);
+        if ($uid <= 0) {
+            return [];
+        }
+        try {
+            return RBAC::userPermissionCodes($uid);
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
     /** YouTube 开发配置：超管 / 运营管理 / system.youtube */
     private function denyUnlessCanConfig(): ?Response
     {
@@ -25,15 +42,17 @@ class YouTubeController extends Controller
         if (DataScope::isLoginSuper() || DataScope::isLoginOpsAdmin()) {
             return null;
         }
-        $perms = $GLOBALS['auth_permissions'] ?? [];
-        if (is_array($perms) && (in_array('*', $perms, true) || in_array('admin', $perms, true)
-            || in_array('system.youtube', $perms, true))) {
+        $perms = $this->heldPermissionCodes();
+        if (RBAC::matchesHeldCode('system.youtube', $perms)
+            || in_array('*', $perms, true)
+            || in_array('admin', $perms, true)
+            || in_array('menu.780', $perms, true)) {
             return null;
         }
         return $this->error('无权管理 YouTube 开发配置', 403);
     }
 
-    /** YouTube 账号与发布：超管 / 运营管理 / 运营专员 / 企业客户 / system.youtube.use */
+    /** YouTube 账号与发布 / 数据面板：超管 / 运营管理 / 运营专员 / 企业客户 / 权限节点 */
     private function denyUnlessCanUse(): ?Response
     {
         DataScope::bootFromGlobals();
@@ -41,23 +60,10 @@ class YouTubeController extends Controller
             || DataScope::isOperator() || DataScope::isEnterpriseCustomer()) {
             return null;
         }
-        $perms = $GLOBALS['auth_permissions'] ?? [];
-        if (is_array($perms) && (in_array('*', $perms, true) || in_array('admin', $perms, true)
-            || in_array('system.youtube.use', $perms, true)
-            || in_array('system.youtube.panel', $perms, true)
-            || in_array('system.youtube', $perms, true)
-            || in_array('youtube.manage', $perms, true)
-            || in_array('menu.781', $perms, true)
-            || in_array('menu.782', $perms, true)
-            || in_array('menu.783', $perms, true))) {
-            return null;
-        }
-        // 兼容角色勾了权限 id 而非 code：走 PermissionCatalog 别名
-        if (is_array($perms) && class_exists(\App\Services\PermissionCatalog::class)) {
-            foreach (['system.youtube.use', 'system.youtube.panel', 'system.youtube', 'youtube.manage'] as $code) {
-                if (\App\Services\PermissionCatalog::matchesCode($code, $perms)) {
-                    return null;
-                }
+        $perms = $this->heldPermissionCodes();
+        foreach (['system.youtube.use', 'system.youtube.panel', 'system.youtube', 'youtube.manage', 'menu.781', 'menu.782', 'menu.783'] as $code) {
+            if (RBAC::matchesHeldCode($code, $perms) || PermissionCatalog::matchesCode($code, $perms)) {
+                return null;
             }
         }
         return $this->error('无权使用 YouTube 账号与发布', 403);
