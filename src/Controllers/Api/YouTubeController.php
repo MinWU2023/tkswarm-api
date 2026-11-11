@@ -335,37 +335,45 @@ class YouTubeController extends Controller
             "m.publish_status='published'",
             'm.publish_account_id IS NOT NULL',
             'm.publish_account_id > 0',
-            "(TRIM(IFNULL(m.file_path,''))<>'' OR TRIM(IFNULL(m.cdn_url,''))<>'' OR TRIM(IFNULL(m.github_asset_url,''))<>'')",
         ];
         $params = [];
-        DataScope::applyOwnerFilter('a.owner_id', $filters, $params);
+        // 与账号列表同范围（超管/运营管理可见范围内账号），勿用 applyOwnerFilter 误伤
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
         if ($keyword !== '') {
             $filters[] = '(a.username LIKE ? OR a.nickname LIKE ? OR CAST(a.id AS CHAR) LIKE ?)';
             $like = '%' . $keyword . '%';
             array_push($params, $like, $like, $like);
         }
         $where = 'WHERE ' . implode(' AND ', $filters);
+        $uploadableExpr = "(TRIM(IFNULL(m.file_path,''))<>'' OR TRIM(IFNULL(m.cdn_url,''))<>'' OR TRIM(IFNULL(m.github_asset_url,''))<>'')";
         $rows = DB::select(
-            "SELECT a.id, a.username, a.nickname, a.status,
-                    COUNT(DISTINCT m.id) AS video_count
+            "SELECT a.id, a.username, a.nickname, a.status, a.owner_id, a.company_id, a.industry_id,
+                    COUNT(DISTINCT m.id) AS video_count,
+                    COUNT(DISTINCT CASE WHEN {$uploadableExpr} THEN m.id END) AS uploadable_count
              FROM materials m
              INNER JOIN accounts a ON a.id = m.publish_account_id
              {$where}
-             GROUP BY a.id, a.username, a.nickname, a.status
-             ORDER BY video_count DESC, a.id DESC
+             GROUP BY a.id, a.username, a.nickname, a.status, a.owner_id, a.company_id, a.industry_id
+             HAVING video_count > 0
+             ORDER BY uploadable_count DESC, video_count DESC, a.id DESC
              LIMIT 500",
             $params
         ) ?: [];
         return $this->success([
             'items' => array_map(static function (array $r): array {
+                $label = trim((string)(($r['nickname'] ?? '') !== '' ? $r['nickname'] : ($r['username'] ?? '')))
+                    ?: ('账号 #' . (int)$r['id']);
+                $uploadable = (int)($r['uploadable_count'] ?? 0);
+                $total = (int)($r['video_count'] ?? 0);
                 return [
                     'id' => (int)$r['id'],
                     'username' => (string)($r['username'] ?? ''),
                     'nickname' => (string)($r['nickname'] ?? ''),
                     'status' => (string)($r['status'] ?? ''),
-                    'videoCount' => (int)($r['video_count'] ?? 0),
-                    'label' => trim((string)(($r['nickname'] ?? '') !== '' ? $r['nickname'] : ($r['username'] ?? '')))
-                        ?: ('账号 #' . (int)$r['id']),
+                    'videoCount' => $total,
+                    'uploadableCount' => $uploadable,
+                    'label' => $label,
+                    'optionLabel' => $label . ' · 可上传 ' . $uploadable . '/' . $total,
                 ];
             }, $rows),
         ]);
@@ -382,7 +390,11 @@ class YouTubeController extends Controller
         $keyword = trim((string)$request->get('keyword', ''));
         $publishAccountId = (int)$request->get('publishAccountId', $request->get('tiktokAccountId', 0));
         \App\Services\Github\GithubReleaseCdnService::ensureSchema();
-        $filters = ["m.publish_status='published'"];
+        $filters = [
+            "m.publish_status='published'",
+            'm.publish_account_id IS NOT NULL',
+            'm.publish_account_id > 0',
+        ];
         $params = [];
         if ($publishAccountId > 0) {
             $filters[] = 'm.publish_account_id=?';
@@ -393,9 +405,11 @@ class YouTubeController extends Controller
             $like = '%' . $keyword . '%';
             array_push($params, $like, $like, $like, $like, $like);
         }
-        DataScope::applyOwnerFilter('m.owner_id', $filters, $params);
+        // 按发布账号可见范围过滤（勿按素材 owner_id，否则运营看不见企业客户素材）
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
         $where = 'WHERE ' . implode(' AND ', $filters);
-        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM materials m {$where}", $params)['c'] ?? 0);
+        $from = 'FROM materials m INNER JOIN accounts a ON a.id = m.publish_account_id';
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c {$from} {$where}", $params)['c'] ?? 0);
         $pages = max(1, (int)ceil($total / $pageSize));
         $page = min($page, $pages);
         $offset = ($page - 1) * $pageSize;
@@ -405,7 +419,7 @@ class YouTubeController extends Controller
                     IFNULL(m.cdn_url,'') AS cdn_url, IFNULL(m.github_asset_url,'') AS github_asset_url,
                     IFNULL(m.platform_video_id,'') AS platform_video_id,
                     m.publish_account, m.created_at, m.platform_published_at
-             FROM materials m
+             {$from}
              {$where}
              ORDER BY COALESCE(m.platform_published_at, m.created_at) DESC, m.id DESC
              LIMIT {$pageSize} OFFSET {$offset}",
@@ -479,6 +493,13 @@ class YouTubeController extends Controller
         $ownerId = DataScope::writeOwnerId();
         $taskName = trim((string)$request->input('name', $request->input('taskName', '')));
 
+        if ($tiktokAccountId > 0) {
+            $ttAcc = DB::selectOne('SELECT * FROM accounts WHERE id=?', [$tiktokAccountId]);
+            if (!$ttAcc || !DataScope::isAccountRowVisible($ttAcc)) {
+                return $this->error('无权使用该 TikTok 账号', 403);
+            }
+        }
+
         $created = [];
         $skipped = [];
         $errors = [];
@@ -500,6 +521,13 @@ class YouTubeController extends Controller
                 continue;
             }
             $useTikTokId = $tiktokAccountId > 0 ? $tiktokAccountId : $matTikTokId;
+            if ($useTikTokId > 0) {
+                $ttRow = DB::selectOne('SELECT * FROM accounts WHERE id=?', [$useTikTokId]);
+                if (!$ttRow || !DataScope::isAccountRowVisible($ttRow)) {
+                    $errors[] = ['materialId' => $mid, 'message' => '无权使用该素材所属 TikTok 账号'];
+                    continue;
+                }
+            }
             $title = trim((string)(($mat['share_title'] ?? '') !== '' ? $mat['share_title'] : ($mat['name'] ?? '')));
             if ($title === '') {
                 $title = 'TikTok #' . $mid;

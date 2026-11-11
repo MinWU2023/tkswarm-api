@@ -1837,7 +1837,51 @@ class AccountController extends Controller
              ORDER BY t.last_synced_at DESC, t.id DESC',
             [$aid]
         ) ?: [];
-        return $this->success($rows);
+        // 二次去重：同一个作品被不同来源解析出两个 video_id 时（例如 123 / 123_photo、
+        // 或主页链接与 Studio 行各自生成了一个 ID），按「视频 URL 数字 ID + 封面 + 描述」
+        // 归一化后合并，只保留最新一行，避免封面标题完全相同的两行同时展示。
+        $seen = [];
+        $out = [];
+        foreach ($rows as $row) {
+            $key = self::normalizedVideoKey($row);
+            if ($key === '') {
+                $out[] = $row;
+                continue;
+            }
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $row;
+        }
+        return $this->success($out);
+    }
+
+    /**
+     * 生成视频行的归一化去重键：优先真实数字 video_id，其次标题+封面。
+     * 同一个作品在不同来源里 video_id 可能带后缀或干脆缺失，但数字 ID / 封面 / 描述是一致的。
+     *
+     * @param array<string,mixed> $row
+     */
+    private static function normalizedVideoKey(array $row): string
+    {
+        $videoId = trim((string)($row['video_id'] ?? ''));
+        $url = trim((string)($row['video_url'] ?? ''));
+        $numId = '';
+        if ($videoId !== '' && preg_match('/(\d{8,})/', $videoId, $m)) {
+            $numId = $m[1];
+        } elseif ($url !== '' && preg_match('#/(?:video|photo)/(\d{8,})#', $url, $m)) {
+            $numId = $m[1];
+        }
+        if ($numId !== '') {
+            return 'id:' . $numId;
+        }
+        $title = mb_strtolower(trim(preg_replace('/\s+/u', ' ', (string)($row['description'] ?? '')) ?? ''));
+        $thumb = trim((string)($row['thumbnail_url'] ?? ''));
+        if ($title === '' && $thumb === '') {
+            return '';
+        }
+        return 'meta:' . sha1($title . '|' . $thumb);
     }
 
     /**
@@ -3721,6 +3765,26 @@ class AccountController extends Controller
             AccountBanService::ensureSchema();
         } catch (\Throwable $e) {
         }
+    }
+
+    /**
+     * 归一化平台视频 ID。
+     * 各来源给过来的可能是纯数字 ID、`<id>_photo`、带查询串的 URL 等，
+     * 不统一就会出现「同一个作品两个 video_id」→ 列表里两行封面标题一样。
+     */
+    public static function normalizeVideoId(string $rawId, string $videoUrl = ''): string
+    {
+        $id = trim($rawId);
+        if ($id !== '' && preg_match('/^(\d{8,})(?:[_-].*)?$/', $id, $m)) {
+            return $m[1];
+        }
+        if ($videoUrl !== '' && preg_match('#/(?:video|photo)/(\d{8,})#', $videoUrl, $m)) {
+            return $m[1];
+        }
+        if ($id !== '' && preg_match('/(\d{8,})/', $id, $m)) {
+            return $m[1];
+        }
+        return $id;
     }
 
     /**

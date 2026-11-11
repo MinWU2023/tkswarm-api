@@ -347,7 +347,10 @@ class NodeBridgeController extends Controller
                 if (!is_array($v)) {
                     continue;
                 }
-                $vid = (string)($v['videoId'] ?? $v['video_id'] ?? '');
+                $vid = self::normalizeVideoId(
+                    (string)($v['videoId'] ?? $v['video_id'] ?? ''),
+                    (string)($v['videoUrl'] ?? $v['video_url'] ?? '')
+                );
                 if ($vid === '') {
                     continue;
                 }
@@ -745,6 +748,7 @@ class NodeBridgeController extends Controller
                 // 同步到 tiktok_videos，便于「最近同步视频」展示
                 if ($videoId !== '') {
                     try {
+                        $normVideoId = \App\Controllers\Api\AccountController::normalizeVideoId($videoId, $videoUrl);
                         DB::query(
                             "INSERT INTO tiktok_videos(account_id, video_id, video_url, description, thumbnail_url, last_synced_at)
                              VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
@@ -755,7 +759,7 @@ class NodeBridgeController extends Controller
                                 last_synced_at=CURRENT_TIMESTAMP",
                             [
                                 $aid,
-                                mb_substr($videoId, 0, 191),
+                                mb_substr($normVideoId, 0, 191),
                                 mb_substr($videoUrl, 0, 1000),
                                 $title,
                                 mb_substr($coverUrl, 0, 1000),
