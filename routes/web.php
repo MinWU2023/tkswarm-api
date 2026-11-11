@@ -215,6 +215,9 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/youtube/sync/materials', YouTubeController::class . '@listSyncMaterials');
     Router::post('/api/youtube/sync', YouTubeController::class . '@enqueueSync');
     Router::get('/api/youtube/publish-tasks', YouTubeController::class . '@listPublishTasks');
+    Router::put('/api/youtube/publish-tasks/{id}', YouTubeController::class . '@updatePublishTask');
+    Router::post('/api/youtube/publish-tasks/{id}', YouTubeController::class . '@updatePublishTask');
+    Router::delete('/api/youtube/publish-tasks/{id}', YouTubeController::class . '@deletePublishTask');
     Router::post('/api/youtube/publish-tasks/{id}/run', YouTubeController::class . '@runPublishTask');
 
     // 开发管理 · 日私信权重规则（仅超管）

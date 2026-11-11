@@ -704,6 +704,93 @@ class YouTubeController extends Controller
         }
     }
 
+    /** 编辑发布任务（名称/标题/描述/可见性）；上传中不可改 */
+    public function updatePublishTask(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        YouTubeSchema::ensureSchema();
+        $taskId = (int)$id;
+        $task = DB::selectOne('SELECT * FROM youtube_publish_tasks WHERE id=?', [$taskId]);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        $status = (string)($task['status'] ?? '');
+        if ($status === 'running') {
+            return $this->error('上传中的任务不可编辑', 422);
+        }
+        $all = $request->all();
+        $name = array_key_exists('name', $all) ? trim((string)$all['name']) : (string)($task['name'] ?? '');
+        $title = array_key_exists('title', $all) ? trim((string)$all['title']) : (string)($task['title'] ?? '');
+        $description = array_key_exists('description', $all)
+            ? (string)$all['description']
+            : (string)($task['description'] ?? '');
+        $privacy = array_key_exists('privacyStatus', $all)
+            ? strtolower(trim((string)$all['privacyStatus']))
+            : (array_key_exists('privacy_status', $all)
+                ? strtolower(trim((string)$all['privacy_status']))
+                : (string)($task['privacy_status'] ?? 'unlisted'));
+        if (!in_array($privacy, ['public', 'unlisted', 'private'], true)) {
+            $privacy = (string)($task['privacy_status'] ?? 'unlisted');
+        }
+        if ($title === '') {
+            return $this->error('标题不能为空', 422);
+        }
+        $newStatus = $status;
+        $clearError = false;
+        // 失败/草稿编辑后回到待执行，便于计划任务或手动重跑
+        if (in_array($status, ['failed', 'error', 'draft'], true)) {
+            $newStatus = 'pending';
+            $clearError = true;
+        }
+        DB::query(
+            "UPDATE youtube_publish_tasks
+             SET name=?, title=?, description=?, privacy_status=?, status=?,
+                 error_message=IF(?, '', error_message),
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE id=?",
+            [
+                mb_substr($name !== '' ? $name : $title, 0, 255),
+                mb_substr($title, 0, 255),
+                $description,
+                $privacy,
+                $newStatus,
+                $clearError ? 1 : 0,
+                $taskId,
+            ]
+        );
+        $fresh = DB::selectOne(
+            "SELECT t.*, a.channel_title, a.channel_id, a.nickname AS account_nickname,
+                    ta.username AS tiktok_username, ta.nickname AS tiktok_nickname
+             FROM youtube_publish_tasks t
+             LEFT JOIN youtube_accounts a ON a.id=t.account_id
+             LEFT JOIN accounts ta ON ta.id=t.tiktok_account_id
+             WHERE t.id=?",
+            [$taskId]
+        );
+        return $this->success(['task' => $this->mapPublishTask($fresh ?: $task)], '任务已更新');
+    }
+
+    /** 删除发布任务；上传中不可删 */
+    public function deletePublishTask(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        YouTubeSchema::ensureSchema();
+        $taskId = (int)$id;
+        $task = DB::selectOne('SELECT id, status FROM youtube_publish_tasks WHERE id=?', [$taskId]);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        if ((string)($task['status'] ?? '') === 'running') {
+            return $this->error('上传中的任务不可删除', 422);
+        }
+        DB::query('DELETE FROM youtube_publish_tasks WHERE id=?', [$taskId]);
+        return $this->success(['id' => $taskId], '已删除');
+    }
+
     // -------------------------------------------------------------------------
     // mappers
     // -------------------------------------------------------------------------
