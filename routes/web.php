@@ -220,6 +220,14 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::delete('/api/youtube/accounts/{id}', YouTubeController::class . '@deleteAccount');
     Router::post('/api/youtube/accounts/{id}/auth', YouTubeController::class . '@startAuth');
     Router::post('/api/youtube/accounts/{id}/refresh-token', YouTubeController::class . '@refreshAccountToken');
+    Router::get('/api/youtube/accounts/{id}/videos', YouTubeController::class . '@listAccountVideos');
+    Router::post('/api/youtube/accounts/{id}/videos/pull', YouTubeController::class . '@pullAccountVideos');
+    Router::get('/api/youtube/accounts/{id}/videos/{videoId}', YouTubeController::class . '@getAccountVideo');
+    Router::delete('/api/youtube/accounts/{id}/videos/{videoId}', YouTubeController::class . '@deleteAccountVideo');
+    Router::get('/api/youtube/accounts/{id}/videos/{videoId}/comments', YouTubeController::class . '@listVideoComments');
+    Router::post('/api/youtube/accounts/{id}/videos/{videoId}/comments/pull', YouTubeController::class . '@pullVideoComments');
+    Router::post('/api/youtube/accounts/{id}/comments/{commentId}/reply', YouTubeController::class . '@replyVideoComment');
+    Router::delete('/api/youtube/accounts/{id}/comments/{commentId}', YouTubeController::class . '@deleteVideoComment');
     Router::get('/api/youtube/sync/tiktok-accounts', YouTubeController::class . '@listTikTokPublishAccounts');
     Router::get('/api/youtube/sync/materials', YouTubeController::class . '@listSyncMaterials');
     Router::post('/api/youtube/sync', YouTubeController::class . '@enqueueSync');

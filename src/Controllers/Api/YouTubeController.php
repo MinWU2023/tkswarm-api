@@ -415,6 +415,408 @@ class YouTubeController extends Controller
     }
 
     // -------------------------------------------------------------------------
+    // 频道内容 / 评论（数据面板）
+    // -------------------------------------------------------------------------
+
+    /** @return array{0:?array<string,mixed>,1:?Response} */
+    private function requireAccount(int $aid): array
+    {
+        if ($aid <= 0) {
+            return [null, $this->error('账号无效', 422)];
+        }
+        YouTubeSchema::ensureSchema();
+        $row = DB::selectOne('SELECT * FROM youtube_accounts WHERE id=?', [$aid]);
+        if (!$row) {
+            return [null, $this->error('账号不存在', 404)];
+        }
+        return [$row, null];
+    }
+
+    public function listAccountVideos(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $aid = (int)$acc['id'];
+        $keyword = trim((string)$request->get('keyword', ''));
+        $page = max(1, (int)$request->get('page', 1));
+        $pageSize = max(1, min(100, (int)$request->get('pageSize', 20)));
+        $filters = ['account_id=?', "status<>'deleted'"];
+        $params = [$aid];
+        if ($keyword !== '') {
+            $filters[] = '(title LIKE ? OR youtube_video_id LIKE ? OR description LIKE ?)';
+            $like = '%' . $keyword . '%';
+            array_push($params, $like, $like, $like);
+        }
+        $where = implode(' AND ', $filters);
+        $total = (int)(DB::selectOne("SELECT COUNT(*) AS c FROM youtube_videos WHERE {$where}", $params)['c'] ?? 0);
+        $pages = max(1, (int)ceil($total / $pageSize));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+        $offset = ($page - 1) * $pageSize;
+        $rows = DB::select(
+            "SELECT * FROM youtube_videos WHERE {$where}
+             ORDER BY COALESCE(published_at, created_at) DESC, id DESC
+             LIMIT {$pageSize} OFFSET {$offset}",
+            $params
+        ) ?: [];
+        return $this->success([
+            'account' => $this->mapAccount($acc),
+            'items' => array_map([$this, 'mapVideo'], $rows),
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'pages' => $pages,
+        ]);
+    }
+
+    public function pullAccountVideos(Request $request, string $id): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        try {
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $maxPages = max(1, min(40, (int)$request->input('maxPages', 10)));
+            $result = $svc->pullChannelVideos($maxPages);
+            return $this->success($result, '已拉取 ' . (int)($result['pulled'] ?? 0) . ' 条内容');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    public function getAccountVideo(Request $request, string $id, string $videoId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $row = $this->findAccountVideo((int)$acc['id'], $videoId);
+        if (!$row) {
+            return $this->error('内容不存在', 404);
+        }
+        $refresh = (string)$request->get('refresh', '') === '1'
+            || (string)$request->get('sync', '') === '1';
+        if ($refresh && trim((string)($acc['refresh_token'] ?? '')) !== '') {
+            try {
+                $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+                $svc = new YouTubeApiService($acc);
+                $svc->pullVideoInfo((string)$row['youtube_video_id'], true);
+                $row = $this->findAccountVideo((int)$acc['id'], $videoId) ?: $row;
+            } catch (\Throwable $e) {
+                // 详情仍返回本地数据
+            }
+        }
+        return $this->success([
+            'account' => $this->mapAccount($acc),
+            'video' => $this->mapVideo($row),
+        ]);
+    }
+
+    public function deleteAccountVideo(Request $request, string $id, string $videoId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $row = $this->findAccountVideo((int)$acc['id'], $videoId);
+        if (!$row) {
+            return $this->error('内容不存在', 404);
+        }
+        $ytVid = trim((string)($row['youtube_video_id'] ?? ''));
+        if ($ytVid === '') {
+            return $this->error('缺少 YouTube 视频 ID', 422);
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        try {
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $svc->deleteVideo($ytVid);
+            return $this->success(['id' => (int)$row['id'], 'youtubeVideoId' => $ytVid], '已从 YouTube 删除');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    public function listVideoComments(Request $request, string $id, string $videoId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $video = $this->findAccountVideo((int)$acc['id'], $videoId);
+        if (!$video) {
+            return $this->error('内容不存在', 404);
+        }
+        $localVid = (int)$video['id'];
+        $ytVid = (string)($video['youtube_video_id'] ?? '');
+        $rows = DB::select(
+            "SELECT * FROM youtube_comments
+             WHERE account_id=? AND (video_id=? OR youtube_video_id=?)
+               AND IFNULL(moderation_status,'') NOT IN ('deleted')
+             ORDER BY parent_id ASC, COALESCE(published_at, created_at) DESC, id DESC
+             LIMIT 1000",
+            [(int)$acc['id'], $localVid, $ytVid]
+        ) ?: [];
+        $tops = [];
+        $replies = [];
+        foreach ($rows as $r) {
+            $mapped = $this->mapComment($r);
+            if ((int)($r['parent_id'] ?? 0) > 0) {
+                $pid = (int)$r['parent_id'];
+                if (!isset($replies[$pid])) {
+                    $replies[$pid] = [];
+                }
+                $replies[$pid][] = $mapped;
+            } else {
+                $tops[] = $mapped;
+            }
+        }
+        foreach ($tops as &$t) {
+            $t['replies'] = $replies[(int)$t['id']] ?? [];
+        }
+        unset($t);
+        return $this->success([
+            'items' => $tops,
+            'total' => count($tops),
+            'video' => $this->mapVideo($video),
+        ]);
+    }
+
+    public function pullVideoComments(Request $request, string $id, string $videoId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $video = $this->findAccountVideo((int)$acc['id'], $videoId);
+        if (!$video) {
+            return $this->error('内容不存在', 404);
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        try {
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $maxPages = max(1, min(20, (int)$request->input('maxPages', 5)));
+            $fetchAll = !empty($request->input('fetchAllReplies', true));
+            $result = $svc->pullComments((string)$video['youtube_video_id'], $maxPages, (bool)$fetchAll);
+            return $this->success($result, '评论已同步');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    public function replyVideoComment(Request $request, string $id, string $commentId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $cid = (int)$commentId;
+        $comment = DB::selectOne(
+            'SELECT * FROM youtube_comments WHERE id=? AND account_id=? LIMIT 1',
+            [$cid, (int)$acc['id']]
+        );
+        if (!$comment) {
+            // 也允许传 youtube_comment_id
+            $comment = DB::selectOne(
+                'SELECT * FROM youtube_comments WHERE youtube_comment_id=? AND account_id=? LIMIT 1',
+                [trim($commentId), (int)$acc['id']]
+            );
+        }
+        if (!$comment) {
+            return $this->error('评论不存在', 404);
+        }
+        $text = trim((string)$request->input('text', $request->input('replyText', '')));
+        if ($text === '') {
+            return $this->error('回复内容不能为空', 422);
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        $parentYt = trim((string)($comment['youtube_comment_id'] ?? ''));
+        // 若是回复的回复，仍挂到顶层 youtube_comment_id（API parentId 需顶层或该评论自身）
+        if ((int)($comment['parent_id'] ?? 0) > 0 && trim((string)($comment['parent_youtube_comment_id'] ?? '')) !== '') {
+            $parentYt = trim((string)$comment['parent_youtube_comment_id']);
+        }
+        try {
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $res = $svc->replyToComment($parentYt, $text);
+            return $this->success([
+                'reply' => $res,
+                'parentId' => (int)$comment['id'],
+            ], '已回复');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    public function deleteVideoComment(Request $request, string $id, string $commentId): Response
+    {
+        if ($deny = $this->denyUnlessCanUse()) {
+            return $deny;
+        }
+        [$acc, $err] = $this->requireAccount((int)$id);
+        if ($err) {
+            return $err;
+        }
+        $cid = (int)$commentId;
+        $comment = DB::selectOne(
+            'SELECT * FROM youtube_comments WHERE id=? AND account_id=? LIMIT 1',
+            [$cid, (int)$acc['id']]
+        );
+        if (!$comment) {
+            $comment = DB::selectOne(
+                'SELECT * FROM youtube_comments WHERE youtube_comment_id=? AND account_id=? LIMIT 1',
+                [trim($commentId), (int)$acc['id']]
+            );
+        }
+        if (!$comment) {
+            return $this->error('评论不存在', 404);
+        }
+        $ytCid = trim((string)($comment['youtube_comment_id'] ?? ''));
+        if ($ytCid === '') {
+            return $this->error('缺少评论平台 ID', 422);
+        }
+        if (trim((string)($acc['refresh_token'] ?? '')) === '') {
+            return $this->error('请先完成授权登录', 422);
+        }
+        try {
+            $acc = YouTubeOAuthConfigService::applyToAccountRow($acc);
+            $svc = new YouTubeApiService($acc);
+            $result = $svc->deleteComment($ytCid);
+            return $this->success($result, '已删除评论');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /** @return array<string,mixed>|null */
+    private function findAccountVideo(int $accountId, string $videoId): ?array
+    {
+        $videoId = trim($videoId);
+        if ($videoId === '') {
+            return null;
+        }
+        if (ctype_digit($videoId)) {
+            $row = DB::selectOne(
+                'SELECT * FROM youtube_videos WHERE account_id=? AND id=? LIMIT 1',
+                [$accountId, (int)$videoId]
+            );
+            if ($row) {
+                return $row;
+            }
+        }
+        return DB::selectOne(
+            'SELECT * FROM youtube_videos WHERE account_id=? AND youtube_video_id=? LIMIT 1',
+            [$accountId, $videoId]
+        ) ?: null;
+    }
+
+    /** @param array<string,mixed> $row */
+    private function mapVideo(array $row): array
+    {
+        $tags = json_decode((string)($row['tags_json'] ?? '[]'), true);
+        if (!is_array($tags)) {
+            $tags = [];
+        }
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'accountId' => (int)($row['account_id'] ?? 0),
+            'youtubeVideoId' => (string)($row['youtube_video_id'] ?? ''),
+            'channelId' => (string)($row['channel_id'] ?? ''),
+            'title' => (string)($row['title'] ?? ''),
+            'description' => (string)($row['description'] ?? ''),
+            'tags' => array_values(array_map('strval', $tags)),
+            'categoryId' => (string)($row['category_id'] ?? ''),
+            'privacyStatus' => (string)($row['privacy_status'] ?? $row['privacy_status_api'] ?? ''),
+            'thumbnailUrl' => (string)($row['thumbnail_url'] ?? ''),
+            'durationIso' => (string)($row['duration_iso'] ?? ''),
+            'durationSeconds' => (int)($row['duration_seconds'] ?? 0),
+            'viewCount' => (int)($row['view_count'] ?? 0),
+            'likeCount' => (int)($row['like_count'] ?? 0),
+            'commentCount' => (int)($row['comment_count'] ?? 0),
+            'favoriteCount' => (int)($row['favorite_count'] ?? 0),
+            'uploadStatus' => (string)($row['upload_status'] ?? ''),
+            'embeddable' => !empty($row['embeddable']),
+            'madeForKids' => !empty($row['made_for_kids']),
+            'status' => (string)($row['status'] ?? ''),
+            'publishedAt' => (string)($row['published_at'] ?? ''),
+            'publishAt' => (string)($row['publish_at'] ?? ''),
+            'lastSyncedAt' => (string)($row['last_synced_at'] ?? ''),
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+            'watchUrl' => (($yt = (string)($row['youtube_video_id'] ?? '')) !== '')
+                ? ('https://www.youtube.com/watch?v=' . $yt)
+                : '',
+        ];
+    }
+
+    /** @param array<string,mixed> $row */
+    private function mapComment(array $row): array
+    {
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'accountId' => (int)($row['account_id'] ?? 0),
+            'videoId' => (int)($row['video_id'] ?? 0),
+            'youtubeVideoId' => (string)($row['youtube_video_id'] ?? ''),
+            'youtubeCommentId' => (string)($row['youtube_comment_id'] ?? ''),
+            'parentId' => (int)($row['parent_id'] ?? 0),
+            'parentYoutubeCommentId' => (string)($row['parent_youtube_comment_id'] ?? ''),
+            'authorChannelId' => (string)($row['author_channel_id'] ?? ''),
+            'authorDisplayName' => (string)($row['author_display_name'] ?? ''),
+            'authorProfileImageUrl' => (string)($row['author_profile_image_url'] ?? ''),
+            'authorChannelUrl' => (string)($row['author_channel_url'] ?? ''),
+            'textDisplay' => (string)($row['text_display'] ?? ''),
+            'textOriginal' => (string)($row['text_original'] ?? ''),
+            'likeCount' => (int)($row['like_count'] ?? 0),
+            'totalReplyCount' => (int)($row['total_reply_count'] ?? 0),
+            'isPublic' => !empty($row['is_public']),
+            'canReply' => !isset($row['can_reply']) || !empty($row['can_reply']),
+            'moderationStatus' => (string)($row['moderation_status'] ?? ''),
+            'publishedAt' => (string)($row['published_at'] ?? ''),
+            'platformUpdatedAt' => (string)($row['platform_updated_at'] ?? ''),
+            'pulledAt' => (string)($row['pulled_at'] ?? ''),
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+            'replies' => [],
+        ];
+    }
+
+    // -------------------------------------------------------------------------
     // TikTok → YouTube 同步
     // -------------------------------------------------------------------------
 

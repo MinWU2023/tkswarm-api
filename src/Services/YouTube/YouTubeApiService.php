@@ -573,6 +573,76 @@ class YouTubeApiService
     }
 
     /**
+     * 拉取当前频道 uploads 播放列表中的视频并落库。
+     * @return array{pulled:int,pages:int,channelId:string,uploadsPlaylistId:string}
+     */
+    public function pullChannelVideos(int $maxPages = 10, int $pageSize = 50): array
+    {
+        $channel = $this->getMineChannel('snippet,contentDetails,statistics');
+        $channelId = (string)($channel['id'] ?? $this->account['channel_id'] ?? '');
+        $uploads = (string)($channel['contentDetails']['relatedPlaylists']['uploads'] ?? '');
+        if ($uploads === '') {
+            throw new \RuntimeException('未找到频道 uploads 播放列表，请确认频道已创建');
+        }
+        $ownerId = (int)($this->account['owner_id'] ?? 0);
+        $pulled = 0;
+        $pages = 0;
+        $pageToken = '';
+        $maxPages = max(1, min(40, $maxPages));
+        $pageSize = max(1, min(50, $pageSize));
+        for ($i = 0; $i < $maxPages; $i++) {
+            $params = [
+                'part' => 'snippet,contentDetails,status',
+                'playlistId' => $uploads,
+                'maxResults' => $pageSize,
+            ];
+            if ($pageToken !== '') {
+                $params['pageToken'] = $pageToken;
+            }
+            $pack = $this->apiGet('/playlistItems', $params);
+            $pages++;
+            $items = is_array($pack['items'] ?? null) ? $pack['items'] : [];
+            $videoIds = [];
+            foreach ($items as $it) {
+                if (!is_array($it)) {
+                    continue;
+                }
+                $vid = (string)($it['contentDetails']['videoId']
+                    ?? $it['snippet']['resourceId']['videoId']
+                    ?? '');
+                if ($vid !== '') {
+                    $videoIds[] = $vid;
+                }
+            }
+            $videoIds = array_values(array_unique($videoIds));
+            if ($videoIds) {
+                foreach (array_chunk($videoIds, 50) as $chunk) {
+                    $detail = $this->getVideos($chunk);
+                    foreach (($detail['items'] ?? []) as $video) {
+                        if (!is_array($video)) {
+                            continue;
+                        }
+                        $id = YouTubeSchema::upsertVideoFromApi($this->accountId(), $ownerId, $video);
+                        if ($id > 0) {
+                            $pulled++;
+                        }
+                    }
+                }
+            }
+            $pageToken = (string)($pack['nextPageToken'] ?? '');
+            if ($pageToken === '' || !$items) {
+                break;
+            }
+        }
+        return [
+            'pulled' => $pulled,
+            'pages' => $pages,
+            'channelId' => $channelId,
+            'uploadsPlaylistId' => $uploads,
+        ];
+    }
+
+    /**
      * videos.update（更新标题/描述/标签/隐私等）
      * @param array<string,mixed> $patch snippet/status 字段
      * @return array<string,mixed>
@@ -830,6 +900,58 @@ class YouTubeApiService
             );
             throw $e;
         }
+    }
+
+    /**
+     * 删除评论：优先 comments.delete；失败则按频道主设为 rejected（隐藏）。
+     * @return array{mode:string,youtubeCommentId:string}
+     */
+    public function deleteComment(string $youtubeCommentId): array
+    {
+        $youtubeCommentId = trim($youtubeCommentId);
+        if ($youtubeCommentId === '') {
+            throw new \InvalidArgumentException('youtubeCommentId 不能为空');
+        }
+        $mode = 'delete';
+        try {
+            $this->apiRequest(
+                'DELETE',
+                self::API_BASE . '/comments?' . http_build_query(['id' => $youtubeCommentId]),
+                null,
+                [],
+                false,
+                [204, 200]
+            );
+        } catch (\Throwable $e) {
+            // 他人评论通常无法 delete，改用 moderationStatus=rejected
+            $this->apiRequest(
+                'POST',
+                self::API_BASE . '/comments/setModerationStatus?' . http_build_query([
+                    'id' => $youtubeCommentId,
+                    'moderationStatus' => 'rejected',
+                    'banAuthor' => 'false',
+                ]),
+                null,
+                [],
+                false,
+                [204, 200]
+            );
+            $mode = 'rejected';
+        }
+        DB::query(
+            "UPDATE youtube_comments
+             SET moderation_status=?, text_display=CONCAT('[已删除] ', IFNULL(text_display,'')),
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE youtube_comment_id=? AND account_id=?",
+            [$mode === 'delete' ? 'deleted' : 'rejected', $youtubeCommentId, $this->accountId()]
+        );
+        if ($mode === 'delete') {
+            DB::query(
+                'DELETE FROM youtube_comments WHERE youtube_comment_id=? AND account_id=?',
+                [$youtubeCommentId, $this->accountId()]
+            );
+        }
+        return ['mode' => $mode, 'youtubeCommentId' => $youtubeCommentId];
     }
 
     /**
