@@ -441,7 +441,13 @@ class NodeBridgeController extends Controller
         }
 
         if (is_array($videos)) {
-            $syncedIds = [];
+            $replace = $request->input('replaceProfileVideos') === true
+                || $request->input('replace_profile_videos') === true
+                || $request->input('pruneProfileVideos') === true
+                || $request->input('prune_profile_videos') === true;
+
+            // 归一化 + 去重，先算出本次要入库的完整集合
+            $synced = [];
             foreach ($videos as $v) {
                 if (!is_array($v)) {
                     continue;
@@ -454,10 +460,28 @@ class NodeBridgeController extends Controller
                     continue;
                 }
                 // 同一批里同一个作品只入一次（主页置顶/推荐会导致重复链接）
-                if (isset($syncedIds[$vid])) {
+                if (isset($synced[$vid])) {
                     continue;
                 }
-                $syncedIds[$vid] = true;
+                $synced[$vid] = [
+                    'videoId' => $vid,
+                    'videoUrl' => (string)($v['videoUrl'] ?? $v['video_url'] ?? ''),
+                    'description' => (string)($v['description'] ?? ''),
+                    'thumbnailUrl' => (string)($v['thumbnailUrl'] ?? $v['thumbnail_url'] ?? ''),
+                ];
+            }
+
+            // 全量替换模式：抓取成功（有结果）时先清空该账号旧数据，再整批写入。
+            // 抓取为空一律不动库，避免一次失败把正确数据清掉。
+            if ($replace && $synced) {
+                try {
+                    DB::query('DELETE FROM tiktok_videos WHERE account_id=?', [$aid]);
+                } catch (\Throwable $e) {
+                    // 清空失败就退化成增量更新，不阻断入库
+                }
+            }
+
+            foreach ($synced as $row) {
                 DB::query(
                     "INSERT INTO tiktok_videos(account_id, video_id, video_url, description, thumbnail_url, last_synced_at)
                      VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
@@ -465,16 +489,19 @@ class NodeBridgeController extends Controller
                        thumbnail_url=VALUES(thumbnail_url), last_synced_at=CURRENT_TIMESTAMP",
                     [
                         $aid,
-                        mb_substr($vid, 0, 191),
-                        (string)($v['videoUrl'] ?? $v['video_url'] ?? ''),
-                        (string)($v['description'] ?? ''),
-                        (string)($v['thumbnailUrl'] ?? $v['thumbnail_url'] ?? ''),
+                        mb_substr($row['videoId'], 0, 191),
+                        $row['videoUrl'],
+                        $row['description'],
+                        $row['thumbnailUrl'],
                     ]
                 );
             }
-            // 主页同步：清掉库里原有的重复行 + 本次没抓到的主页视频
-            if ($request->input('pruneProfileVideos') === true || $request->input('prune_profile_videos') === true) {
-                self::pruneProfileVideos($aid, array_keys($syncedIds));
+
+            // 全量替换模式下不再需要增量清理；兼容旧参数仍走一次去重清理
+            if (!$replace || !$synced) {
+                if ($replace) {
+                    self::pruneProfileVideos($aid, array_keys($synced));
+                }
             }
         }
 
