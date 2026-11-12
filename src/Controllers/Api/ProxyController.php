@@ -44,6 +44,27 @@ class ProxyController extends Controller
             $filters[] = 'p.group_id=?';
             $params[] = (int)$groupId;
         }
+        // country：同一国家在库里可能存成国家码/中文名/英文名/别名，前端把所有写法用 | 拼起来传入；
+        // 传 none 表示「未指定国家」。
+        $countryRaw = trim((string)$request->get('country', ''));
+        if ($countryRaw === 'none') {
+            $filters[] = "(p.country IS NULL OR p.country='')";
+        } elseif ($countryRaw !== '') {
+            $names = [];
+            foreach (explode('|', $countryRaw) as $n) {
+                $n = trim($n);
+                if ($n !== '') {
+                    $names[mb_strtolower($n)] = true;
+                }
+            }
+            $names = array_slice(array_keys($names), 0, 40);
+            if ($names) {
+                $filters[] = 'LOWER(p.country) IN (' . implode(',', array_fill(0, count($names), '?')) . ')';
+                foreach ($names as $n) {
+                    $params[] = $n;
+                }
+            }
+        }
         // ownerId：按指定归属用户过滤（创建账号用当前用户；编辑账号用被编辑账号的 owner）
         $ownerIdRaw = $request->get('ownerId', $request->get('owner_id'));
         if ($ownerIdRaw !== null && $ownerIdRaw !== '') {
