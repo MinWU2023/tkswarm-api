@@ -21,6 +21,9 @@ class RegisterAccountController extends Controller
 {
     private const OPERATION_USE_LIMIT = 3;
 
+    /** 最近一次邮箱上游的非 2xx 响应（状态码 + 解析后的 body），供上层决定返回码 */
+    private array $lastUpstream = [];
+
     public function proxyMatch(Request $request): Response
     {
         $type = AccountController::normalizeAccountType($request->get('accountType', $request->get('account_type', 'main')));
@@ -57,6 +60,11 @@ class RegisterAccountController extends Controller
             'username' => trim((string)$request->input('username', '')),
         ], $err);
         if ($data === null) {
+            if ((int)($this->lastUpstream['status'] ?? 0) === 429) {
+                return $this->error($err ?: '邮箱服务繁忙，请稍后重试', 429, [
+                    'retryAfterSeconds' => (int)($this->lastUpstream['data']['retry_after_seconds'] ?? 0),
+                ]);
+            }
             return $this->error($err ?: '获取邮箱失败', 502);
         }
         $address = $this->extractAddress($data);
@@ -290,7 +298,18 @@ class RegisterAccountController extends Controller
             } elseif (is_string($raw)) {
                 $msg = trim(strip_tags($raw));
             }
-            $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 300) : '');
+            $this->lastUpstream = ['status' => $code, 'data' => is_array($data) ? $data : []];
+            $retry = is_array($data) ? (int)($data['retry_after_seconds'] ?? 0) : 0;
+            if ($code === 429 && is_array($data) && ($data['code'] ?? '') === 'icloud_hme_provider_unavailable') {
+                $ref = (string)($data['provider_ref'] ?? '');
+                $error = '邮箱通道' . ($ref !== '' ? "（{$ref}）" : '') . '正在冷却中，'
+                    . ($retry > 0 ? "约 {$retry} 秒后可重试" : '请稍后重试')
+                    . '；也可在管理后台「官网设置」换一个 provider_ref';
+            } elseif ($code === 429) {
+                $error = '邮箱服务请求过于频繁' . ($retry > 0 ? "，约 {$retry} 秒后可重试" : '，请稍后重试');
+            } else {
+                $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 300) : '');
+            }
             return null;
         }
         if (!is_array($data)) {
