@@ -11,6 +11,7 @@ use App\Services\AccountBrowserEnvService;
 use App\Services\AccountWorkBatchService;
 use App\Services\AiLeadExecutionService;
 use App\Services\CompanyService;
+use App\Services\CountryDataService;
 use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
 use App\Services\PullCommentService;
@@ -648,19 +649,25 @@ class PortalApiController extends Controller
             ) ?: [];
         }
 
+        $countryLabels = CountryDataService::displayLabels(array_map(
+            static fn($r) => (string)($r['country'] ?? ''),
+            $rows
+        ));
+
         return $this->success([
-            'items' => array_map(static function ($r) {
+            'items' => array_map(static function ($r) use ($countryLabels) {
                 $avatar = trim((string)($r['profile_avatar'] ?? ''));
                 if ($avatar === '') {
                     $avatar = trim((string)($r['profile_avatar_url'] ?? ''));
                 }
+                $countryRaw = (string)($r['country'] ?? '');
                 return [
                     'id' => (int)$r['id'],
                     'username' => (string)($r['username'] ?? ''),
                     'nickname' => (string)($r['nickname'] ?? ''),
                     'loginStatus' => (string)($r['login_status'] ?? ''),
                     'accountStatus' => (string)($r['account_status'] ?? 'normal'),
-                    'country' => (string)($r['country'] ?? ''),
+                    'country' => $countryLabels[$countryRaw] ?? $countryRaw,
                     'groupName' => (string)($r['group_name'] ?? ''),
                     'avatarUrl' => $avatar,
                     'notes' => (string)($r['notes'] ?? ''),
@@ -1094,7 +1101,7 @@ class PortalApiController extends Controller
                 'nickname' => (string)($account['nickname'] ?? ''),
                 'loginStatus' => (string)($account['login_status'] ?? ''),
                 'accountStatus' => (string)($account['account_status'] ?? 'normal'),
-                'country' => (string)($account['country'] ?? ''),
+                'country' => CountryDataService::displayLabel((string)($account['country'] ?? '')),
                 'groupName' => (string)($account['group_name'] ?? ''),
                 'notes' => (string)($account['notes'] ?? ''),
                 'bio' => (string)($account['profile_bio'] ?? ($profile['bio'] ?? '')),
@@ -1422,8 +1429,9 @@ class PortalApiController extends Controller
             ],
         ];
 
+        $now = DB::now();
         DB::query(
-            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,"draft",?,?,?)',
             [
                 mb_substr($taskName, 0, 120),
                 'publish',
@@ -1432,6 +1440,8 @@ class PortalApiController extends Controller
                 null,
                 json_encode($payload, JSON_UNESCAPED_UNICODE),
                 $userId,
+                $now,
+                $now,
             ]
         );
         $taskId = (int)DB::getPdo()->lastInsertId();
@@ -2690,8 +2700,9 @@ class PortalApiController extends Controller
      */
     private function insertCompanyEntrustTask(string $taskName, string $type, array $payload, int $userId, int $totalCount): Response
     {
+        $now = DB::now();
         DB::query(
-            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,"draft",?,?,?)',
             [
                 mb_substr($taskName, 0, 120),
                 $type,
@@ -2700,6 +2711,8 @@ class PortalApiController extends Controller
                 null,
                 json_encode($payload, JSON_UNESCAPED_UNICODE),
                 $userId,
+                $now,
+                $now,
             ]
         );
         $taskId = (int)DB::getPdo()->lastInsertId();
@@ -2806,12 +2819,13 @@ class PortalApiController extends Controller
             'mov' => 'video/quicktime',
             default => 'video/mp4',
         };
+        $now = DB::now();
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $display, $dest, $origName, $ext, $mimeFinal, $size, 'company_entrust', 'company',
-                'ready', 'unused', null, '', $sha, '', $name, '', $ownerId,
+                'ready', 'unused', null, '', $sha, '', $name, '', $ownerId, $now, $now,
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();

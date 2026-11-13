@@ -194,14 +194,18 @@ class VideoDeliveryController extends Controller
         }
         $sync = VideoDeliveryService::syncTokenBinding((int)$mapped['profileId']);
         $client = $sync['client'] ?? VideoDeliveryService::ensureProfileForAdminUser((int)$id);
-        $dateOk = ($client['authStart'] ?? '') !== '' && ($client['authEnd'] ?? '') !== '';
-        $ok = !empty($sync['ok']) && !empty($client['authorized']) && $dateOk;
-        $msg = !empty($sync['ok'])
-            ? ($ok ? $sync['message'] : ($sync['message'] . '（请检查授权日期）'))
+        // 「检测关联」以 Token 绑定为准；服务期单独提示，避免已绑定仍判为未授权
+        $boundOk = !empty($sync['ok']);
+        $serviceOk = !empty($client['authorized']);
+        $msg = $boundOk
+            ? (string)($sync['message'] ?? '授权关联成功')
             : (string)($sync['message'] ?? '检测未通过');
+        if ($boundOk && !$serviceOk) {
+            $msg .= '（服务期未设置或已过期，请补全开始/结束日期）';
+        }
         return $this->success([
-            'ok' => $ok,
-            'authorized' => !empty($client['authorized']),
+            'ok' => $boundOk,
+            'authorized' => $serviceOk,
             'tokenBound' => !empty($client['tokenBound']),
             'authToken' => (string)($client['authToken'] ?? ''),
             'client' => $client,

@@ -245,9 +245,10 @@ class MaterialController extends Controller
         // 本机 Node ingest / register 走此接口，必须落库分享标题与文案，否则编辑弹窗无法回显
         $shareTitle = trim((string)$request->input('shareTitle', $request->input('share_title', '')));
         $shareCaption = trim((string)$request->input('shareCaption', $request->input('share_caption', '')));
+        $now = DB::now();
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $name,
                 $filePath,
@@ -268,6 +269,8 @@ class MaterialController extends Controller
                 $shareTitle,
                 $shareCaption,
                 $this->writeMaterialOwnerId(),
+                $now,
+                $now,
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();
@@ -483,9 +486,10 @@ class MaterialController extends Controller
             }
             $ext = strtolower(ltrim((string)pathinfo($file['name'], PATHINFO_EXTENSION), '.'));
             $cover = $this->extractCoverBase64($target);
+            $now = DB::now();
             DB::query(
-                'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, owner_id)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, owner_id, created_at, updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 [
                     pathinfo($file['name'], PATHINFO_FILENAME),
                     $target,
@@ -502,6 +506,8 @@ class MaterialController extends Controller
                     $hash,
                     $cover,
                     $this->writeMaterialOwnerId(),
+                    $now,
+                    $now,
                 ]
             );
             $imported++;
@@ -751,9 +757,10 @@ class MaterialController extends Controller
                 }
 
                 $cover = $this->extractCoverBase64($dest);
+                $now = DB::now();
                 DB::query(
-                    'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, share_title, share_caption, owner_id, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     [
                         $displayName,
                         $dest,
@@ -772,6 +779,8 @@ class MaterialController extends Controller
                         $shareTitle,
                         $shareCaption,
                         $this->writeMaterialOwnerId(),
+                        $now,
+                        $now,
                     ]
                 );
                 $newId = (int)DB::getPdo()->lastInsertId();
@@ -982,10 +991,11 @@ class MaterialController extends Controller
         if ($coverFilePath !== '' && $coverFileName === '') {
             $coverFileName = basename(str_replace('\\', '/', $coverFilePath));
         }
+        $now = DB::now();
         DB::query(
-            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            [$display, $dest, $origName, $ext, $mime ?: $this->mimeOf($origName), $size, $description, $tags, 'ready', 'unused', null, '', $sha, $cover, $coverFilePath, $coverFileName, $shareTitle, $shareCaption, $this->writeMaterialOwnerId()]
+            'INSERT INTO materials(name, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status, publish_status, publish_account_id, publish_account, sha256, cover_base64, cover_file_path, cover_file_name, share_title, share_caption, owner_id, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [$display, $dest, $origName, $ext, $mime ?: $this->mimeOf($origName), $size, $description, $tags, 'ready', 'unused', null, '', $sha, $cover, $coverFilePath, $coverFileName, $shareTitle, $shareCaption, $this->writeMaterialOwnerId(), $now, $now]
         );
         $id = (int)DB::getPdo()->lastInsertId();
         return $this->success($this->mapRow(DB::selectOne('SELECT * FROM materials WHERE id=?', [$id])), '素材已上传');

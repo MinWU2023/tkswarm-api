@@ -2253,13 +2253,14 @@ class NodeBridgeController extends Controller
                 // 新建线上素材：无本机文件，素材库默认隐藏（显式写 path/type，避免旧库缺默认值）
                 $fileExt = $isImage ? 'jpg' : 'mp4';
                 $fileName = ($videoId !== '' ? ('online-' . $videoId) : ('online-' . uniqid())) . '.' . $fileExt;
+                $now = DB::now();
                 DB::query(
                     "INSERT INTO materials(
                         name, path, type, file_path, file_name, file_ext, mime_type, size_bytes, description, tags, status,
                         publish_status, publish_account_id, publish_account, platform_video_id, platform_video_url,
                         sha256, cover_base64, share_title, share_caption, owner_id, origin,
-                        view_count, like_count, comment_count, platform_published_at
-                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        view_count, like_count, comment_count, platform_published_at, created_at, updated_at
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [
                         $name,
                         '',
@@ -2287,6 +2288,8 @@ class NodeBridgeController extends Controller
                         $likes,
                         $comments,
                         $postedSql,
+                        $now,
+                        $now,
                     ]
                 );
                 $created += 1;

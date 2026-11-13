@@ -27,6 +27,7 @@ function tkswarm_register_commands(Scheduler $scheduler): Scheduler
     $scheduler->register(new App\Commands\YouTubeTokenRefreshCommand());
     $scheduler->register(new App\Commands\BanRestoreCommand());
     $scheduler->register(new App\Commands\CrontabHeartbeatCommand());
+    $scheduler->register(new App\Commands\RepairDatetimeOffsetCommand());
     $scheduler->register(new App\Commands\ScheduleRunCommand());
     return $scheduler;
 }

@@ -32,12 +32,14 @@ class DB
         $charset = $config['charset'] ?? 'utf8mb4';
 
         $dsn = "mysql:host={$host};port={$port};dbname={$database};charset={$charset}";
+        // 与 PHP Asia/Shanghai 对齐，避免 CURRENT_TIMESTAMP / NOW() 按 UTC 写入 DATETIME
+        $tz = '+08:00';
         $options = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
             PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => true,
-            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci",
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci, time_zone = '{$tz}'",
         ];
 
         try {
@@ -46,6 +48,12 @@ class DB
         } catch (PDOException $e) {
             throw new \RuntimeException("MySQL Connection Error: " . $e->getMessage(), (int)$e->getCode());
         }
+    }
+
+    /** 中国墙钟时间（与 App Asia/Shanghai 一致），用于显式写入 created_at / updated_at */
+    public static function now(): string
+    {
+        return date('Y-m-d H:i:s');
     }
 
     public static function getPdo(): PDO

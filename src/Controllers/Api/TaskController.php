@@ -338,8 +338,9 @@ class TaskController extends Controller
                 'deleteAfterPublish' => false,
             ];
             try {
+                $now = DB::now();
                 DB::query(
-                    'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+                    'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,"draft",?,?,?)',
                     [
                         $taskName,
                         'publish',
@@ -348,6 +349,8 @@ class TaskController extends Controller
                         null,
                         json_encode($payload, JSON_UNESCAPED_UNICODE),
                         $ownerId,
+                        $now,
+                        $now,
                     ]
                 );
                 $id = (int)DB::getPdo()->lastInsertId();
@@ -458,12 +461,15 @@ class TaskController extends Controller
         if ($err = $this->validateBody($body)) {
             return $this->error($err, 400);
         }
+        $now = DB::now();
         DB::query(
-            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id) VALUES (?,?,?,?,?,?,"draft",?)',
+            'INSERT INTO tasks(name,type,group_id,total_count,scheduled_at,payload,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,"draft",?,?,?)',
             [
                 $body['name'], $body['type'], $body['groupId'], $body['totalCount'],
                 $body['scheduledAt'], json_encode($body['payload'], JSON_UNESCAPED_UNICODE),
                 $this->writeOwnerId(),
+                $now,
+                $now,
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();

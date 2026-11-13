@@ -93,4 +93,89 @@ class CountryDataService
     {
         return strtoupper(trim($code));
     }
+
+    /**
+     * 展示用中文国名：库内存 ISO/英文仍可解析；查不到则原样返回。
+     * @param list<string> $values
+     * @return array<string,string> 原始值 => 展示文案
+     */
+    public static function displayLabels(array $values): array
+    {
+        self::ensureSchema();
+        self::seedIfEmpty();
+
+        $out = [];
+        $needLookup = [];
+        foreach ($values as $raw) {
+            $v = trim((string)$raw);
+            if ($v === '') {
+                $out[$v] = '';
+                continue;
+            }
+            if (preg_match('/[\x{4e00}-\x{9fff}]/u', $v)) {
+                $out[$v] = $v;
+                continue;
+            }
+            $needLookup[$v] = true;
+        }
+        if ($needLookup === []) {
+            return $out;
+        }
+
+        $rows = [];
+        try {
+            $rows = DB::select(
+                'SELECT code, name_zh, name_en FROM country_data WHERE enabled=1'
+            ) ?: [];
+        } catch (\Throwable $e) {
+            $rows = [];
+        }
+
+        $byCode = [];
+        $byEn = [];
+        $byZh = [];
+        foreach ($rows as $row) {
+            $code = strtoupper(trim((string)($row['code'] ?? '')));
+            $zh = trim((string)($row['name_zh'] ?? ''));
+            $en = trim((string)($row['name_en'] ?? ''));
+            if ($code !== '' && $zh !== '') {
+                $byCode[$code] = $zh;
+            }
+            if ($en !== '' && $zh !== '') {
+                $byEn[strtolower($en)] = $zh;
+            }
+            if ($zh !== '') {
+                $byZh[strtolower($zh)] = $zh;
+            }
+        }
+
+        foreach (array_keys($needLookup) as $v) {
+            $code = strtoupper($v);
+            if (isset($byCode[$code])) {
+                $out[$v] = $byCode[$code];
+                continue;
+            }
+            $lower = strtolower($v);
+            if (isset($byEn[$lower])) {
+                $out[$v] = $byEn[$lower];
+                continue;
+            }
+            if (isset($byZh[$lower])) {
+                $out[$v] = $byZh[$lower];
+                continue;
+            }
+            $out[$v] = $v;
+        }
+        return $out;
+    }
+
+    public static function displayLabel(string $value): string
+    {
+        $v = trim($value);
+        if ($v === '') {
+            return '';
+        }
+        $map = self::displayLabels([$v]);
+        return $map[$v] ?? $v;
+    }
 }

@@ -122,17 +122,18 @@ class DmSyncCommand extends Command
             ], JSON_UNESCAPED_UNICODE);
             $taskOwnerId = $ownerId > 0 ? $ownerId : 1;
             $name = '私信同步 #' . $acc['id'] . ' ' . ($acc['username'] ?? '') . ($via === 'bit' ? ' [bit]' : '');
+            $now = DB::now();
             try {
                 DB::query(
                     "INSERT INTO tasks(name, type, status, total_count, payload, owner_id, created_at, updated_at)
-                     VALUES (?,?, 'queued', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                    [$name, 'dm_sync', $payload, $ownerId]
+                     VALUES (?,?, 'queued', 1, ?, ?, ?, ?)",
+                    [$name, 'dm_sync', $payload, $ownerId, $now, $now]
                 );
             } catch (\Throwable $e) {
                 DB::query(
                     "INSERT INTO tasks(name, type, status, total_count, payload, created_at, updated_at)
-                     VALUES (?,?, 'queued', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                    [$name, 'dm_sync', $payload]
+                     VALUES (?,?, 'queued', 1, ?, ?, ?)",
+                    [$name, 'dm_sync', $payload, $now, $now]
                 );
             }
             $queued++;

@@ -882,6 +882,7 @@ class VideoDeliveryService
         $authStart = (string)($profile['auth_start'] ?? '');
         $authEnd = (string)($profile['auth_end'] ?? '');
         $version = self::normalizeVersion((string)($profile['service_version'] ?? 'standard'));
+        $tokenBound = !empty($profile['token_bound']);
         return [
             'id' => $uid,
             'adminUserId' => $uid,
@@ -903,7 +904,13 @@ class VideoDeliveryService
             'authStart' => $authStart,
             'authEnd' => $authEnd,
             'authToken' => (string)($profile['auth_token'] ?? ''),
-            'authorized' => $authStart !== '' && $authEnd !== '' && $authEnd >= date('Y-m-d'),
+            // authorized = 服务期有效；是否已授权看 tokenBound
+            'authorized' => self::isServicePeriodActive($authStart, $authEnd),
+            'tokenBound' => $tokenBound,
+            'remoteCompanyId' => (string)($profile['remote_company_id'] ?? ''),
+            'remoteCompanyName' => (string)($profile['remote_company_name'] ?? ''),
+            'lastTokenCheckAt' => (string)($profile['last_token_check_at'] ?? ''),
+            'lastTokenError' => (string)($profile['last_token_error'] ?? ''),
             'serviceVersion' => $version,
             'serviceVersionLabel' => self::versionLabel($version),
             'videoIds' => [],
@@ -913,6 +920,14 @@ class VideoDeliveryService
             'createdAt' => (string)($row['created_at'] ?? ''),
             'updatedAt' => (string)($row['updated_at'] ?? ''),
         ];
+    }
+
+    /** 服务期是否在有效区间（与 Token 绑定无关） */
+    public static function isServicePeriodActive(string $authStart, string $authEnd): bool
+    {
+        $start = trim($authStart);
+        $end = trim($authEnd);
+        return $start !== '' && $end !== '' && $end >= date('Y-m-d');
     }
 
     public static function storageDir(int $clientId = 0, int $orderId = 0): string
@@ -1048,7 +1063,6 @@ class VideoDeliveryService
         $version = self::normalizeVersion((string)($row['service_version'] ?? 'standard'));
         $authStart = (string)($row['auth_start'] ?? '');
         $authEnd = (string)($row['auth_end'] ?? '');
-        $authorized = $authStart !== '' && $authEnd !== '' && $authEnd >= date('Y-m-d');
         return [
             'id' => (int)($row['id'] ?? 0),
             'accountName' => (string)($row['account_name'] ?? ''),
@@ -1065,7 +1079,8 @@ class VideoDeliveryService
             'authStart' => $authStart,
             'authEnd' => $authEnd,
             'authToken' => (string)($row['auth_token'] ?? ''),
-            'authorized' => $authorized,
+            // authorized = 服务期有效；是否已授权看 tokenBound
+            'authorized' => self::isServicePeriodActive($authStart, $authEnd),
             'tokenBound' => !empty($row['token_bound']),
             'remoteCompanyId' => (string)($row['remote_company_id'] ?? ''),
             'remoteCompanyName' => (string)($row['remote_company_name'] ?? ''),

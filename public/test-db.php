@@ -16,6 +16,9 @@ try {
     $userCount = $pdo->query("SELECT COUNT(*) FROM admin_users")->fetchColumn();
     $menuCount = $pdo->query("SELECT COUNT(*) FROM navigation_menus")->fetchColumn();
 
+    date_default_timezone_set('Asia/Shanghai');
+    $pdo->exec("SET time_zone = '+08:00'");
+    $tz = $pdo->query("SELECT NOW() AS db_now, UTC_TIMESTAMP() AS utc_now, @@session.time_zone AS sess_tz, @@global.time_zone AS glob_tz, @@system_time_zone AS sys_tz")->fetch(PDO::FETCH_ASSOC);
     echo json_encode([
         'status' => 'success',
         'message' => 'MySQL 数据库连接成功！',
@@ -23,7 +26,10 @@ try {
         'tables_count' => count($tables),
         'admin_users_count' => (int)$userCount,
         'navigation_menus_count' => (int)$menuCount,
-        'server_info' => $pdo->getAttribute(PDO::ATTR_SERVER_VERSION)
+        'server_info' => $pdo->getAttribute(PDO::ATTR_SERVER_VERSION),
+        'php_now' => date('Y-m-d H:i:s P'),
+        'php_tz' => date_default_timezone_get(),
+        'mysql' => $tz,
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 } catch (\Throwable $e) {
     echo json_encode([
