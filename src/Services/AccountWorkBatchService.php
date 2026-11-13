@@ -1580,6 +1580,8 @@ class AccountWorkBatchService
 
             // 常规总任务优先；同账号有 general 未完成时不领 ai_lead
             // pending 分项须已到 scheduled_at（无任务行 / 无定时 视为可领）
+            // 注意：auto_follow / video_boost / pull_comments 的 task_ref_id 指向独立主表，
+            // 不能 LEFT JOIN tasks，否则会误撞同号矩阵任务的定时，导致「已入队却永不推送」。
             // cs_seat / linux 拓客不依赖 account_browser_envs 空闲行（leaseOrServerEnv 合成 linux 环境）
             $batch = DB::selectOne(
                 "SELECT b.* FROM account_work_batches b
@@ -1588,8 +1590,12 @@ class AccountWorkBatchService
                    AND EXISTS (
                      SELECT 1 FROM account_work_items i
                      LEFT JOIN tasks t ON t.id=i.task_ref_id
+                       AND i.task_type NOT IN ('auto_follow','video_boost','pull_comments')
                      WHERE i.batch_id=b.id AND i.status='pending'
-                       AND (t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
+                       AND (
+                         i.task_type IN ('auto_follow','video_boost','pull_comments')
+                         OR t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP
+                       )
                    )
                    AND (
                      COALESCE(b.batch_scope,'general') = 'cs_seat'
@@ -1997,11 +2003,16 @@ class AccountWorkBatchService
         }
 
         // 每次只取当前待定列表里权重最高的一条（含中途新挂入）
+        // auto_follow / video_boost / pull_comments：task_ref_id 不指向 tasks，跳过定时联表
         $item = DB::selectOne(
             "SELECT i.* FROM account_work_items i
              LEFT JOIN tasks t ON t.id=i.task_ref_id
+               AND i.task_type NOT IN ('auto_follow','video_boost','pull_comments')
              WHERE i.batch_id=? AND i.status='pending'
-               AND (t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP)
+               AND (
+                 i.task_type IN ('auto_follow','video_boost','pull_comments')
+                 OR t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP
+               )
              ORDER BY i.priority ASC, i.seq ASC, i.id ASC
              LIMIT 1",
             [$batchId]
