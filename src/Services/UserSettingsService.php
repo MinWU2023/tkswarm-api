@@ -59,6 +59,7 @@ class UserSettingsService
         return in_array($key, self::GLOBAL_KEYS, true)
             || str_starts_with($key, 'captcha:')
             || str_starts_with($key, 'smtp.')
+            || str_starts_with($key, 'mailbox.')
             || str_starts_with($key, 'youtube.oauth.');
     }
 
@@ -124,6 +125,10 @@ class UserSettingsService
             'youtube.oauth.clientSecret' => '',
             'youtube.oauth.redirectUri' => '',
             'youtube.oauth.scopes' => '',
+            /** 注册账号：邮箱服务（生成邮箱 / 读取邮件），密钥只在后端使用 */
+            'mailbox.apiUrl' => 'https://ai.dyyseo-js.com/api/mailbox',
+            'mailbox.apiKey' => '',
+            'mailbox.providerRef' => 'icloud_hme#1',
         ];
     }
 
@@ -133,6 +138,24 @@ class UserSettingsService
         return [
             'landingDownloadWinUrl' => (string)self::setting('landingDownloadWinUrl', '/lastest.exe'),
             'landingDownloadMacUrl' => (string)self::setting('landingDownloadMacUrl', '/lastest.dmg'),
+        ];
+    }
+
+    /**
+     * 注册账号用的邮箱服务配置。
+     * $maskKey=true 给管理后台展示（密钥只返回是否已配置的掩码）；false 仅供后端调用邮箱接口。
+     * @return array{apiUrl:string,apiKey:string,providerRef:string,configured:bool}
+     */
+    public static function getMailboxConfig(bool $maskKey = true): array
+    {
+        $url = trim((string)self::setting('mailbox.apiUrl', 'https://ai.dyyseo-js.com/api/mailbox'));
+        $key = trim((string)self::setting('mailbox.apiKey', ''));
+        $ref = trim((string)self::setting('mailbox.providerRef', 'icloud_hme#1'));
+        return [
+            'apiUrl' => rtrim($url !== '' ? $url : 'https://ai.dyyseo-js.com/api/mailbox', '/'),
+            'apiKey' => $maskKey ? ($key !== '' ? '******' : '') : $key,
+            'providerRef' => $ref !== '' ? $ref : 'icloud_hme#1',
+            'configured' => $key !== '',
         ];
     }
 
@@ -159,6 +182,9 @@ class UserSettingsService
             }
             if (!empty($map['youtube.oauth.clientSecret'])) {
                 $map['youtube.oauth.clientSecret'] = '******';
+            }
+            if (!empty($map['mailbox.apiKey'])) {
+                $map['mailbox.apiKey'] = '******';
             }
         }
         return $map;

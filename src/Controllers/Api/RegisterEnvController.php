@@ -17,7 +17,7 @@ class RegisterEnvController extends Controller
 {
     private const SELECT = "SELECT e.id, e.name, e.proxy_id, e.browser_backend, e.browser_profile_id,
         e.account_username, e.account_nickname, e.country, e.group_id, e.notes, e.status, e.account_id,
-        e.owner_id, e.created_at, e.updated_at,
+        e.owner_id, e.account_type, e.created_at, e.updated_at,
         (COALESCE(e.account_password_encrypted, '') <> '') AS has_password,
         (COALESCE(e.account_totp_encrypted, '') <> '') AS has_totp,
         p.name AS proxy_name, p.host AS proxy_host, p.port AS proxy_port,
@@ -75,12 +75,12 @@ class RegisterEnvController extends Controller
         }
         DB::query(
             "INSERT INTO register_envs(owner_id, name, proxy_id, browser_backend, account_username, account_nickname,
-                account_password_encrypted, account_totp_encrypted, country, group_id, notes, status)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft')",
+                account_password_encrypted, account_totp_encrypted, country, group_id, notes, account_type, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft')",
             [
                 $this->writeOwnerId(), $data['name'], $data['proxy_id'], $data['browser_backend'],
                 $data['account_username'], $data['account_nickname'], $data['password_enc'], $data['totp_enc'],
-                $data['country'], $data['group_id'], $data['notes'],
+                $data['country'], $data['group_id'], $data['notes'], $data['account_type'],
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();
@@ -104,12 +104,12 @@ class RegisterEnvController extends Controller
         }
         DB::query(
             "UPDATE register_envs SET name=?, proxy_id=?, browser_backend=?, account_username=?, account_nickname=?,
-                account_password_encrypted=?, account_totp_encrypted=?, country=?, group_id=?, notes=?, updated_at=CURRENT_TIMESTAMP
+                account_password_encrypted=?, account_totp_encrypted=?, country=?, group_id=?, notes=?, account_type=?, updated_at=CURRENT_TIMESTAMP
              WHERE id=?",
             [
                 $data['name'], $data['proxy_id'], $data['browser_backend'], $data['account_username'],
                 $data['account_nickname'], $data['password_enc'], $data['totp_enc'], $data['country'],
-                $data['group_id'], $data['notes'], (int)$row['id'],
+                $data['group_id'], $data['notes'], $data['account_type'], (int)$row['id'],
             ]
         );
         return $this->success(DB::selectOne(self::SELECT . ' WHERE e.id=?', [(int)$row['id']]), '注册环境已更新');
@@ -157,6 +157,11 @@ class RegisterEnvController extends Controller
             }
         }
         $out['proxy'] = $proxy;
+        // 发布前复核：该代理被「正式账号 + 其它未发布注册环境」占用的次数（不含本条）
+        $out['proxy_used_by_others'] = !empty($row['proxy_id'])
+            ? self::proxyUsage((int)$row['proxy_id'], (int)$row['id'])
+            : 0;
+        $out['account_type'] = AccountController::normalizeAccountType($row['account_type'] ?? 'main');
         return $this->success($out);
     }
 
@@ -222,6 +227,20 @@ class RegisterEnvController extends Controller
             $err = $e;
             return [];
         }
+        $payloadAll = $request->all();
+        $accountType = (array_key_exists('accountType', $payloadAll) || array_key_exists('account_type', $payloadAll))
+            ? AccountController::normalizeAccountType($request->input('accountType', $request->input('account_type')))
+            : AccountController::normalizeAccountType($existing['account_type'] ?? 'main');
+        // 主体号：代理必须一次都没用过；运营号：使用次数 < 3（0/1/2 次）
+        $used = self::proxyUsage($proxyId, (int)($existing['id'] ?? 0));
+        if ($accountType === 'main' && $used > 0) {
+            $err = $this->error("主体号只能选择从未使用过的代理，该代理已被使用 {$used} 次", 422);
+            return [];
+        }
+        if ($accountType === 'operation' && $used >= 3) {
+            $err = $this->error("运营号只能选择使用次数小于 3 次的代理，该代理已被使用 {$used} 次", 422);
+            return [];
+        }
         $backend = strtolower(trim((string)$request->input('browserBackend', $request->input('browser_backend', 'tkswarm'))));
         if (!in_array($backend, ['bit', 'tkswarm'], true)) {
             $backend = 'tkswarm';
@@ -257,7 +276,27 @@ class RegisterEnvController extends Controller
             'country' => trim((string)$request->input('country', (string)($proxy['country'] ?? ''))),
             'group_id' => ($groupId === null || $groupId === '') ? null : (int)$groupId,
             'notes' => trim((string)$request->input('notes', '')),
+            'account_type' => $accountType,
         ];
+    }
+
+    /**
+     * 代理已使用次数 = 绑定该代理的正式账号数 + 其它未发布(draft)注册环境数。
+     * $excludeEnvId：编辑/发布自身时排除本条注册环境。
+     */
+    public static function proxyUsage(int $proxyId, int $excludeEnvId = 0): int
+    {
+        $acc = (int)(DB::selectOne('SELECT COUNT(*) AS c FROM accounts WHERE proxy_id=?', [$proxyId])['c'] ?? 0);
+        $reg = 0;
+        try {
+            $reg = (int)(DB::selectOne(
+                "SELECT COUNT(*) AS c FROM register_envs WHERE proxy_id=? AND status='draft' AND id<>?",
+                [$proxyId, $excludeEnvId]
+            )['c'] ?? 0);
+        } catch (\Throwable $e) {
+            // register_envs 尚未建表时忽略
+        }
+        return $acc + $reg;
     }
 
     private function ensureSchema(): void
@@ -288,5 +327,12 @@ class RegisterEnvController extends Controller
           KEY idx_register_envs_owner (owner_id),
           KEY idx_register_envs_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        try {
+            $cols = array_column(DB::select('SHOW COLUMNS FROM register_envs') ?: [], 'Field');
+            if (!in_array('account_type', $cols, true)) {
+                DB::query("ALTER TABLE register_envs ADD COLUMN account_type VARCHAR(16) NOT NULL DEFAULT 'main'");
+            }
+        } catch (\Throwable $e) {
+        }
     }
 }

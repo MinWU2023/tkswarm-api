@@ -87,7 +87,18 @@ class ConsoleController extends Controller
     /** 官网首页下载链接 */
     public function siteSettings(Request $request): Response
     {
-        return $this->success(UserSettingsService::getPublicSiteConfig());
+        return $this->success($this->siteSettingsPayload());
+    }
+
+    /** 官网下载链接 + 注册账号邮箱服务配置（密钥脱敏，仅管理后台可见） */
+    private function siteSettingsPayload(): array
+    {
+        $mb = UserSettingsService::getMailboxConfig(true);
+        return array_merge(UserSettingsService::getPublicSiteConfig(), [
+            'mailboxApiUrl' => $mb['apiUrl'],
+            'mailboxApiKey' => $mb['apiKey'],
+            'mailboxProviderRef' => $mb['providerRef'],
+        ]);
     }
 
     public function saveSiteSettings(Request $request): Response
@@ -97,10 +108,27 @@ class ConsoleController extends Controller
         if ($win === '' || $mac === '') {
             return $this->error('请填写 Windows 与 macOS 下载链接', 422);
         }
-        UserSettingsService::saveForUser([
+        $save = [
             'landingDownloadWinUrl' => $win,
             'landingDownloadMacUrl' => $mac,
-        ]);
-        return $this->success(UserSettingsService::getPublicSiteConfig(), '官网下载链接已保存');
+        ];
+        $all = $request->all();
+        if (array_key_exists('mailboxApiUrl', $all)) {
+            $url = rtrim(trim((string)$request->input('mailboxApiUrl', '')), '/');
+            if ($url !== '' && !preg_match('#^https?://#i', $url)) {
+                return $this->error('邮箱接口地址必须以 http:// 或 https:// 开头', 422);
+            }
+            $save['mailbox.apiUrl'] = $url;
+        }
+        if (array_key_exists('mailboxProviderRef', $all)) {
+            $save['mailbox.providerRef'] = trim((string)$request->input('mailboxProviderRef', ''));
+        }
+        // 掩码值 ****** 表示未修改，保留原密钥；空串视为不改（避免误清空）
+        $mbKey = trim((string)$request->input('mailboxApiKey', ''));
+        if ($mbKey !== '' && $mbKey !== '******') {
+            $save['mailbox.apiKey'] = $mbKey;
+        }
+        UserSettingsService::saveForUser($save);
+        return $this->success($this->siteSettingsPayload(), '官网设置已保存');
     }
 }

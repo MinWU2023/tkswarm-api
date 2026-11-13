@@ -225,6 +225,11 @@ class RoutePermissionMap
                 'write' => ['account.create', 'account.update'],
                 'delete' => ['account.delete', 'account.create'],
             ],
+            '/api/register-account' => [
+                'read' => ['account.view', 'account.create'],
+                'write' => ['account.create', 'account.update'],
+                'delete' => ['account.delete', 'account.create'],
+            ],
             '/api/groups' => [
                 'read' => ['group.view', 'group.manage', 'account.view'],
                 'write' => ['group.create', 'group.update', 'group.manage'],

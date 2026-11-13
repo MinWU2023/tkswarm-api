@@ -2637,6 +2637,9 @@ class AccountController extends Controller
         if ($status !== '') {
             $filters[] = 'a.login_status=?';
             $params[] = $status;
+        } else {
+            // 注册中的占位账号默认不进账号列表/选号器，避免被其它任务误选
+            $filters[] = "a.login_status<>'registering'";
         }
         $capcut = (string)$request->get('capcut', '');
         if ($capcut === '1' || $capcut === '0') {

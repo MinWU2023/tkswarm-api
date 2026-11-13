@@ -1518,8 +1518,22 @@ class ProxyController extends Controller
         foreach ($counts as $c) {
             $map[(int)($c['proxy_id'] ?? 0)] = (int)($c['account_bind_count'] ?? 0);
         }
+        // 未发布的注册环境也占用代理（用于主体号/运营号选代理时计数）
+        $regMap = [];
+        try {
+            $regCounts = DB::select(
+                "SELECT proxy_id, COUNT(*) AS c FROM register_envs WHERE status='draft' AND proxy_id IN ({$ph}) GROUP BY proxy_id",
+                $ids
+            ) ?: [];
+            foreach ($regCounts as $c) {
+                $regMap[(int)($c['proxy_id'] ?? 0)] = (int)($c['c'] ?? 0);
+            }
+        } catch (\Throwable $e) {
+            // register_envs 尚未建表时忽略
+        }
         foreach ($rows as &$row) {
             $row['account_bind_count'] = $map[(int)($row['id'] ?? 0)] ?? 0;
+            $row['register_env_count'] = $regMap[(int)($row['id'] ?? 0)] ?? 0;
         }
         unset($row);
         return $rows;

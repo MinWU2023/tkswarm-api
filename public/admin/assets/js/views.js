@@ -1851,7 +1851,10 @@
         saving: false,
         form: {
           landingDownloadWinUrl: '/lastest.exe',
-          landingDownloadMacUrl: '/lastest.dmg'
+          landingDownloadMacUrl: '/lastest.dmg',
+          mailboxApiUrl: 'https://ai.dyyseo-js.com/api/mailbox',
+          mailboxApiKey: '',
+          mailboxProviderRef: 'icloud_hme#1'
         }
       };
     },
@@ -1863,7 +1866,10 @@
           var data = await AdminAPI.siteSettings();
           this.form = {
             landingDownloadWinUrl: data.landingDownloadWinUrl || '/lastest.exe',
-            landingDownloadMacUrl: data.landingDownloadMacUrl || '/lastest.dmg'
+            landingDownloadMacUrl: data.landingDownloadMacUrl || '/lastest.dmg',
+            mailboxApiUrl: data.mailboxApiUrl || 'https://ai.dyyseo-js.com/api/mailbox',
+            mailboxApiKey: data.mailboxApiKey || '',
+            mailboxProviderRef: data.mailboxProviderRef || 'icloud_hme#1'
           };
         } catch (e) {
           ElMessage.error(e.message);
@@ -1903,6 +1909,30 @@
                     modelValue: self.form.landingDownloadMacUrl,
                     'onUpdate:modelValue': function (v) { self.form.landingDownloadMacUrl = v; },
                     placeholder: '例如 /lastest.dmg 或 https://.../TkSwarmBrowser-1.0.19-mac-arm64.dmg'
+                  });
+                }),
+                h(ElementPlus.ElDivider, { contentPosition: 'left' }, function () { return '注册账号 · 邮箱服务'; }),
+                h(ElementPlus.ElFormItem, { label: '邮箱接口地址' }, function () {
+                  return h(ElementPlus.ElInput, {
+                    modelValue: self.form.mailboxApiUrl,
+                    'onUpdate:modelValue': function (v) { self.form.mailboxApiUrl = v; },
+                    placeholder: '默认 https://ai.dyyseo-js.com/api/mailbox（其下为 /icloud-mailboxes 与 /messages）'
+                  });
+                }),
+                h(ElementPlus.ElFormItem, { label: '邮箱 API 密钥' }, function () {
+                  return h(ElementPlus.ElInput, {
+                    modelValue: self.form.mailboxApiKey,
+                    'onUpdate:modelValue': function (v) { self.form.mailboxApiKey = v; },
+                    type: 'password',
+                    showPassword: true,
+                    placeholder: '已配置时显示 ******，不修改请保持不变'
+                  });
+                }),
+                h(ElementPlus.ElFormItem, { label: '邮箱 provider_ref' }, function () {
+                  return h(ElementPlus.ElInput, {
+                    modelValue: self.form.mailboxProviderRef,
+                    'onUpdate:modelValue': function (v) { self.form.mailboxProviderRef = v; },
+                    placeholder: '例如 icloud_hme#1'
                   });
                 }),
                 h(ElementPlus.ElFormItem, null, function () {

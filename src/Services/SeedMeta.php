@@ -722,6 +722,12 @@ class SeedMeta
                  VALUES (453, 450, '账号视频', 'film', '', 'accountWizard', 'account_videos', 4, 1, 'public')
                  ON DUPLICATE KEY UPDATE parent_id=450, title='账号视频', icon='film', view='accountWizard', subview='account_videos', sort_order=4, visible=1, permission_code='public'"
             );
+            DB::query(
+                "INSERT INTO navigation_menus
+                  (id, parent_id, title, icon, path, view, subview, sort_order, visible, permission_code)
+                 VALUES (454, 450, '注册账号', 'plus', '', 'accountWizard', 'register_account', 5, 1, 'public')
+                 ON DUPLICATE KEY UPDATE parent_id=450, title='注册账号', icon='plus', view='accountWizard', subview='register_account', sort_order=5, visible=1, permission_code='public'"
+            );
             DB::query("UPDATE navigation_menus SET parent_id=400, title='矩阵任务', icon='list', view='accountWork', subview='list', sort_order=4, visible=1 WHERE id=116");
             // 旧「自动养号」直挂 AI矩阵 的重复项隐藏（功能已迁到账号向导下）
             DB::query("UPDATE navigation_menus SET visible=0 WHERE parent_id=400 AND view='warm' AND title='自动养号' AND id<>115");
