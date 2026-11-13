@@ -27,7 +27,7 @@ class ChatController extends Controller
         $from = 'FROM accounts a
              LEFT JOIN chat_connections c ON c.account_id=a.id
              LEFT JOIN agents ag ON ag.id=c.agent_id';
-        $select = "SELECT a.id,a.username,a.nickname,a.login_status,a.chat_status,a.browser_profile_id,a.owner_id,a.enabled,
+        $select = "SELECT a.id,a.username,a.nickname,a.login_status,a.chat_status,a.browser_profile_id,a.owner_id,a.enabled,a.account_type,
                 COALESCE(c.status,'offline') AS connection_status,
                 COALESCE(c.auto_translate,0) AS auto_translate,
                 COALESCE(c.sync_messages,1) AS sync_messages,
@@ -139,6 +139,12 @@ class ChatController extends Controller
         if ($status !== '') {
             $filters[] = 'a.login_status=?';
             $params[] = $status;
+        }
+        // 账号类型：main=主体号，operation=运营号；空表示不限
+        $accountTypeRaw = trim((string)$request->get('accountType', $request->get('account_type', '')));
+        if ($accountTypeRaw !== '') {
+            $filters[] = 'a.account_type=?';
+            $params[] = AccountController::normalizeAccountType($accountTypeRaw);
         }
 
         $ownerFilterId = $this->resolveChatAccountOwnerFilterId($request);
@@ -1949,6 +1955,9 @@ class ChatController extends Controller
             $accCols = array_column(DB::select('SHOW COLUMNS FROM accounts') ?: [], 'Field');
             if (!in_array('dm_channel', $accCols, true)) {
                 DB::query("ALTER TABLE accounts ADD COLUMN dm_channel VARCHAR(16) NOT NULL DEFAULT 'auto'");
+            }
+            if (!in_array('account_type', $accCols, true)) {
+                DB::query("ALTER TABLE accounts ADD COLUMN account_type VARCHAR(16) NOT NULL DEFAULT 'main'");
             }
         } catch (\Throwable $e) {
         }

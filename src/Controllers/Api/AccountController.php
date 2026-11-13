@@ -451,6 +451,10 @@ class AccountController extends Controller
                 $extraSets[] = 'industry_id=?';
                 $extraParams[] = $explicitIndustryId;
             }
+            if (array_key_exists('account_type', $row)) {
+                $extraSets[] = 'account_type=?';
+                $extraParams[] = $row['account_type'];
+            }
             // 账号名被改动 → 记下原名：TikTok 上仍是原名，登录必须用原名
             $prevU = ltrim(trim((string)($old['username'] ?? '')), '@');
             $nextU = ltrim(trim((string)($row['username'] ?? '')), '@');
@@ -2642,6 +2646,12 @@ class AccountController extends Controller
         if ((string)$request->get('session', '') === '1') {
             $filters[] = '(a.has_session=1 OR s.account_id IS NOT NULL)';
         }
+        // 账号类型：main=主体号，operation=运营号；空表示不限
+        $accountTypeRaw = trim((string)$request->get('accountType', $request->get('account_type', '')));
+        if ($accountTypeRaw !== '') {
+            $filters[] = 'a.account_type=?';
+            $params[] = self::normalizeAccountType($accountTypeRaw);
+        }
         // 是否绑定浏览器环境（任一后端列或 account_browser_envs）
         $hasEnv = (string)$request->get('hasEnv', $request->get('envBound', ''));
         if ($hasEnv === '1' || $hasEnv === '0') {
@@ -2867,6 +2877,13 @@ class AccountController extends Controller
         }
     }
 
+    /** 账号类型归一：main=主体号，operation=运营号；其它值一律按主体号 */
+    public static function normalizeAccountType($v): string
+    {
+        $s = strtolower(trim((string)$v));
+        return in_array($s, ['operation', 'ops', 'operate', 'operator', '运营号'], true) ? 'operation' : 'main';
+    }
+
     private function bodyToRow(Request $request): array
     {
         $login = (string)$request->input('loginStatus', 'offline');
@@ -2914,6 +2931,10 @@ class AccountController extends Controller
                 $parsed = (int)$rawIndustry;
                 $row['industry_id'] = $parsed > 0 ? $parsed : null;
             }
+        }
+        // 只有请求带了该字段才写入，避免局部更新把已有类型重置
+        if (array_key_exists('accountType', $payload) || array_key_exists('account_type', $payload)) {
+            $row['account_type'] = self::normalizeAccountType($request->input('accountType', $request->input('account_type')));
         }
         return $row;
     }
@@ -3066,14 +3087,15 @@ class AccountController extends Controller
             $row['industry_id'] = $requestedIndustry;
         }
         DB::query(
-            'INSERT INTO accounts(username,nickname,country,group_id,proxy_id,browser_type,browser_profile_id,login_status,chat_status,dm_channel,enabled,notes,has_session,owner_id,company_id,industry_id)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO accounts(username,nickname,country,group_id,proxy_id,browser_type,browser_profile_id,login_status,chat_status,dm_channel,enabled,notes,has_session,owner_id,company_id,industry_id,account_type)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $row['username'], $row['nickname'], $row['country'], $row['group_id'], $row['proxy_id'],
                 $row['browser_type'], $row['browser_profile_id'], $row['login_status'], $row['chat_status'],
                 $row['dm_channel'] ?? 'auto', $row['enabled'], $row['notes'], $row['has_session'] ?? 0, $row['owner_id'],
                 $row['company_id'] ?? null,
                 $row['industry_id'] ?? null,
+                self::normalizeAccountType($row['account_type'] ?? 'main'),
             ]
         );
         $id = (int)DB::getPdo()->lastInsertId();
@@ -3408,6 +3430,8 @@ class AccountController extends Controller
         $mailPush = array_key_exists('data_mail_push', $row) ? (int)$row['data_mail_push'] : 0;
         $row['data_mail_push'] = $mailPush === 1 ? 1 : 0;
         $row['dataMailPush'] = $row['data_mail_push'];
+        $row['account_type'] = self::normalizeAccountType($row['account_type'] ?? 'main');
+        $row['accountType'] = $row['account_type'];
         return $row;
     }
 
@@ -3544,6 +3568,8 @@ class AccountController extends Controller
                 'nickname_changed_at' => 'ALTER TABLE accounts ADD COLUMN nickname_changed_at DATETIME NULL DEFAULT NULL',
                 // 拉取数据分析邮件计划任务开关：1=允许自动入队发信，0=关闭（默认关闭）
                 'data_mail_push' => 'ALTER TABLE accounts ADD COLUMN data_mail_push TINYINT NOT NULL DEFAULT 0',
+                // 账号类型：main=主体号，operation=运营号（默认主体号）
+                'account_type' => "ALTER TABLE accounts ADD COLUMN account_type VARCHAR(16) NOT NULL DEFAULT 'main'",
             ],
             'proxies' => [
                 'use_count' => 'ALTER TABLE proxies ADD COLUMN use_count INT NOT NULL DEFAULT 0',
