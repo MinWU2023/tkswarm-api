@@ -77,8 +77,9 @@ class RegisterAccountController extends Controller
                 $out[] = ['index' => $i, 'accountType' => $type, 'max' => 0, 'count' => 0, 'proxies' => []];
                 continue;
             }
+            $poolRows = $this->matchProxies($type, $countryMatch, 200);
             $rows = array_values(array_filter(
-                $this->matchProxies($type, $countryMatch, 200),
+                $poolRows,
                 static fn ($r) => !isset($allocated[(int)$r['id']])
             ));
             $max = count($rows);
@@ -92,6 +93,8 @@ class RegisterAccountController extends Controller
                 'index' => $i,
                 'accountType' => $type,
                 'max' => $max,
+                'pool' => count($poolRows),
+                'reserved' => count($poolRows) - $max,
                 'count' => $take,
                 'proxies' => array_map(static fn ($r) => [
                     'id' => (int)$r['id'],

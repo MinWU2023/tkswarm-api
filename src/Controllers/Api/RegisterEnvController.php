@@ -17,7 +17,7 @@ class RegisterEnvController extends Controller
 {
     private const SELECT = "SELECT e.id, e.name, e.proxy_id, e.browser_backend, e.browser_profile_id,
         e.account_username, e.account_nickname, e.country, e.group_id, e.notes, e.status, e.account_id,
-        e.owner_id, e.account_type, e.created_at, e.updated_at,
+        e.owner_id, e.account_type, e.account_email, e.created_at, e.updated_at,
         (COALESCE(e.account_password_encrypted, '') <> '') AS has_password,
         (COALESCE(e.account_totp_encrypted, '') <> '') AS has_totp,
         p.name AS proxy_name, p.host AS proxy_host, p.port AS proxy_port,
@@ -74,12 +74,12 @@ class RegisterEnvController extends Controller
             return $err;
         }
         DB::query(
-            "INSERT INTO register_envs(owner_id, name, proxy_id, browser_backend, account_username, account_nickname,
+            "INSERT INTO register_envs(owner_id, name, proxy_id, browser_backend, account_username, account_email, account_nickname,
                 account_password_encrypted, account_totp_encrypted, country, group_id, notes, account_type, status)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft')",
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft')",
             [
                 $this->writeOwnerId(), $data['name'], $data['proxy_id'], $data['browser_backend'],
-                $data['account_username'], $data['account_nickname'], $data['password_enc'], $data['totp_enc'],
+                $data['account_username'], $data['account_email'], $data['account_nickname'], $data['password_enc'], $data['totp_enc'],
                 $data['country'], $data['group_id'], $data['notes'], $data['account_type'],
             ]
         );
@@ -103,11 +103,11 @@ class RegisterEnvController extends Controller
             return $err;
         }
         DB::query(
-            "UPDATE register_envs SET name=?, proxy_id=?, browser_backend=?, account_username=?, account_nickname=?,
+            "UPDATE register_envs SET name=?, proxy_id=?, browser_backend=?, account_username=?, account_email=?, account_nickname=?,
                 account_password_encrypted=?, account_totp_encrypted=?, country=?, group_id=?, notes=?, account_type=?, updated_at=CURRENT_TIMESTAMP
              WHERE id=?",
             [
-                $data['name'], $data['proxy_id'], $data['browser_backend'], $data['account_username'],
+                $data['name'], $data['proxy_id'], $data['browser_backend'], $data['account_username'], $data['account_email'],
                 $data['account_nickname'], $data['password_enc'], $data['totp_enc'], $data['country'],
                 $data['group_id'], $data['notes'], $data['account_type'], (int)$row['id'],
             ]
@@ -266,6 +266,7 @@ class RegisterEnvController extends Controller
             'proxy_id' => $proxyId,
             'browser_backend' => $backend,
             'account_username' => $username,
+            'account_email' => mb_substr(trim((string)$request->input('email', (string)($existing['account_email'] ?? ''))), 0, 191),
             'account_nickname' => trim((string)$request->input('nickname', '')),
             'password_enc' => $password !== ''
                 ? SecretStore::encrypt($password)
@@ -329,6 +330,9 @@ class RegisterEnvController extends Controller
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         try {
             $cols = array_column(DB::select('SHOW COLUMNS FROM register_envs') ?: [], 'Field');
+            if (!in_array('account_email', $cols, true)) {
+                DB::query("ALTER TABLE register_envs ADD COLUMN account_email VARCHAR(191) NOT NULL DEFAULT ''");
+            }
             if (!in_array('account_type', $cols, true)) {
                 DB::query("ALTER TABLE register_envs ADD COLUMN account_type VARCHAR(16) NOT NULL DEFAULT 'main'");
             }
