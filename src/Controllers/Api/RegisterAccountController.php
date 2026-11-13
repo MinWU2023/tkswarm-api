@@ -53,11 +53,11 @@ class RegisterAccountController extends Controller
     /** 生成邮箱 */
     public function mailbox(Request $request): Response
     {
-        $cfg = UserSettingsService::getMailboxConfig(false);
-        $ref = trim((string)$request->input('providerRef', $request->input('provider_ref', '')));
-        $data = $this->mailboxCall('/icloud-mailboxes', [
-            'provider_ref' => $ref !== '' ? $ref : $cfg['providerRef'],
-            'username' => trim((string)$request->input('username', '')),
+        // 生成邮箱接口固定为 {apiUrl}/create，请求体：domain / prefix 留空由上游分配，random_subdomain=1
+        $data = $this->mailboxCall('/create', [
+            'domain' => trim((string)$request->input('domain', '')),
+            'prefix' => trim((string)$request->input('prefix', '')),
+            'random_subdomain' => (int)$request->input('random_subdomain', 1),
         ], $err);
         if ($data === null) {
             if ((int)($this->lastUpstream['status'] ?? 0) === 429) {
