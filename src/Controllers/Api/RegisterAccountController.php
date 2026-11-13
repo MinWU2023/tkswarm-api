@@ -282,8 +282,15 @@ class RegisterAccountController extends Controller
         }
         $data = json_decode((string)$raw, true);
         if ($code < 200 || $code >= 300) {
-            $msg = is_array($data) ? (string)($data['message'] ?? $data['error'] ?? $data['detail'] ?? '') : '';
-            $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 120) : '');
+            $msg = '';
+            if (is_array($data)) {
+                $m = $data['message'] ?? $data['error'] ?? $data['detail'] ?? '';
+                // detail / error 可能是数组（校验错误列表），不能直接转字符串
+                $msg = is_scalar($m) ? (string)$m : (string)json_encode($m, JSON_UNESCAPED_UNICODE);
+            } elseif (is_string($raw)) {
+                $msg = trim(strip_tags($raw));
+            }
+            $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 300) : '');
             return null;
         }
         if (!is_array($data)) {
