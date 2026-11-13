@@ -502,6 +502,16 @@ class AutoFollowService
         if (!$task) {
             throw new \RuntimeException('创建失败');
         }
+        // 首条明细 scheduled_at≈创建时刻；这里立刻入队，避免只等 crontab 时一直停在「待执行」
+        try {
+            AutoFollowDispatchService::tickForTask($taskId, 20);
+            $fresh = self::getTask($taskId, true);
+            if ($fresh) {
+                $task = $fresh;
+            }
+        } catch (\Throwable $e) {
+            // 派发失败不回滚创建；仍可由计划任务 auto-follow:dispatch 补偿
+        }
         return $task;
     }
 

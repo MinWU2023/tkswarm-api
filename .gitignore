@@ -7,6 +7,9 @@
 .env.*
 !.env.example
 
+# crontab 心跳文件（计划任务每分钟覆写）
+/public/datetime.txt
+
 # 依赖与缓存
 /vendor/
 .phpunit.result.cache

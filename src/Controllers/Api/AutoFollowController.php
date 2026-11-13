@@ -6,6 +6,7 @@ namespace App\Controllers\Api;
 use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\AutoFollowDispatchService;
 use App\Services\AutoFollowService;
 use App\Services\DataScope;
 
@@ -89,6 +90,40 @@ class AutoFollowController extends Controller
         }
         try {
             return $this->success(AutoFollowService::cancel((int)$id), '已取消');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+    }
+
+    /**
+     * 立即派发：把该任务下已到期且仍 pending 的明细挂到账号会话总任务。
+     * 用于计划任务未跑 / 卡在「待执行」时的手工补偿。
+     */
+    public function dispatchNow(Request $request, string $id): Response
+    {
+        DataScope::ensureColumns();
+        AutoFollowService::ensureSchema();
+        $task = AutoFollowService::getTask((int)$id);
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+            return $err;
+        }
+        if (empty($task['dispatchEnabled'])) {
+            return $this->error('该任务已关闭自动化派发，请先「开自动化」', 422);
+        }
+        if (in_array((string)($task['status'] ?? ''), ['cancelled', 'failed'], true)) {
+            return $this->error('任务已取消或失败，无法派发', 422);
+        }
+        try {
+            $result = AutoFollowDispatchService::tickForTask((int)$id, 50);
+            $msg = ($result['enqueued'] ?? 0) > 0
+                ? "已入队 {$result['enqueued']} 条关注明细，请到「矩阵任务」查看执行"
+                : (($result['scanned'] ?? 0) < 1
+                    ? '暂无到期明细（可能尚未到预约时间，或已全部入队）'
+                    : "扫描 {$result['scanned']} 条，成功入队 0（失败 {$result['failed']} / 跳过 {$result['skipped']}）");
+            return $this->success($result, $msg);
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);
         }

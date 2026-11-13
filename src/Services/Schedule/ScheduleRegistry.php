@@ -178,6 +178,16 @@ final class ScheduleRegistry
                 'defaultEnabled' => false,
                 'group' => '运维',
             ],
+            [
+                'key' => 'crontab_heartbeat',
+                'title' => 'Crontab 心跳检测',
+                'description' => '每分钟把当前时间写入 public/datetime.txt，用于确认 crontab / schedule 是否在执行',
+                'command' => 'crontab:heartbeat',
+                'cron' => '* * * * *',
+                'args' => [],
+                'defaultEnabled' => true,
+                'group' => '运维',
+            ],
         ];
     }
 

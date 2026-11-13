@@ -316,6 +316,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@detail');
     Router::put('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@update');
     Router::patch('/api/auto-follow-tasks/{id}/dispatch', AutoFollowController::class . '@patchDispatch');
+    Router::post('/api/auto-follow-tasks/{id}/dispatch-now', AutoFollowController::class . '@dispatchNow');
     Router::post('/api/auto-follow-tasks/{id}/cancel', AutoFollowController::class . '@cancel');
     Router::delete('/api/auto-follow-tasks/{id}', AutoFollowController::class . '@delete');
 

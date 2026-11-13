@@ -15,6 +15,9 @@
 # 私信同步入队 → Node 执行 dm_sync
 * * * * * cd /path/to/tkswarm-api && php artisan dm:sync >> /var/log/tkswarm-dm-sync.log 2>&1
 
+# Crontab 心跳（也可由 schedule.php 统一调度）：写入 public/datetime.txt
+* * * * * cd /path/to/tkswarm-api && php artisan crontab:heartbeat >> /var/log/tkswarm-crontab-heartbeat.log 2>&1
+
 # 增粉到期入队
 * * * * * cd /path/to/tkswarm-api && php artisan auto-follow:dispatch >> /var/log/tkswarm-auto-follow.log 2>&1
 
