@@ -12,11 +12,26 @@ use App\Services\DataScope;
 
 class AutoFollowController extends Controller
 {
+    /**
+     * 增粉任务：登录且有路由权限即可操作，不按 owner_id 卡死
+     *（超管/运营管理可见全量列表时也能编辑他人任务）。
+     */
+    private function assertAutoFollowAccess(?array $task): ?Response
+    {
+        if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        return null;
+    }
+
     public function list(Request $request): Response
     {
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
-        $ownerId = DataScope::isSuper() ? 0 : $this->writeOwnerId();
+        // 超管 / 运营管理看全量，其余看自己的
+        $ownerId = (DataScope::isSuper() || DataScope::isOpsAdmin() || DataScope::isLoginOpsAdmin())
+            ? 0
+            : $this->writeOwnerId();
         $pack = AutoFollowService::listTasks(
             $ownerId,
             (int)$request->input('page', 1),
@@ -37,10 +52,7 @@ class AutoFollowController extends Controller
             (int)$request->input('itemPage', $request->input('item_page', 1)),
             (int)$request->input('itemPageSize', $request->input('item_page_size', 50))
         );
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         return $this->success($task);
@@ -63,10 +75,7 @@ class AutoFollowController extends Controller
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
         $task = AutoFollowService::getTask((int)$id);
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         try {
@@ -82,10 +91,7 @@ class AutoFollowController extends Controller
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
         $task = AutoFollowService::getTask((int)$id);
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         try {
@@ -104,10 +110,7 @@ class AutoFollowController extends Controller
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
         $task = AutoFollowService::getTask((int)$id);
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         if (empty($task['dispatchEnabled'])) {
@@ -137,10 +140,7 @@ class AutoFollowController extends Controller
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
         $task = AutoFollowService::getTask((int)$id);
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         $raw = $request->input('dispatchEnabled', $request->input('dispatch_enabled', null));
@@ -180,10 +180,7 @@ class AutoFollowController extends Controller
         $allowed = [];
         foreach ($ids as $id) {
             $task = AutoFollowService::getTask($id);
-            if (!$task) {
-                continue;
-            }
-            if ($this->assertOwns(['owner_id' => $task['ownerId']])) {
+            if ($this->assertAutoFollowAccess($task)) {
                 continue;
             }
             $allowed[] = $id;
@@ -200,10 +197,7 @@ class AutoFollowController extends Controller
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
         $task = AutoFollowService::getTask((int)$id);
-        if (!$task) {
-            return $this->error('任务不存在', 404);
-        }
-        if ($err = $this->assertOwns(['owner_id' => $task['ownerId']])) {
+        if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
         AutoFollowService::delete((int)$id);

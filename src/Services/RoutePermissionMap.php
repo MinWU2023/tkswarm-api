@@ -271,10 +271,11 @@ class RoutePermissionMap
                 'read' => ['ai.leads.view', 'ai.leads', 'account.view'],
                 'write' => ['ai.leads.update', 'ai.leads'],
             ],
+            // 增粉：能进菜单即可读写（与 SeedMeta autoFollow 可见码对齐）
             '/api/auto-follow-tasks' => [
-                'read' => ['ai.leads.view', 'ai.leads', 'account.view'],
-                'write' => ['ai.leads.create', 'ai.leads.update', 'ai.leads'],
-                'delete' => ['ai.leads.delete', 'ai.leads'],
+                'read' => ['ai.leads.view', 'ai.leads', 'ai.leads.create', 'ai.leads.update', 'account.view', 'account.create', 'publish.tasks'],
+                'write' => ['ai.leads.view', 'ai.leads', 'ai.leads.create', 'ai.leads.update', 'account.view', 'account.create', 'publish.tasks', 'rbac.manage'],
+                'delete' => ['ai.leads.view', 'ai.leads', 'ai.leads.delete', 'account.view', 'account.create', 'publish.tasks', 'rbac.manage'],
             ],
             '/api/video-boost-tasks' => [
                 'read' => ['publish.video_boost.view', 'publish.video_boost'],
