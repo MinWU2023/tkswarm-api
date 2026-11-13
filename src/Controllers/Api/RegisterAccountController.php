@@ -21,6 +21,9 @@ class RegisterAccountController extends Controller
 {
     private const OPERATION_USE_LIMIT = 3;
 
+    /** 邮箱接口基础地址固定：生成 {base}/create，读信 {base}/messages；只有密钥来自管理后台设置 */
+    private const MAILBOX_BASE_URL = 'https://ai.dyyseo-js.com/api/mailbox';
+
     /** 最近一次邮箱上游的非 2xx 响应（状态码 + 解析后的 body），供上层决定返回码 */
     private array $lastUpstream = [];
 
@@ -263,6 +266,7 @@ class RegisterAccountController extends Controller
     {
         $error = null;
         $cfg = UserSettingsService::getMailboxConfig(false);
+        $cfg['apiUrl'] = self::MAILBOX_BASE_URL;
         if (!$cfg['configured']) {
             $error = '未配置邮箱 API 密钥，请到管理后台「官网设置」中填写';
             return null;
