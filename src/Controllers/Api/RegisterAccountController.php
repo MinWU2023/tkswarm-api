@@ -109,28 +109,29 @@ class RegisterAccountController extends Controller
         return $this->success(['groups' => $out, 'total' => $total]);
     }
 
-    /** 生成邮箱 */
+    /**
+     * 获取邮箱：不再请求上游 /create，改为从 emails.txt 导入的邮箱库（register_mailboxes）里按顺序逐个取用，
+     * 取出即标记为已使用并记录使用时间。
+     */
     public function mailbox(Request $request): Response
     {
-        // 生成邮箱接口固定为 {apiUrl}/create，请求体：domain / prefix 留空由上游分配，random_subdomain=1
-        $data = $this->mailboxCall('/create', [
-            'domain' => trim((string)$request->input('domain', '')),
-            'prefix' => trim((string)$request->input('prefix', '')),
-            'random_subdomain' => (int)$request->input('random_subdomain', 1),
-        ], $err);
-        if ($data === null) {
-            if ((int)($this->lastUpstream['status'] ?? 0) === 429) {
-                return $this->error($err ?: '邮箱服务繁忙，请稍后重试', 429, [
-                    'retryAfterSeconds' => (int)($this->lastUpstream['data']['retry_after_seconds'] ?? 0),
-                ]);
-            }
-            return $this->error($err ?: '获取邮箱失败', 502);
+        try {
+            $row = \App\Services\RegisterMailboxService::claimNext();
+        } catch (\Throwable $e) {
+            return $this->error('读取邮箱库失败：' . $e->getMessage(), 500);
         }
-        $address = $this->extractAddress($data);
-        if ($address === '') {
-            return $this->error('邮箱接口未返回有效邮箱地址', 502, $data);
+        if ($row === null) {
+            return $this->error('邮箱库已用完，请在 emails.txt 中补充新邮箱', 409);
         }
-        return $this->success(['address' => $address, 'raw' => $data], '邮箱已获取');
+        return $this->success([
+            'address' => $row['email'],
+            'raw' => [
+                'id' => $row['id'],
+                'source' => 'emails.txt',
+                'status' => $row['status'],
+                'used_at' => $row['used_at'],
+            ],
+        ], '邮箱已获取');
     }
 
     /** 读取邮件（验证码等） */

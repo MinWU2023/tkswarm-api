@@ -1408,17 +1408,19 @@ class AccountController extends Controller
         DataScope::ensureColumns();
         $proxyId = (int)$request->input('proxyId', $request->input('proxy_id', 0));
         $ids = $this->idList($request->input('accountIds', []));
+        // 新建账号时还没有 ID：前端传 newCount=1，把即将新增的账号计入额度
+        $newCount = max(0, min(50, (int)$request->input('newCount', 0)));
         if ($proxyId < 1) {
             return $this->error('请选择代理', 422);
         }
-        if (!$ids) {
+        if (!$ids && $newCount < 1) {
             return $this->error('请选择账号', 400);
         }
         $p = DB::selectOne('SELECT id, name FROM proxies WHERE id=?', [$proxyId]);
         if (!$p) {
             return $this->error('代理不存在', 404);
         }
-        $check = $this->evaluateProxyBindLimit($proxyId, $ids);
+        $check = $this->evaluateProxyBindLimit($proxyId, $ids, $newCount);
         $check['proxyId'] = $proxyId;
         $check['proxyName'] = (string)($p['name'] ?? '');
         return $this->success($check);
@@ -1451,7 +1453,7 @@ class AccountController extends Controller
      * @param list<int> $accountIds 即将绑定到该代理的账号 ID
      * @return array{allowed:bool,limit:int,current:int,already:int,selected:int,after:int,message:string}
      */
-    private function evaluateProxyBindLimit(int $proxyId, array $accountIds): array
+    private function evaluateProxyBindLimit(int $proxyId, array $accountIds, int $extraNew = 0): array
     {
         $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds))));
         $limit = self::PROXY_BIND_LIMIT;
@@ -1464,7 +1466,7 @@ class AccountController extends Controller
                 array_merge([$proxyId], $accountIds)
             )['c'] ?? 0);
         }
-        $selected = count($accountIds);
+        $selected = count($accountIds) + max(0, $extraNew);
         $after = $current - $already + $selected;
         $allowed = $after <= $limit;
         $message = '';
