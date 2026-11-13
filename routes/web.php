@@ -513,6 +513,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/register-account/proxy-match', RegisterAccountController::class . '@proxyMatch');
     Router::post('/api/register-account/mailbox', RegisterAccountController::class . '@mailbox');
     Router::post('/api/register-account/mailbox/messages', RegisterAccountController::class . '@mailboxMessages');
+    Router::post('/api/register-account/batch-plan', RegisterAccountController::class . '@batchPlan');
     Router::post('/api/register-account/enqueue', RegisterAccountController::class . '@enqueue');
 
     Router::get('/api/tasks/export.csv', TaskController::class . '@exportCsv');

@@ -1607,6 +1607,10 @@ class AccountWorkBatchService
                      OR EXISTS (
                        SELECT 1 FROM account_browser_envs e
                        WHERE e.account_id=b.account_id AND e.saturation='idle'
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM account_work_items ri
+                        WHERE ri.batch_id=b.id AND ri.status='pending' AND ri.task_type='register_account'
                      )
                    )
                    AND (
@@ -3617,6 +3621,7 @@ class AccountWorkBatchService
             'sync_fans' => '同步粉丝/关注',
             'message' => '私信群发',
             'env_pack_upload' => '环境包补齐',
+            'register_account' => '注册账号',
         ];
         $base = $labels[$type] ?? $type;
         if ($type === 'ai_lead') {
@@ -3668,6 +3673,20 @@ class AccountWorkBatchService
         int $leaseSeconds = 300,
         ?string $preferredBackend = null
     ): ?array {
+        // 注册账号批次：占位账号还没有环境，由 Node 执行器现建环境，这里只给一个合成环境，不走租用锁
+        $regItem = DB::selectOne(
+            "SELECT id FROM account_work_items WHERE batch_id=? AND task_type='register_account' AND status IN ('pending','running') LIMIT 1",
+            [$batchId]
+        );
+        if ($regItem) {
+            return [
+                'id' => 0,
+                'account_id' => $accountId,
+                'browser_profile_id' => '',
+                'browser_backend' => 'tkswarm',
+                'is_primary' => 0,
+            ];
+        }
         if (strtolower(trim((string)$preferredBackend)) === 'linux') {
             $acc = DB::selectOne(
                 'SELECT linux_browser_profile_id, tkswarm_browser_profile_id FROM accounts WHERE id=?',

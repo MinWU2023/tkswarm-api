@@ -187,7 +187,7 @@ class AccountWorkController extends Controller
         AccountWorkBatchService::ensureSchema();
         DataScope::ensureColumns();
         $taskType = trim((string)$request->get('taskType', $request->get('task_type', '')));
-        $allowed = ['pull_stats', 'modify_profile', 'profile', 'pull_video_list', 'publish_images'];
+        $allowed = ['pull_stats', 'modify_profile', 'profile', 'pull_video_list', 'publish_images', 'register_account'];
         if ($taskType === '' || !in_array($taskType, $allowed, true)) {
             return $this->error('请指定有效的 taskType', 422);
         }

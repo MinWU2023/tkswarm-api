@@ -53,6 +53,59 @@ class RegisterAccountController extends Controller
         ]);
     }
 
+    /**
+     * 批量注册：按组顺序分配代理（复合扣减）。
+     * 每组 {accountType, countryMatch, count}：该组可用数 = 满足规则的代理数 - 前面各组已占用的代理；
+     * 返回每组 max（上限）、count（实际分到的数量，不超过 max）和分到的代理列表。
+     * 一个账号独占一个代理（组内、组间都不重复）。
+     */
+    public function batchPlan(Request $request): Response
+    {
+        $groups = $request->input('groups', []);
+        if (!is_array($groups) || !$groups) {
+            return $this->error('请至少添加一组', 422);
+        }
+        $allocated = [];
+        $out = [];
+        $total = 0;
+        foreach (array_slice(array_values($groups), 0, 20) as $i => $g) {
+            $g = is_array($g) ? $g : [];
+            $type = AccountController::normalizeAccountType($g['accountType'] ?? $g['account_type'] ?? 'main');
+            $countryMatch = trim((string)($g['countryMatch'] ?? $g['country'] ?? ''));
+            $want = max(0, (int)($g['count'] ?? 0));
+            if ($countryMatch === '') {
+                $out[] = ['index' => $i, 'accountType' => $type, 'max' => 0, 'count' => 0, 'proxies' => []];
+                continue;
+            }
+            $rows = array_values(array_filter(
+                $this->matchProxies($type, $countryMatch, 200),
+                static fn ($r) => !isset($allocated[(int)$r['id']])
+            ));
+            $max = count($rows);
+            $take = min($want, $max);
+            $picked = array_slice($rows, 0, $take);
+            foreach ($picked as $r) {
+                $allocated[(int)$r['id']] = true;
+            }
+            $total += $take;
+            $out[] = [
+                'index' => $i,
+                'accountType' => $type,
+                'max' => $max,
+                'count' => $take,
+                'proxies' => array_map(static fn ($r) => [
+                    'id' => (int)$r['id'],
+                    'name' => (string)($r['name'] ?? ''),
+                    'host' => (string)($r['host'] ?? ''),
+                    'port' => (int)($r['port'] ?? 0),
+                    'country' => (string)($r['country'] ?? ''),
+                    'used' => (int)($r['used'] ?? 0),
+                ], $picked),
+            ];
+        }
+        return $this->success(['groups' => $out, 'total' => $total]);
+    }
+
     /** 生成邮箱 */
     public function mailbox(Request $request): Response
     {
