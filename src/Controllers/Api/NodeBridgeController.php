@@ -196,7 +196,10 @@ class NodeBridgeController extends Controller
                 $request->stringInput('owner_user_id', $request->stringInput('ownerId', ''))
             );
             $ownerOverride = $ownerOverrideRaw === '' ? null : (int)$ownerOverrideRaw;
-            if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()) {
+            // 归属指向自己（登录身份或当前有效身份）不算越权，如非超管发布注册环境；指定给他人仍仅超管可操作
+            if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()
+                && $ownerOverride !== (int)(\App\Services\DataScope::loginUser()['id'] ?? 0)
+                && $ownerOverride !== \App\Services\DataScope::effectiveUserId()) {
                 return $this->error('仅超级管理员可为环境指定管理用户归属', 403);
             }
             if (!$asPrimary) {
