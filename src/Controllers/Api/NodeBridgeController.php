@@ -834,7 +834,8 @@ class NodeBridgeController extends Controller
                 $likesNum = max(0, (int)($row['likes'] ?? 0));
                 $commentsNum = max(0, (int)($row['comments'] ?? 0));
                 $sharesNum = max(0, (int)($row['shares'] ?? 0));
-                if ($viewsNum > 0) {
+                // 播放量很小时「赞=播放」是真实可能（如 1 播放 1 赞），只在播放量较大时才按列错位处理
+                if ($viewsNum >= 50) {
                     if ($likesNum === $viewsNum) {
                         $likesNum = 0;
                     }

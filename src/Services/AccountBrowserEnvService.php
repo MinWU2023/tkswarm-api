@@ -869,6 +869,23 @@ class AccountBrowserEnvService
              SET saturation='idle', locked_by='', batch_id=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP
              WHERE saturation='busy' AND lease_until IS NOT NULL AND lease_until < CURRENT_TIMESTAMP"
         );
+        // 孤儿 busy：关联总任务已不在 running，或根本没有 batch —— 否则增粉/矩阵会永远领不到 idle
+        try {
+            DB::query(
+                "UPDATE account_browser_envs e
+                 LEFT JOIN account_work_batches b ON b.id=e.batch_id
+                 SET e.saturation='idle', e.locked_by='', e.batch_id=NULL, e.lease_until=NULL, e.updated_at=CURRENT_TIMESTAMP
+                 WHERE e.saturation='busy'
+                   AND (
+                     e.batch_id IS NULL
+                     OR b.id IS NULL
+                     OR b.deleted_at IS NOT NULL
+                     OR b.status NOT IN ('running')
+                     OR (b.status='running' AND b.lease_until IS NOT NULL AND b.lease_until < CURRENT_TIMESTAMP)
+                   )"
+            );
+        } catch (\Throwable $e) {
+        }
     }
 
     public static function accountHasIdleEnv(int $accountId): bool

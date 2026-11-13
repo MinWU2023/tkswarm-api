@@ -31,6 +31,9 @@ class AutoFollowDispatchCommand extends Command
         }
 
         $this->info("Auto-follow dispatch tick (limit={$limit})");
+        $this->info(
+            '说明：本命令只把到期明细挂到矩阵(account_work)；真正开浏览器推送由本机 Node 领取执行。'
+        );
         $result = AutoFollowDispatchService::tick($limit);
         $this->info(
             "scanned={$result['scanned']} enqueued={$result['enqueued']} failed={$result['failed']} skipped={$result['skipped']}"
@@ -42,6 +45,17 @@ class AutoFollowDispatchCommand extends Command
                 );
             } else {
                 $this->warn("#{$row['id']} skip: " . ($row['reason'] ?? ''));
+            }
+        }
+        $stuck = $result['stuck'] ?? [];
+        if ($stuck) {
+            $this->warn('已入队未完成明细 ' . count($stuck) . ' 条（需 Node 领取；若无 idle 环境请先释放浏览器）：');
+            foreach ($stuck as $s) {
+                $this->warn(
+                    "  item#{$s['id']} task#{$s['taskId']} acc#{$s['accountId']} "
+                    . "work={$s['workStatus']} batch#{$s['batchId']}/{$s['batchStatus']} "
+                    . "idle={$s['idleEnvs']} → {$s['hint']}"
+                );
             }
         }
         return 0;

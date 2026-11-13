@@ -84,12 +84,24 @@ class AutoFollowDispatchService
             }
         }
 
+        // 回收卡住的浏览器环境租约，便于 Node 领取已入队的增粉分项
+        try {
+            AccountBrowserEnvService::ensureSchema();
+            AccountBrowserEnvService::reclaimExpiredEnvLeases();
+            AccountWorkBatchService::reclaimExpiredLeases();
+            AccountBrowserEnvService::backfillFromAccounts();
+        } catch (\Throwable $e) {
+        }
+
+        $stuck = self::diagnoseStuckEnqueued(20);
+
         return [
             'scanned' => count($rows),
             'enqueued' => $enqueued,
             'failed' => $failed,
             'skipped' => $skipped,
             'items' => $items,
+            'stuck' => $stuck,
         ];
     }
 
@@ -97,5 +109,67 @@ class AutoFollowDispatchService
     public static function tickForTask(int $taskId, int $limit = 50): array
     {
         return self::tick($limit, $taskId);
+    }
+
+    /**
+     * 诊断「明细已入队但矩阵未执行」的常见原因，供 schedule 日志输出。
+     * @return list<array<string,mixed>>
+     */
+    public static function diagnoseStuckEnqueued(int $limit = 20): array
+    {
+        AutoFollowService::ensureSchema();
+        AccountWorkBatchService::ensureSchema();
+        AccountBrowserEnvService::ensureSchema();
+        $limit = max(1, min(100, $limit));
+        $rows = DB::select(
+            "SELECT i.id, i.task_id, i.source_account_id, i.work_item_id, i.scheduled_at,
+                    wi.status AS work_status, wi.batch_id,
+                    b.status AS batch_status, b.push_status, b.owner_id AS batch_owner_id, b.locked_by,
+                    (SELECT COUNT(*) FROM account_browser_envs e
+                      WHERE e.account_id=i.source_account_id AND e.saturation='idle') AS idle_envs,
+                    (SELECT COUNT(*) FROM account_browser_envs e
+                      WHERE e.account_id=i.source_account_id) AS env_total
+             FROM auto_follow_task_items i
+             LEFT JOIN account_work_items wi ON wi.id=i.work_item_id
+             LEFT JOIN account_work_batches b ON b.id=wi.batch_id
+             WHERE i.status='enqueued'
+             ORDER BY i.scheduled_at ASC, i.id ASC
+             LIMIT {$limit}"
+        ) ?: [];
+
+        $out = [];
+        foreach ($rows as $r) {
+            $hints = [];
+            $workStatus = (string)($r['work_status'] ?? '');
+            $batchStatus = (string)($r['batch_status'] ?? '');
+            $idle = (int)($r['idle_envs'] ?? 0);
+            $envTotal = (int)($r['env_total'] ?? 0);
+            if ($workStatus === '') {
+                $hints[] = 'work_item 缺失';
+            } elseif ($workStatus !== 'pending' && $workStatus !== 'running') {
+                $hints[] = 'work_item=' . $workStatus;
+            }
+            if ($batchStatus === '') {
+                $hints[] = 'batch 缺失';
+            } elseif ($batchStatus === 'pending' && $idle < 1) {
+                $hints[] = $envTotal < 1 ? '账号无浏览器环境' : '无 idle 环境(被占用)';
+            } elseif ($batchStatus === 'pending') {
+                $hints[] = '等 Node 领取(需本机 Node 在跑；无前台时会本机直跑)';
+            } elseif ($batchStatus === 'running') {
+                $hints[] = 'batch 执行中 push=' . (string)($r['push_status'] ?? '');
+            }
+            $out[] = [
+                'id' => (int)$r['id'],
+                'taskId' => (int)$r['task_id'],
+                'accountId' => (int)$r['source_account_id'],
+                'workItemId' => (int)($r['work_item_id'] ?? 0),
+                'batchId' => (int)($r['batch_id'] ?? 0),
+                'workStatus' => $workStatus,
+                'batchStatus' => $batchStatus,
+                'idleEnvs' => $idle,
+                'hint' => $hints ? implode('；', $hints) : 'ok',
+            ];
+        }
+        return $out;
     }
 }

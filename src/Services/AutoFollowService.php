@@ -763,6 +763,13 @@ class AutoFollowService
                 'saveTraffic' => !array_key_exists('save_traffic', $taskRow)
                     || (int)($taskRow['save_traffic'] ?? 1) === 1,
             ];
+            // 入队前补齐浏览器环境行并回收孤儿 busy，避免矩阵永远领不到 idle
+            try {
+                AccountBrowserEnvService::ensureSchema();
+                AccountBrowserEnvService::backfillFromAccounts();
+                AccountBrowserEnvService::reclaimExpiredEnvLeases();
+            } catch (\Throwable $e) {
+            }
             $enqueued = AccountWorkBatchService::enqueueItem(
                 $sourceAccountId,
                 'auto_follow',
