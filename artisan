@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+date_default_timezone_set('Asia/Shanghai');
+
 define('APP_PATH', __DIR__);
 require APP_PATH . '/autoload.php';
 require APP_PATH . '/src/Core/Schedule/bootstrap_commands.php';

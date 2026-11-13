@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+// 尽早固定中国时区，避免列表 created_at 等 DATETIME 按 UTC 写入
+date_default_timezone_set('Asia/Shanghai');
+
 // 尽早处理跨域，避免异常/404 时浏览器看不到 CORS 头
 $__corsOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (!headers_sent()) {

@@ -39,21 +39,40 @@ class DB
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
             PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => true,
-            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci, time_zone = '{$tz}'",
+            // INIT 里只设字符集；时区在连接后强制 exec，避免部分环境 INIT_COMMAND 未生效
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci",
         ];
 
         try {
             self::$pdo = new PDO($dsn, $username, $password, $options);
+            self::applySessionTimezone(self::$pdo);
             return self::$pdo;
         } catch (PDOException $e) {
             throw new \RuntimeException("MySQL Connection Error: " . $e->getMessage(), (int)$e->getCode());
         }
     }
 
-    /** 中国墙钟时间（与 App Asia/Shanghai 一致），用于显式写入 created_at / updated_at */
+    /** 强制会话东八区（DATETIME 默认值 / NOW() / CURRENT_TIMESTAMP 都走中国墙钟） */
+    private static function applySessionTimezone(PDO $pdo): void
+    {
+        try {
+            $pdo->exec("SET time_zone = '+08:00'");
+        } catch (\Throwable $e) {
+            // 忽略：无权限时仍依赖 PHP 侧 DB::now() 显式写入
+        }
+    }
+
+    /** 中国墙钟时间（强制 Asia/Shanghai），用于显式写入 created_at / updated_at */
     public static function now(): string
     {
-        return date('Y-m-d H:i:s');
+        try {
+            return (new \DateTimeImmutable('now', new \DateTimeZone('Asia/Shanghai')))->format('Y-m-d H:i:s');
+        } catch (\Throwable $e) {
+            if (date_default_timezone_get() !== 'Asia/Shanghai') {
+                date_default_timezone_set('Asia/Shanghai');
+            }
+            return date('Y-m-d H:i:s');
+        }
     }
 
     public static function getPdo(): PDO

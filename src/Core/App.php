@@ -28,13 +28,19 @@ class App
 
     private function init(): void
     {
-        // 错误处理与时区
+        // 错误处理与时区（必须在任何 date()/DB 写入前固定东八区）
         error_reporting(E_ALL);
         ini_set('display_errors', '0');
         date_default_timezone_set('Asia/Shanghai');
 
         // 加载配置
         $this->loadConfig();
+
+        $tz = (string)($this->config['app']['timezone'] ?? 'Asia/Shanghai');
+        if ($tz === '') {
+            $tz = 'Asia/Shanghai';
+        }
+        date_default_timezone_set($tz);
 
         // 注册异常处理
         set_error_handler([$this, 'handleError']);

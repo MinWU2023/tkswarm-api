@@ -586,7 +586,16 @@ class ProxyController extends Controller
         }
         $minUse = (int)$request->input('minUse', 0);
         if ($minUse > 0) {
-            $filters[] = 'use_count>=?';
+            // 以实时占用数为准（绑定账号 + 未发布注册环境），不能用只在部分入口自增的 use_count，
+            // 否则会误删仍绑着账号的代理
+            $useSql = '(SELECT COUNT(*) FROM accounts a WHERE a.proxy_id=proxies.id)';
+            try {
+                DB::select('SELECT 1 FROM register_envs LIMIT 1');
+                $useSql .= " + (SELECT COUNT(*) FROM register_envs e WHERE e.proxy_id=proxies.id AND e.status='draft')";
+            } catch (\Throwable $e) {
+                // register_envs 尚未建表时只统计账号
+            }
+            $filters[] = "({$useSql})>=?";
             $params[] = $minUse;
         }
         if (!$filters) {
@@ -703,6 +712,8 @@ class ProxyController extends Controller
             "SELECT p.*, g.name AS group_name FROM proxies p LEFT JOIN `groups` g ON g.id=p.group_id {$where} ORDER BY p.id DESC LIMIT 5000",
             $params
         );
+        // 导出的「使用次数」与列表一致，用实时占用数
+        $rows = $this->enrichAccountBindCounts($rows);
 
         $fieldDefs = $this->exportFieldDefs();
         $fieldsRaw = trim((string)$request->get('fields', ''));
@@ -1534,6 +1545,9 @@ class ProxyController extends Controller
         foreach ($rows as &$row) {
             $row['account_bind_count'] = $map[(int)($row['id'] ?? 0)] ?? 0;
             $row['register_env_count'] = $regMap[(int)($row['id'] ?? 0)] ?? 0;
+            // 列表「使用次数」以实时占用数为准（绑定账号 + 未发布注册环境），
+            // 存储字段 use_count 只在部分入口自增，其它绑定路径（编辑账号、注册发布、环境同步等）不会更新，会显示 0
+            $row['use_count'] = $row['account_bind_count'] + $row['register_env_count'];
         }
         unset($row);
         return $rows;

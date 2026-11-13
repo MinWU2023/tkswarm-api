@@ -10,6 +10,8 @@ declare(strict_types=1);
  * 各任务是否执行由运营控制台「计划任务」开关控制（scheduled_jobs.enabled）。
  */
 
+date_default_timezone_set('Asia/Shanghai');
+
 define('APP_PATH', __DIR__);
 require APP_PATH . '/autoload.php';
 require APP_PATH . '/src/Core/Schedule/bootstrap_commands.php';
