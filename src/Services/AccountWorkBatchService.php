@@ -1511,19 +1511,40 @@ class AccountWorkBatchService
      * 仅领取「账号尚有空闲比特环境」的 pending 总任务；领取时占用环境为 busy。
      * @return array<string,mixed>|null
      */
+    /**
+     * @param list<string>|null $taskTypes 仅领取含这些分项类型的总任务（如 auto_follow）；null=不限
+     */
     public static function claimBatch(
         string $workerId,
         int $leaseSeconds = 300,
         ?int $ownerFilter = null,
-        bool $serverBrowserOnly = false
+        bool $serverBrowserOnly = false,
+        ?array $taskTypes = null
     ): ?array {
         self::ensureSchema();
         self::reclaimExpiredLeases();
+        try {
+            AccountBrowserEnvService::reclaimExpiredEnvLeases();
+            AccountBrowserEnvService::backfillFromAccounts();
+        } catch (\Throwable $e) {
+        }
         // 把已到点的定时任务挂进会话，再领取
         try {
             self::attachDueQueuedTasks($ownerFilter);
         } catch (\Throwable $e) {
         }
+
+        $typeList = [];
+        if (is_array($taskTypes)) {
+            foreach ($taskTypes as $t) {
+                $t = strtolower(trim((string)$t));
+                if ($t !== '' && preg_match('/^[a-z0-9_]+$/', $t)) {
+                    $typeList[] = $t;
+                }
+            }
+            $typeList = array_values(array_unique($typeList));
+        }
+        $standaloneOnly = $typeList !== [] && count(array_diff($typeList, ['auto_follow', 'video_boost', 'warm'])) === 0;
 
         $excludeIds = [];
         // 指定后端暂无空闲环境时跳过该 batch，避免反复领同一条卡住
@@ -1534,6 +1555,17 @@ class AccountWorkBatchService
                 // 含 owner_id=0 的公海 batch：领取时再按账号可见范围绑定到当前切换用户
                 $ownerSql = ' AND (b.owner_id=? OR b.owner_id=0)';
                 $params[] = $ownerFilter;
+            }
+            $typeSql = '';
+            if ($typeList) {
+                $ph = implode(',', array_fill(0, count($typeList), '?'));
+                $typeSql = " AND EXISTS (
+                     SELECT 1 FROM account_work_items ti
+                     WHERE ti.batch_id=b.id AND ti.status='pending' AND ti.task_type IN ({$ph})
+                   )";
+                foreach ($typeList as $t) {
+                    $params[] = $t;
+                }
             }
             $excludeSql = '';
             if ($excludeIds) {
@@ -1582,22 +1614,22 @@ class AccountWorkBatchService
             // pending 分项须已到 scheduled_at（无任务行 / 无定时 视为可领）
             // 注意：auto_follow / video_boost / pull_comments 的 task_ref_id 指向独立主表，
             // 不能 LEFT JOIN tasks，否则会误撞同号矩阵任务的定时，导致「已入队却永不推送」。
+            // 增粉/增值专领：账号有环境行或 profile 即可（领取前会 reclaim 出 idle），不要求此刻 idle
             // cs_seat / linux 拓客不依赖 account_browser_envs 空闲行（leaseOrServerEnv 合成 linux 环境）
-            $batch = DB::selectOne(
-                "SELECT b.* FROM account_work_batches b
-                 WHERE b.status='pending'
-                   AND b.deleted_at IS NULL
-                   AND EXISTS (
-                     SELECT 1 FROM account_work_items i
-                     LEFT JOIN tasks t ON t.id=i.task_ref_id
-                       AND i.task_type NOT IN ('auto_follow','video_boost','pull_comments')
-                     WHERE i.batch_id=b.id AND i.status='pending'
-                       AND (
-                         i.task_type IN ('auto_follow','video_boost','pull_comments')
-                         OR t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP
-                       )
-                   )
-                   AND (
+            $envGateSql = $standaloneOnly
+                ? "AND (
+                     EXISTS (
+                       SELECT 1 FROM account_browser_envs e WHERE e.account_id=b.account_id
+                     )
+                     OR EXISTS (
+                       SELECT 1 FROM accounts a WHERE a.id=b.account_id
+                         AND (
+                           TRIM(IFNULL(a.browser_profile_id,''))<>''
+                           OR TRIM(IFNULL(a.tkswarm_browser_profile_id,''))<>''
+                         )
+                     )
+                   )"
+                : "AND (
                      COALESCE(b.batch_scope,'general') = 'cs_seat'
                      OR (
                        COALESCE(b.batch_scope,'general') = 'ai_lead'
@@ -1618,7 +1650,22 @@ class AccountWorkBatchService
                         SELECT 1 FROM account_work_items ri
                         WHERE ri.batch_id=b.id AND ri.status='pending' AND ri.task_type='register_account'
                      )
+                   )";
+            $batch = DB::selectOne(
+                "SELECT b.* FROM account_work_batches b
+                 WHERE b.status='pending'
+                   AND b.deleted_at IS NULL
+                   AND EXISTS (
+                     SELECT 1 FROM account_work_items i
+                     LEFT JOIN tasks t ON t.id=i.task_ref_id
+                       AND i.task_type NOT IN ('auto_follow','video_boost','pull_comments')
+                     WHERE i.batch_id=b.id AND i.status='pending'
+                       AND (
+                         i.task_type IN ('auto_follow','video_boost','pull_comments')
+                         OR t.id IS NULL OR t.scheduled_at IS NULL OR t.scheduled_at<=CURRENT_TIMESTAMP
+                       )
                    )
+                   {$envGateSql}
                    AND (
                      COALESCE(b.batch_scope,'general') NOT IN ('ai_lead','cs_seat')
                      OR NOT EXISTS (
@@ -1658,6 +1705,7 @@ class AccountWorkBatchService
                    )
                    {$serverOnlySql}
                    {$ownerSql}
+                   {$typeSql}
                    {$excludeSql}
                  ORDER BY
                    CASE WHEN COALESCE(b.batch_scope,'general') IN ('ai_lead','cs_seat') THEN 1 ELSE 0 END,
@@ -1675,6 +1723,15 @@ class AccountWorkBatchService
                 continue;
             }
             self::stampBatchOwnerFromScope($batch);
+
+            // 增粉等专领：领取前再清一次该账号孤儿 busy，尽量腾出 idle
+            if ($standaloneOnly) {
+                try {
+                    AccountBrowserEnvService::reclaimExpiredEnvLeases();
+                    AccountBrowserEnvService::ensureAccountEnvReady((int)$batch['account_id']);
+                } catch (\Throwable $e) {
+                }
+            }
 
             $leaseUntil = date('Y-m-d H:i:s', time() + max(60, $leaseSeconds));
             DB::query(

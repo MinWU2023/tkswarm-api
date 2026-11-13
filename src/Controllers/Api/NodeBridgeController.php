@@ -2952,7 +2952,20 @@ class NodeBridgeController extends Controller
             $request->input('serverBrowserOnly', $request->input('server_browser_only', false)),
             FILTER_VALIDATE_BOOLEAN
         );
-        $batch = AccountWorkBatchService::claimBatch($workerId, $lease, $ownerFilter, $serverBrowserOnly);
+        $taskTypesRaw = $request->input('taskTypes', $request->input('task_types', null));
+        $taskTypes = null;
+        if (is_array($taskTypesRaw)) {
+            $taskTypes = $taskTypesRaw;
+        } elseif (is_string($taskTypesRaw) && trim($taskTypesRaw) !== '') {
+            $taskTypes = preg_split('/\s*,\s*/', trim($taskTypesRaw)) ?: null;
+        }
+        $batch = AccountWorkBatchService::claimBatch(
+            $workerId,
+            $lease,
+            $ownerFilter,
+            $serverBrowserOnly,
+            $taskTypes
+        );
         if (!$batch) {
             return $this->success(null, '暂无待执行账号会话');
         }

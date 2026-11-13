@@ -899,6 +899,38 @@ class AccountBrowserEnvService
     }
 
     /**
+     * 增粉领取前：补齐环境行 + 释放该账号孤儿 busy，尽量得到 idle。
+     */
+    public static function ensureAccountEnvReady(int $accountId): bool
+    {
+        if ($accountId < 1) {
+            return false;
+        }
+        self::ensureSchema();
+        self::backfillFromAccounts();
+        self::reclaimExpiredEnvLeases();
+        try {
+            DB::query(
+                "UPDATE account_browser_envs e
+                 LEFT JOIN account_work_batches b ON b.id=e.batch_id
+                 SET e.saturation='idle', e.locked_by='', e.batch_id=NULL, e.lease_until=NULL, e.updated_at=CURRENT_TIMESTAMP
+                 WHERE e.account_id=?
+                   AND e.saturation='busy'
+                   AND (
+                     e.batch_id IS NULL
+                     OR b.id IS NULL
+                     OR b.deleted_at IS NOT NULL
+                     OR b.status NOT IN ('running')
+                     OR (b.status='running' AND b.lease_until IS NOT NULL AND b.lease_until < CURRENT_TIMESTAMP)
+                   )",
+                [$accountId]
+            );
+        } catch (\Throwable $e) {
+        }
+        return self::accountHasIdleEnv($accountId);
+    }
+
+    /**
      * 强制释放账号下全部 busy 环境（重新推送 / 终止重开）。
      * @return array{released:int,profiles:list<string>,batch_ids:list<int>}
      */
