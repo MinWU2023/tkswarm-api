@@ -510,6 +510,15 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/register-envs/{id}/bundle', RegisterEnvController::class . '@bundle');
     Router::put('/api/register-envs/{id}/profile', RegisterEnvController::class . '@attachProfile');
     Router::post('/api/register-envs/{id}/published', RegisterEnvController::class . '@markPublished');
+
+    // 开发管理 · 测试注册环境（独立表，仅超管；控制器内校验）
+    Router::get('/api/test-register-envs', \App\Controllers\Api\TestRegisterEnvController::class . '@list');
+    Router::post('/api/test-register-envs', \App\Controllers\Api\TestRegisterEnvController::class . '@create');
+    Router::get('/api/test-register-envs/{id}', \App\Controllers\Api\TestRegisterEnvController::class . '@show');
+    Router::put('/api/test-register-envs/{id}', \App\Controllers\Api\TestRegisterEnvController::class . '@update');
+    Router::delete('/api/test-register-envs/{id}', \App\Controllers\Api\TestRegisterEnvController::class . '@delete');
+    Router::get('/api/test-register-envs/{id}/bundle', \App\Controllers\Api\TestRegisterEnvController::class . '@bundle');
+    Router::put('/api/test-register-envs/{id}/profile', \App\Controllers\Api\TestRegisterEnvController::class . '@attachProfile');
     // 账号向导·注册账号：代理匹配 / 邮箱 / 入队
     Router::get('/api/register-account/proxy-match', RegisterAccountController::class . '@proxyMatch');
     Router::post('/api/register-account/mailbox', RegisterAccountController::class . '@mailbox');

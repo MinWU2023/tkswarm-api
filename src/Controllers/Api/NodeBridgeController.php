@@ -2936,18 +2936,6 @@ class NodeBridgeController extends Controller
         $lease = max(60, (int)$request->input('leaseSeconds', $request->input('lease_seconds', 300)));
         // 优先用 Node 传入的 ownerId（对应当前 WSS 登录身份）；普通用户只能领本人数据
         $forceOwner = (int)$request->input('ownerId', $request->input('owner_id', 0));
-        $scopeOwner = DataScope::filterOwnerId();
-        if ($scopeOwner !== null) {
-            if ($forceOwner > 0 && $forceOwner !== $scopeOwner) {
-                return $this->error('无权领取其他用户的任务', 403);
-            }
-            $ownerFilter = $scopeOwner;
-        } else {
-            $ownerFilter = $forceOwner > 0 ? $forceOwner : DataScope::writeOwnerId();
-        }
-        if ($ownerFilter < 1) {
-            $ownerFilter = null;
-        }
         $serverBrowserOnly = filter_var(
             $request->input('serverBrowserOnly', $request->input('server_browser_only', false)),
             FILTER_VALIDATE_BOOLEAN
@@ -2958,6 +2946,40 @@ class NodeBridgeController extends Controller
             $taskTypes = $taskTypesRaw;
         } elseif (is_string($taskTypesRaw) && trim($taskTypesRaw) !== '') {
             $taskTypes = preg_split('/\s*,\s*/', trim($taskTypesRaw)) ?: null;
+        }
+        $standaloneTypes = ['auto_follow', 'video_boost', 'warm'];
+        $standaloneOnly = false;
+        if (is_array($taskTypes) && $taskTypes) {
+            $norm = [];
+            foreach ($taskTypes as $t) {
+                $t = strtolower(trim((string)$t));
+                if ($t !== '') {
+                    $norm[] = $t;
+                }
+            }
+            $standaloneOnly = $norm !== [] && count(array_diff($norm, $standaloneTypes)) === 0;
+        }
+
+        // 超管未切换：与矩阵列表一致，不按 owner 卡死（否则本机专领领不到其它运营名下增粉）
+        // 增粉/增值/养号专领：运营管理也可跨归属领取，避免 schedule 入队后永远「等 Node」
+        $ownerFilter = null;
+        if (DataScope::isSuper() && !DataScope::isActing()) {
+            $ownerFilter = $forceOwner > 0 ? $forceOwner : null;
+        } elseif ($standaloneOnly && DataScope::isOpsAdmin() && !DataScope::isActing()) {
+            $ownerFilter = $forceOwner > 0 ? $forceOwner : null;
+        } else {
+            $scopeOwner = DataScope::filterOwnerId();
+            if ($scopeOwner !== null) {
+                if ($forceOwner > 0 && $forceOwner !== $scopeOwner) {
+                    return $this->error('无权领取其他用户的任务', 403);
+                }
+                $ownerFilter = $scopeOwner;
+            } else {
+                $ownerFilter = $forceOwner > 0 ? $forceOwner : DataScope::writeOwnerId();
+            }
+            if ($ownerFilter !== null && $ownerFilter < 1) {
+                $ownerFilter = null;
+            }
         }
         $batch = AccountWorkBatchService::claimBatch(
             $workerId,

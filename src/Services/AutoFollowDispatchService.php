@@ -154,9 +154,13 @@ class AutoFollowDispatchService
             } elseif ($batchStatus === 'pending' && $idle < 1) {
                 $hints[] = $envTotal < 1 ? '账号无浏览器环境' : '无 idle 环境(被占用)';
             } elseif ($batchStatus === 'pending') {
-                $hints[] = '等 Node 领取(需本机 Node 在跑；无前台时会本机直跑)';
+                $hints[] = '等 Node 领取(跑浏览器的机器上 Node 必须在线并已部署最新代码)';
             } elseif ($batchStatus === 'running') {
                 $hints[] = 'batch 执行中 push=' . (string)($r['push_status'] ?? '');
+            }
+            $batchOwner = (int)($r['batch_owner_id'] ?? 0);
+            if ($batchOwner > 0) {
+                $hints[] = 'batchOwner#' . $batchOwner;
             }
             $out[] = [
                 'id' => (int)$r['id'],
@@ -164,6 +168,7 @@ class AutoFollowDispatchService
                 'accountId' => (int)$r['source_account_id'],
                 'workItemId' => (int)($r['work_item_id'] ?? 0),
                 'batchId' => (int)($r['batch_id'] ?? 0),
+                'batchOwnerId' => $batchOwner,
                 'workStatus' => $workStatus,
                 'batchStatus' => $batchStatus,
                 'idleEnvs' => $idle,

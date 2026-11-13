@@ -827,6 +827,12 @@ class SeedMeta
                  VALUES (780, 820, 'YouTube 开发配置', 'youtube', '', 'youtubeConfig', '', 8, 1)"
             );
             DB::query("UPDATE navigation_menus SET parent_id=820, title='YouTube 开发配置', icon='youtube', path='', view='youtubeConfig', subview='', sort_order=8, visible=1 WHERE id=780");
+            // 开发管理 · 测试注册环境（仅超管）
+            DB::query(
+                "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)
+                 VALUES (790, 820, '测试注册环境', 'plus-square', '', 'testRegisterEnvs', '', 9, 1)"
+            );
+            DB::query("UPDATE navigation_menus SET parent_id=820, title='测试注册环境', icon='plus-square', path='', view='testRegisterEnvs', subview='', sort_order=9, visible=1 WHERE id=790");
             // YouTube 账号：挂到账号中心 → 账号数据，与「账号列表」同级
             DB::query(
                 "INSERT IGNORE INTO navigation_menus (id, parent_id, title, icon, path, view, subview, sort_order, visible)

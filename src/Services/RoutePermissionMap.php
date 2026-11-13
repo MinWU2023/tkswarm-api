@@ -104,6 +104,11 @@ class RoutePermissionMap
             ['method' => 'PUT', 'pattern' => '#^/api/youtube/#', 'codes' => []],
             ['method' => 'DELETE', 'pattern' => '#^/api/youtube/#', 'codes' => []],
             // NoCaptchaAI：中间件已登录即可（[]）；控制器按登录账号校验 system.nocaptcha（不受身份切换影响）
+            // 测试注册环境：中间件已登录即可；控制器内仅放行超管
+            ['method' => 'GET', 'pattern' => '#^/api/test-register-envs#', 'codes' => []],
+            ['method' => 'POST', 'pattern' => '#^/api/test-register-envs#', 'codes' => []],
+            ['method' => 'PUT', 'pattern' => '#^/api/test-register-envs#', 'codes' => []],
+            ['method' => 'DELETE', 'pattern' => '#^/api/test-register-envs#', 'codes' => []],
             ['method' => 'GET', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
             ['method' => 'POST', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
             ['method' => 'PUT', 'pattern' => '#^/api/nocaptcha-keys#', 'codes' => []],
