@@ -256,6 +256,7 @@ class RegisterAccountController extends Controller
         } catch (\Throwable $e) {
             if ($accountId > 0) {
                 DB::query('DELETE FROM account_secrets WHERE account_id=?', [$accountId]);
+                try { \App\Services\AccountBrowserEnvService::unbind($accountId); } catch (\Throwable $e2) { /* 清理失败不阻断回滚 */ }
                 DB::query('DELETE FROM accounts WHERE id=?', [$accountId]);
             }
             return $this->error('创建注册任务失败：' . $e->getMessage(), 400);

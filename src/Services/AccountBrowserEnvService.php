@@ -389,7 +389,12 @@ class AccountBrowserEnvService
             [$profileId]
         );
         if ($taken && (int)$taken['account_id'] !== $accountId) {
-            throw new \RuntimeException('该环境已绑定其他账号 #' . (int)$taken['account_id']);
+            // 占用方账号已不存在（历史回滚/删除遗留的孤儿绑定）：回收后继续绑定；账号仍在则照常拒绝
+            if (DB::selectOne('SELECT id FROM accounts WHERE id=?', [(int)$taken['account_id']])) {
+                throw new \RuntimeException('该环境已绑定其他账号 #' . (int)$taken['account_id']);
+            }
+            DB::query('DELETE FROM account_browser_envs WHERE id=?', [(int)$taken['id']]);
+            $taken = null;
         }
         if ($taken && (int)$taken['account_id'] === $accountId) {
             $keepOwner = $ownerUserIdOverride !== null && $ownerUserIdOverride > 0
@@ -546,7 +551,11 @@ class AccountBrowserEnvService
             [$profileId]
         );
         if ($taken && (int)$taken['account_id'] !== $accountId) {
-            throw new \RuntimeException('环境 ' . $profileId . ' 已绑定账号 #' . (int)$taken['account_id']);
+            if (DB::selectOne('SELECT id FROM accounts WHERE id=?', [(int)$taken['account_id']])) {
+                throw new \RuntimeException('环境 ' . $profileId . ' 已绑定账号 #' . (int)$taken['account_id']);
+            }
+            DB::query('DELETE FROM account_browser_envs WHERE id=?', [(int)$taken['id']]);
+            $taken = null;
         }
 
         // 1) accounts 主列按后端落位

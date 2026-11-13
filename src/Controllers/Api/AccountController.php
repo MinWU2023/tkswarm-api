@@ -825,6 +825,8 @@ class AccountController extends Controller
         if ($err = $this->assertAccountOwns($old)) {
             return $err;
         }
+        // 先清环境绑定（无外键），否则残留的孤儿绑定会占住 browser_profile_id 唯一键，导致该环境无法再绑给新账号
+        try { \App\Services\AccountBrowserEnvService::unbind((int)$id); } catch (\Throwable $e) { /* 清理失败不阻断删除 */ }
         DB::query('DELETE FROM accounts WHERE id=?', [(int)$id]);
         return $this->success(null, '账号已删除');
     }
@@ -1026,6 +1028,9 @@ class AccountController extends Controller
             return $this->error('没有找到要删除的账号', 404);
         }
         $ph2 = implode(',', array_fill(0, count($existing), '?'));
+        foreach ($existing as $delId) {
+            try { \App\Services\AccountBrowserEnvService::unbind((int)$delId); } catch (\Throwable $e) { /* 清理失败不阻断删除 */ }
+        }
         DB::query("DELETE FROM accounts WHERE id IN ({$ph2})", $existing);
         return $this->success([
             'requested' => count($ids),
@@ -1056,6 +1061,9 @@ class AccountController extends Controller
         }
         $ids = array_column($rows, 'id');
         $ph = implode(',', array_fill(0, count($ids), '?'));
+        foreach ($ids as $delId) {
+            try { \App\Services\AccountBrowserEnvService::unbind((int)$delId); } catch (\Throwable $e) { /* 清理失败不阻断删除 */ }
+        }
         DB::query("DELETE FROM accounts WHERE id IN ({$ph})", $ids);
         return $this->success(['deleted' => count($ids)], '已删除 ' . count($ids) . ' 个封号账号');
     }
