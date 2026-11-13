@@ -306,9 +306,16 @@ class RegisterAccountController extends Controller
                     . ($retry > 0 ? "约 {$retry} 秒后可重试" : '请稍后重试')
                     . '；也可在管理后台「官网设置」换一个 provider_ref';
             } elseif ($code === 429) {
-                $error = '邮箱服务请求过于频繁' . ($retry > 0 ? "，约 {$retry} 秒后可重试" : '，请稍后重试');
+                $upCode = is_array($data) ? (string)($data['code'] ?? '') : '';
+                $rawHint = $msg !== '' ? $msg : mb_substr(trim(strip_tags((string)$raw)), 0, 300);
+                $error = '邮箱服务请求过于频繁' . ($retry > 0 ? "，约 {$retry} 秒后可重试" : '，请稍后重试')
+                    . ($upCode !== '' ? "（{$upCode}）" : '')
+                    . ($rawHint !== '' ? '：' . mb_substr($rawHint, 0, 300) : '');
             } else {
-                $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 300) : '');
+                $sentRef = (string)($body['provider_ref'] ?? '');
+                $error = "邮箱服务返回 {$code}" . ($msg !== '' ? '：' . mb_substr($msg, 0, 300) : '')
+                    . "（请求 {$cfg['apiUrl']}{$path}" . ($sentRef !== '' ? "，provider_ref={$sentRef}" : '') . '）';
+                error_log('[register-account] mailbox upstream ' . $code . ' url=' . $cfg['apiUrl'] . $path . ' provider_ref=' . $sentRef . ' body=' . mb_substr((string)$raw, 0, 500));
             }
             return null;
         }
