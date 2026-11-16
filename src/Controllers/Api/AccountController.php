@@ -2186,7 +2186,8 @@ class AccountController extends Controller
                 $viewsNum = max(0, (int)($cRow['views_num'] ?? 0));
                 $likesNum = max(0, (int)($cRow['likes_num'] ?? 0));
                 $commentsNum = max(0, (int)($cRow['comments_num'] ?? 0));
-                if ($viewsNum > 0) {
+                // 播放量很小时「赞=播放」是真实数据，只有较大播放量才按列错位处理（与入库侧一致）
+                if ($viewsNum >= 50) {
                     if ($likesNum === $viewsNum) {
                         $cRow['likes_num'] = 0;
                     }

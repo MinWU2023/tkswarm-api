@@ -572,10 +572,13 @@ class NodeBridgeController extends Controller
                     display_name=IF(VALUES(display_name)='', display_name, VALUES(display_name)),
                     bio=IF(VALUES(bio)='', bio, VALUES(bio)),
                     avatar_url=IF(VALUES(avatar_url)='', avatar_url, VALUES(avatar_url)),
-                    followers_count=VALUES(followers_count), following_count=VALUES(following_count),
-                    likes_count=VALUES(likes_count), videos_count=VALUES(videos_count),
-                    views_count=VALUES(views_count),
-                    comments_count=VALUES(comments_count), shares_count=VALUES(shares_count),
+                    followers_count=IF(VALUES(followers_count)=0, followers_count, VALUES(followers_count)),
+                    following_count=IF(VALUES(following_count)=0, following_count, VALUES(following_count)),
+                    likes_count=IF(VALUES(likes_count)=0, likes_count, VALUES(likes_count)),
+                    videos_count=IF(VALUES(videos_count)=0, videos_count, VALUES(videos_count)),
+                    views_count=IF(VALUES(views_count)=0, views_count, VALUES(views_count)),
+                    comments_count=IF(VALUES(comments_count)=0, comments_count, VALUES(comments_count)),
+                    shares_count=VALUES(shares_count),
                     period_video_views=VALUES(period_video_views), period_profile_views=VALUES(period_profile_views),
                     period_likes=VALUES(period_likes), period_comments=VALUES(period_comments),
                     period_shares=VALUES(period_shares), period_est_rewards=VALUES(period_est_rewards),
@@ -603,8 +606,9 @@ class NodeBridgeController extends Controller
                 ]
             );
 
-            // 兼容旧快照表
-            DB::query(
+            // 兼容旧快照表（总量全为 0 视为主页抓取失败，不写快照，避免历史快照出现假的 0）
+            if ((int)($profile['followers'] ?? 0) > 0 || (int)($profile['following'] ?? 0) > 0
+                || (int)($profile['likes'] ?? 0) > 0 || (int)($profile['videos'] ?? 0) > 0) DB::query(
                 'INSERT INTO tiktok_stat_snapshots(account_id, followers_count, following_count, likes_count, videos_count)
                  VALUES (?,?,?,?,?)',
                 [
@@ -617,8 +621,10 @@ class NodeBridgeController extends Controller
             );
         }
 
-        // 每次拉取：删除该账号全部 28 天日数据后重写
-        DB::query('DELETE FROM tiktok_analytics_28d WHERE account_id=?', [$aid]);
+        // 每次拉取：删除该账号全部 28 天日数据后重写。Node 没拿到按日序列时传空数组 → 保留旧数据，不写假数据
+        if (is_array($daily) && count($daily) > 0) {
+            DB::query('DELETE FROM tiktok_analytics_28d WHERE account_id=?', [$aid]);
+        }
         if (is_array($daily)) {
             foreach ($daily as $day) {
                 if (!is_array($day)) {
@@ -725,6 +731,7 @@ class NodeBridgeController extends Controller
                     $videoUrl = 'https://www.tiktok.com/video/' . $videoId;
                 }
                 $materialId = (int)($row['materialId'] ?? $row['material_id'] ?? 0);
+                $fuzzyMatch = false; // 仅靠标题模糊命中的素材：不回写互动数、不借用其链接/封面
                 $mat = null;
                 try {
                     // 标题里常见「m-{素材ID}-{时间戳}」
@@ -773,7 +780,7 @@ class NodeBridgeController extends Controller
                         $materialId = (int)($mat['id'] ?? 0);
                     }
                     // 按分享标题 / 素材名模糊匹配（Studio 内容列常是发布标题）
-                    if ($materialId <= 0 && $title !== '') {
+                    if ($materialId <= 0 && $title !== '' && $videoId === '') {
                         $titleNorm = preg_replace('/^\d{1,2}:\d{2}(?::\d{2})?\s+/u', '', $title) ?: $title;
                         $cands = DB::select(
                             "SELECT id, platform_video_id, platform_video_url, cover_base64, share_title, name, file_name
@@ -792,7 +799,9 @@ class NodeBridgeController extends Controller
                                 if ($key === '') {
                                     continue;
                                 }
-                                if (mb_stripos($titleNorm, $key) !== false || mb_stripos($key, $titleNorm) !== false) {
+                                if (mb_strlen($key) >= 6 && mb_strlen($titleNorm) >= 6
+                                    && (mb_stripos($titleNorm, $key) !== false || mb_stripos($key, $titleNorm) !== false)) {
+                                    $fuzzyMatch = true;
                                     $mat = $cand;
                                     $materialId = (int)$cand['id'];
                                     break 2;
@@ -803,8 +812,8 @@ class NodeBridgeController extends Controller
                 } catch (\Throwable $e) {
                     $mat = null;
                 }
-                // 素材已回写平台链接/封面时，补全本行缺失字段
-                if (is_array($mat)) {
+                // 素材已回写平台链接/封面时，补全本行缺失字段（模糊匹配的素材不可信，不借用）
+                if (is_array($mat) && !$fuzzyMatch) {
                     if ($videoId === '') {
                         $videoId = trim((string)($mat['platform_video_id'] ?? ''));
                     }
@@ -825,6 +834,9 @@ class NodeBridgeController extends Controller
                             // 超长 base64 不落库，读接口时再拼
                         }
                     }
+                }
+                if ($fuzzyMatch) {
+                    $materialId = 0; // 仅标题模糊命中不可信：不落库，读接口也就不会借用该素材的链接/封面
                 }
                 if ($materialId > 0) {
                     $matchedMaterials += 1;
@@ -864,7 +876,7 @@ class NodeBridgeController extends Controller
                     ]
                 );
                 // 已匹配素材时回写互动数（0 不覆盖已有值，避免把错位清零盖掉旧正确数据）
-                if ($materialId > 0 && ($viewsNum > 0 || $likesNum > 0 || $commentsNum > 0)) {
+                if ($materialId > 0 && !$fuzzyMatch && ($viewsNum > 0 || $likesNum > 0 || $commentsNum > 0)) {
                     try {
                         DB::query(
                             'UPDATE materials SET
