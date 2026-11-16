@@ -528,6 +528,7 @@ class NodeBridgeController extends Controller
         $period = $request->input('period');
         $daily = $request->input('daily');
         $tabs = $request->input('tabs');
+        $portrait = $request->input('portrait');
         $content = $request->input('content');
         $apiRaw = $request->input('api');
         $meta = $request->input('meta');
@@ -565,8 +566,9 @@ class NodeBridgeController extends Controller
                     followers_count, following_count, likes_count, videos_count,
                     views_count, comments_count, shares_count,
                     period_video_views, period_profile_views, period_likes, period_comments, period_shares, period_est_rewards,
+                    year_video_views, year_profile_views, year_likes, year_comments, year_shares, year_est_rewards,
                     sync_status, sync_error, last_synced_at
-                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ok', '', CURRENT_TIMESTAMP)
+                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ok', '', CURRENT_TIMESTAMP)
                  ON DUPLICATE KEY UPDATE
                     handle=VALUES(handle),
                     display_name=IF(VALUES(display_name)='', display_name, VALUES(display_name)),
@@ -582,6 +584,9 @@ class NodeBridgeController extends Controller
                     period_video_views=VALUES(period_video_views), period_profile_views=VALUES(period_profile_views),
                     period_likes=VALUES(period_likes), period_comments=VALUES(period_comments),
                     period_shares=VALUES(period_shares), period_est_rewards=VALUES(period_est_rewards),
+                    year_video_views=VALUES(year_video_views), year_profile_views=VALUES(year_profile_views),
+                    year_likes=VALUES(year_likes), year_comments=VALUES(year_comments),
+                    year_shares=VALUES(year_shares), year_est_rewards=VALUES(year_est_rewards),
                     sync_status='ok', sync_error='', last_synced_at=CURRENT_TIMESTAMP",
                 [
                     $aid,
@@ -603,6 +608,12 @@ class NodeBridgeController extends Controller
                     (int)($profile['periodComments'] ?? $profile['period_comments'] ?? 0),
                     (int)($profile['periodShares'] ?? $profile['period_shares'] ?? 0),
                     (float)($profile['periodEstRewards'] ?? $profile['period_est_rewards'] ?? 0),
+                    (int)($profile['yearVideoViews'] ?? $profile['year_video_views'] ?? 0),
+                    (int)($profile['yearProfileViews'] ?? $profile['year_profile_views'] ?? 0),
+                    (int)($profile['yearLikes'] ?? $profile['year_likes'] ?? 0),
+                    (int)($profile['yearComments'] ?? $profile['year_comments'] ?? 0),
+                    (int)($profile['yearShares'] ?? $profile['year_shares'] ?? 0),
+                    (float)($profile['yearEstRewards'] ?? $profile['year_est_rewards'] ?? 0),
                 ]
             );
 
@@ -652,6 +663,45 @@ class NodeBridgeController extends Controller
                         (int)($day['comments'] ?? $day['comments_count'] ?? 0),
                         (int)($day['shares'] ?? $day['shares_count'] ?? 0),
                         (float)($day['estRewards'] ?? $day['est_rewards'] ?? 0),
+                    ]
+                );
+            }
+        }
+
+        // 用户画像 8 板块（Overview Traffic/Search + Viewers/Followers Gender/Age/Locations）
+        if (is_array($portrait)) {
+            DB::query('DELETE FROM tiktok_studio_portrait WHERE account_id=?', [$aid]);
+            $sortNo = 0;
+            foreach ($portrait as $mod) {
+                if (!is_array($mod)) {
+                    continue;
+                }
+                $moduleKey = mb_substr(trim((string)($mod['key'] ?? '')), 0, 64);
+                if ($moduleKey === '') {
+                    continue;
+                }
+                $items = is_array($mod['items'] ?? null) ? $mod['items'] : [];
+                $sortNo += 1;
+                DB::query(
+                    'INSERT INTO tiktok_studio_portrait(
+                        account_id, module_key, title, section_title, tab_key, kind,
+                        range_label, hint, items_json, sort_no
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                     ON DUPLICATE KEY UPDATE title=VALUES(title), section_title=VALUES(section_title),
+                        tab_key=VALUES(tab_key), kind=VALUES(kind), range_label=VALUES(range_label),
+                        hint=VALUES(hint), items_json=VALUES(items_json), sort_no=VALUES(sort_no),
+                        captured_at=CURRENT_TIMESTAMP',
+                    [
+                        $aid,
+                        $moduleKey,
+                        mb_substr((string)($mod['title'] ?? $moduleKey), 0, 191),
+                        mb_substr((string)($mod['section'] ?? $mod['section_title'] ?? ''), 0, 191),
+                        mb_substr((string)($mod['tab'] ?? $mod['tab_key'] ?? ''), 0, 64),
+                        mb_substr((string)($mod['kind'] ?? 'bars'), 0, 32),
+                        mb_substr((string)($mod['range'] ?? $mod['range_label'] ?? ''), 0, 64),
+                        mb_substr((string)($mod['hint'] ?? ''), 0, 1000),
+                        json_encode($items, JSON_UNESCAPED_UNICODE) ?: '[]',
+                        (int)($mod['sortNo'] ?? $mod['sort_no'] ?? $sortNo),
                     ]
                 );
             }
@@ -3368,6 +3418,26 @@ class NodeBridgeController extends Controller
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
+        // 用户画像 8 板块（365 天）
+        DB::query(
+            "CREATE TABLE IF NOT EXISTS tiktok_studio_portrait (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              account_id INT NOT NULL,
+              module_key VARCHAR(64) NOT NULL,
+              title VARCHAR(191) NOT NULL DEFAULT '',
+              section_title VARCHAR(191) NOT NULL DEFAULT '',
+              tab_key VARCHAR(64) NOT NULL DEFAULT '',
+              kind VARCHAR(32) NOT NULL DEFAULT 'bars',
+              range_label VARCHAR(64) NOT NULL DEFAULT '',
+              hint VARCHAR(1000) NOT NULL DEFAULT '',
+              items_json MEDIUMTEXT NULL,
+              sort_no INT NOT NULL DEFAULT 0,
+              captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE KEY uk_tt_studio_portrait (account_id, module_key),
+              KEY idx_tt_studio_portrait_acc (account_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
         // Studio 四个页签（Overview / Content / Followers / Viewer）
         DB::query(
             "CREATE TABLE IF NOT EXISTS tiktok_studio_tabs (
@@ -3465,6 +3535,12 @@ class NodeBridgeController extends Controller
             'period_comments' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_comments BIGINT NOT NULL DEFAULT 0',
             'period_shares' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_shares BIGINT NOT NULL DEFAULT 0',
             'period_est_rewards' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_est_rewards DECIMAL(14,4) NOT NULL DEFAULT 0',
+            'year_video_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_video_views BIGINT NOT NULL DEFAULT 0',
+            'year_profile_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_profile_views BIGINT NOT NULL DEFAULT 0',
+            'year_likes' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_likes BIGINT NOT NULL DEFAULT 0',
+            'year_comments' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_comments BIGINT NOT NULL DEFAULT 0',
+            'year_shares' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_shares BIGINT NOT NULL DEFAULT 0',
+            'year_est_rewards' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_est_rewards DECIMAL(14,4) NOT NULL DEFAULT 0',
         ];
         foreach ($extra as $col => $sql) {
             if (!in_array($col, $cols, true)) {

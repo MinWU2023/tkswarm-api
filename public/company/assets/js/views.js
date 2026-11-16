@@ -1021,7 +1021,12 @@
         { label: '主页浏览 · 28天', value: s.periodProfileViews || 0, cls: 'tone-emerald' },
         { label: '点赞 · 28天', value: s.periodLikes || 0, cls: 'tone-violet' },
         { label: '评论 · 28天', value: s.periodComments || 0, cls: 'tone-pink' },
-        { label: '转发 · 28天', value: s.periodShares || 0, cls: 'tone-orange' }
+        { label: '转发 · 28天', value: s.periodShares || 0, cls: 'tone-orange' },
+        { label: '播放 · 一年', value: s.yearVideoViews || 0, cls: 'tone-sky' },
+        { label: '主页浏览 · 一年', value: s.yearProfileViews || 0, cls: 'tone-emerald' },
+        { label: '点赞 · 一年', value: s.yearLikes || 0, cls: 'tone-violet' },
+        { label: '评论 · 一年', value: s.yearComments || 0, cls: 'tone-pink' },
+        { label: '转发 · 一年', value: s.yearShares || 0, cls: 'tone-orange' }
       ];
       return h('div', { class: 'page-view detail-page' }, [
         h('div', { class: 'detail-topbar' }, [

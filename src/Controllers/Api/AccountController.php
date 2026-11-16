@@ -2138,6 +2138,7 @@ class AccountController extends Controller
         $tabs = [];
         $metrics = [];
         $content = [];
+        $portrait = [];
         $sync = null;
         try {
             $daily = DB::select(
@@ -2146,6 +2147,38 @@ class AccountController extends Controller
             ) ?: [];
         } catch (\Throwable $e) {
             $daily = [];
+        }
+        try {
+            $portraitRows = DB::select(
+                'SELECT module_key, title, section_title, tab_key, kind, range_label, hint, items_json, sort_no, captured_at
+                 FROM tiktok_studio_portrait WHERE account_id=? ORDER BY sort_no ASC, id ASC',
+                [$aid]
+            ) ?: [];
+            foreach ($portraitRows as $pr) {
+                $items = [];
+                try {
+                    $decoded = json_decode((string)($pr['items_json'] ?? '[]'), true);
+                    if (is_array($decoded)) {
+                        $items = $decoded;
+                    }
+                } catch (\Throwable $e) {
+                    $items = [];
+                }
+                $portrait[] = [
+                    'key' => (string)($pr['module_key'] ?? ''),
+                    'title' => (string)($pr['title'] ?? ''),
+                    'section' => (string)($pr['section_title'] ?? ''),
+                    'tab' => (string)($pr['tab_key'] ?? ''),
+                    'kind' => (string)($pr['kind'] ?? 'bars'),
+                    'range' => (string)($pr['range_label'] ?? ''),
+                    'hint' => (string)($pr['hint'] ?? ''),
+                    'items' => $items,
+                    'sortNo' => (int)($pr['sort_no'] ?? 0),
+                    'capturedAt' => (string)($pr['captured_at'] ?? ''),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $portrait = [];
         }
         try {
             $tabs = DB::select(
@@ -2276,6 +2309,7 @@ class AccountController extends Controller
         return $this->success([
             'snapshots' => $snapshots,
             'daily28' => $daily,
+            'studioPortrait' => $portrait,
             'studioTabs' => $tabs,
             'studioMetrics' => $byTab,
             'studioContent' => $content,
@@ -3692,6 +3726,23 @@ class AccountController extends Controller
           UNIQUE KEY uk_tt_analytics_acc_date (account_id, metric_date),
           KEY idx_tt_analytics_acc (account_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // 用户画像 8 板块（365 天）
+        DB::query("CREATE TABLE IF NOT EXISTS tiktok_studio_portrait (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          account_id INT NOT NULL,
+          module_key VARCHAR(64) NOT NULL,
+          title VARCHAR(191) NOT NULL DEFAULT '',
+          section_title VARCHAR(191) NOT NULL DEFAULT '',
+          tab_key VARCHAR(64) NOT NULL DEFAULT '',
+          kind VARCHAR(32) NOT NULL DEFAULT 'bars',
+          range_label VARCHAR(64) NOT NULL DEFAULT '',
+          hint VARCHAR(1000) NOT NULL DEFAULT '',
+          items_json MEDIUMTEXT NULL,
+          sort_no INT NOT NULL DEFAULT 0,
+          captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY uk_tt_studio_portrait (account_id, module_key),
+          KEY idx_tt_studio_portrait_acc (account_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         // Studio 四个页签（Overview / Content / Followers / Viewer）原始内容
         DB::query("CREATE TABLE IF NOT EXISTS tiktok_studio_tabs (
           id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3783,6 +3834,12 @@ class AccountController extends Controller
                 'period_comments' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_comments BIGINT NOT NULL DEFAULT 0',
                 'period_shares' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_shares BIGINT NOT NULL DEFAULT 0',
                 'period_est_rewards' => 'ALTER TABLE tiktok_profiles ADD COLUMN period_est_rewards DECIMAL(14,4) NOT NULL DEFAULT 0',
+                'year_video_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_video_views BIGINT NOT NULL DEFAULT 0',
+                'year_profile_views' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_profile_views BIGINT NOT NULL DEFAULT 0',
+                'year_likes' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_likes BIGINT NOT NULL DEFAULT 0',
+                'year_comments' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_comments BIGINT NOT NULL DEFAULT 0',
+                'year_shares' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_shares BIGINT NOT NULL DEFAULT 0',
+                'year_est_rewards' => 'ALTER TABLE tiktok_profiles ADD COLUMN year_est_rewards DECIMAL(14,4) NOT NULL DEFAULT 0',
             ];
             foreach ($extra as $col => $sql) {
                 if (!in_array($col, $cols, true)) {
