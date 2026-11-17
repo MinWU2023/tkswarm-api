@@ -179,6 +179,34 @@ class AccountWorkBatchService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
+        // 「修改资料」版本关联表：每次改资料前保存旧数据（用户名/昵称/Bio/头像），支持按字段回撤
+        DB::query(
+            "CREATE TABLE IF NOT EXISTS account_profile_versions (
+              id BIGINT AUTO_INCREMENT PRIMARY KEY,
+              account_id INT NOT NULL,
+              owner_id INT NOT NULL DEFAULT 0,
+              batch_id INT NOT NULL DEFAULT 0,
+              item_id INT NOT NULL DEFAULT 0,
+              source VARCHAR(32) NOT NULL DEFAULT '',
+              status VARCHAR(24) NOT NULL DEFAULT 'applied',
+              old_username VARCHAR(128) NOT NULL DEFAULT '',
+              old_nickname VARCHAR(255) NOT NULL DEFAULT '',
+              old_bio VARCHAR(500) NOT NULL DEFAULT '',
+              old_avatar VARCHAR(500) NOT NULL DEFAULT '',
+              old_nickname_changed_at DATETIME NULL DEFAULT NULL,
+              new_username VARCHAR(128) NOT NULL DEFAULT '',
+              new_nickname VARCHAR(255) NOT NULL DEFAULT '',
+              new_bio VARCHAR(500) NOT NULL DEFAULT '',
+              new_avatar VARCHAR(500) NOT NULL DEFAULT '',
+              rolled_back_fields VARCHAR(64) NOT NULL DEFAULT '',
+              rollback_reason TEXT NULL,
+              rolled_back_at DATETIME NULL DEFAULT NULL,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_apv_account (account_id, id),
+              KEY idx_apv_item (item_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
         // 「修改资料」逐字段执行记录（用户名/昵称/签名/头像 各自成功与否及原因）
         DB::query(
             "CREATE TABLE IF NOT EXISTS account_profile_change_logs (
@@ -770,6 +798,206 @@ class AccountWorkBatchService
         }
 
         return $fallback;
+    }
+
+    /**
+     * 改资料前保存旧数据（版本关联表）。返回版本 id，失败返回 0（不阻断主流程）。
+     * @param array<string,mixed> $old accounts 行（改动前）
+     * @param array<string,mixed> $new 本次要提交的 username/nickname/bio/avatar
+     * @param array<string,mixed> $meta source/batch_id/item_id
+     */
+    public static function createProfileVersion(int $accountId, array $old, array $new, array $meta = []): int
+    {
+        if ($accountId < 1 || !$old) {
+            return 0;
+        }
+        try {
+            self::ensureSchema();
+            $clip = static function ($v, int $max): string {
+                $v = trim((string)($v ?? ''));
+                return $v === '' ? '' : mb_substr($v, 0, $max);
+            };
+            $changedAt = trim((string)($old['nickname_changed_at'] ?? ''));
+            if ($changedAt === '' || $changedAt === '0000-00-00 00:00:00') {
+                $changedAt = null;
+            }
+            // 重试时系统库里的 username 可能已是上次写入的新名；username_prev 才是 TikTok 上真实的原名
+            $realOldUser = ltrim(trim((string)($old['username_prev'] ?? '')), '@');
+            if ($realOldUser === '') {
+                $realOldUser = ltrim(trim((string)($old['username'] ?? '')), '@');
+            }
+            DB::query(
+                'INSERT INTO account_profile_versions(account_id, owner_id, batch_id, item_id, source, status,'
+                . ' old_username, old_nickname, old_bio, old_avatar, old_nickname_changed_at,'
+                . ' new_username, new_nickname, new_bio, new_avatar)'
+                . " VALUES (?,?,?,?,?,'applied',?,?,?,?,?,?,?,?,?)",
+                [
+                    $accountId,
+                    (int)($old['owner_id'] ?? 0),
+                    (int)($meta['batch_id'] ?? 0),
+                    (int)($meta['item_id'] ?? 0),
+                    $clip($meta['source'] ?? '', 32),
+                    $clip($realOldUser, 128),
+                    $clip($old['nickname'] ?? '', 255),
+                    $clip($old['profile_bio'] ?? '', 500),
+                    $clip($old['profile_avatar'] ?? '', 500),
+                    $changedAt,
+                    $clip($new['username'] ?? '', 128),
+                    $clip($new['nickname'] ?? '', 255),
+                    $clip($new['bio'] ?? '', 500),
+                    $clip($new['avatar'] ?? '', 500),
+                ]
+            );
+            return (int)DB::getPdo()->lastInsertId();
+        } catch (\Throwable $e) {
+            error_log('[AccountWorkBatchService] createProfileVersion: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /** 入队后把版本记录关联到分任务 */
+    public static function linkProfileVersion(int $versionId, int $batchId, int $itemId): void
+    {
+        if ($versionId < 1) {
+            return;
+        }
+        try {
+            DB::query('UPDATE account_profile_versions SET batch_id=?, item_id=? WHERE id=?', [$batchId, $itemId, $versionId]);
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /** 最近一条尚未关联分任务的版本（系统侧先保存资料、之后才入队的场景） */
+    public static function latestUnlinkedProfileVersionId(int $accountId): int
+    {
+        try {
+            self::ensureSchema();
+            $row = DB::selectOne(
+                "SELECT id FROM account_profile_versions
+                 WHERE account_id=? AND item_id=0 AND status='applied' AND created_at >= (NOW() - INTERVAL 1 DAY)
+                 ORDER BY id DESC LIMIT 1",
+                [$accountId]
+            );
+            return (int)($row['id'] ?? 0);
+        } catch (\Throwable $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 按字段回撤到版本里保存的旧数据（accounts 表）。fields: username|nickname|bio|avatar
+     * @param array<int,string> $fields
+     * @return array<string,mixed>
+     */
+    public static function rollbackProfileVersion(
+        int $accountId,
+        int $versionId,
+        array $fields,
+        string $reason = '',
+        bool $markNicknameChanged = false
+    ): array {
+        self::ensureSchema();
+        self::ensureUsernamePrevColumn();
+        if ($accountId < 1 || $versionId < 1) {
+            return ['ok' => false, 'error' => '版本不存在'];
+        }
+        $ver = DB::selectOne('SELECT * FROM account_profile_versions WHERE id=? AND account_id=?', [$versionId, $accountId]);
+        if (!$ver) {
+            return ['ok' => false, 'error' => '版本不存在'];
+        }
+        $want = array_values(array_unique(array_map('strval', $fields)));
+        $sets = [];
+        $bind = [];
+        $done = [];
+        $skipped = [];
+
+        if (in_array('username', $want, true)) {
+            $oldUser = ltrim(trim((string)($ver['old_username'] ?? '')), '@');
+            if ($oldUser === '') {
+                $skipped['username'] = '旧账号名为空';
+            } else {
+                $dup = DB::selectOne('SELECT id FROM accounts WHERE username=? AND id<>? LIMIT 1', [$oldUser, $accountId]);
+                if ($dup) {
+                    $skipped['username'] = '旧账号名已被其它账号占用';
+                } else {
+                    $sets[] = 'username=?';
+                    $bind[] = $oldUser;
+                    $sets[] = 'username_prev=NULL';
+                    $done[] = 'username';
+                }
+            }
+        }
+        if (in_array('nickname', $want, true)) {
+            $sets[] = 'nickname=?';
+            $bind[] = (string)($ver['old_nickname'] ?? '');
+            $done[] = 'nickname';
+            if ($markNicknameChanged && self::ensureAccountProfileColumns()) {
+                $sets[] = 'nickname_changed_at=CURRENT_TIMESTAMP';
+            }
+        }
+        if (in_array('bio', $want, true)) {
+            $sets[] = 'profile_bio=?';
+            $bind[] = (string)($ver['old_bio'] ?? '');
+            $done[] = 'bio';
+        }
+        if (in_array('avatar', $want, true)) {
+            $sets[] = 'profile_avatar=?';
+            $bind[] = (string)($ver['old_avatar'] ?? '');
+            $done[] = 'avatar';
+        }
+        if ($sets) {
+            $sets[] = 'updated_at=CURRENT_TIMESTAMP';
+            $bind[] = $accountId;
+            DB::query('UPDATE accounts SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
+        }
+        if ($done) {
+            $prev = array_values(array_filter(explode(',', (string)($ver['rolled_back_fields'] ?? ''))));
+            $all = array_values(array_unique(array_merge($prev, $done)));
+            $status = count($all) >= 4 ? 'rolled_back' : 'partial_rollback';
+            $reasonAll = trim(trim((string)($ver['rollback_reason'] ?? '')) . ($reason !== '' ? '；' . $reason : ''), '；');
+            DB::query(
+                'UPDATE account_profile_versions SET status=?, rolled_back_fields=?, rollback_reason=?, rolled_back_at=CURRENT_TIMESTAMP WHERE id=?',
+                [$status, implode(',', $all), mb_substr($reasonAll, 0, 2000), $versionId]
+            );
+        }
+        return ['ok' => true, 'versionId' => $versionId, 'rolledBack' => $done, 'skipped' => $skipped];
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    public static function listProfileVersions(int $accountId, int $limit = 30): array
+    {
+        self::ensureSchema();
+        $limit = max(1, min(100, $limit));
+        $rows = DB::select(
+            'SELECT * FROM account_profile_versions WHERE account_id=? ORDER BY id DESC LIMIT ' . $limit,
+            [$accountId]
+        ) ?: [];
+        return array_map(static function ($r) {
+            return [
+                'id' => (int)$r['id'],
+                'accountId' => (int)$r['account_id'],
+                'batchId' => (int)$r['batch_id'],
+                'itemId' => (int)$r['item_id'],
+                'source' => (string)($r['source'] ?? ''),
+                'status' => (string)($r['status'] ?? ''),
+                'old' => [
+                    'username' => (string)$r['old_username'],
+                    'nickname' => (string)$r['old_nickname'],
+                    'bio' => (string)$r['old_bio'],
+                    'avatar' => (string)$r['old_avatar'],
+                ],
+                'new' => [
+                    'username' => (string)$r['new_username'],
+                    'nickname' => (string)$r['new_nickname'],
+                    'bio' => (string)$r['new_bio'],
+                    'avatar' => (string)$r['new_avatar'],
+                ],
+                'rolledBackFields' => array_values(array_filter(explode(',', (string)($r['rolled_back_fields'] ?? '')))),
+                'rollbackReason' => (string)($r['rollback_reason'] ?? ''),
+                'rolledBackAt' => $r['rolled_back_at'] ?? null,
+                'createdAt' => $r['created_at'] ?? null,
+            ];
+        }, $rows);
     }
 
     /**

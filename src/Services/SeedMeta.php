@@ -653,14 +653,14 @@ class SeedMeta
                 );
             } catch (\Throwable $e) {
             }
-            // 图片向导：二级「图片向导」→ 三级「发布图片」（独立发布图文，暂仅支持单账号）
+            // 图片向导：二级「图片向导」→ 三级「发布图片」先进列表（与「发布视频」一致），向导从列表「创建」进入
             try {
                 DB::query(
                     "INSERT INTO navigation_menus
                       (id, parent_id, title, icon, path, view, subview, sort_order, visible)
                      VALUES
-                      (460, 400, '图片向导', 'image', '', 'publish', 'image_wizard', 1, 1),
-                      (461, 460, '发布图片', 'send', '', 'publish', 'create_publish_images', 1, 1),
+                      (460, 400, '图片向导', 'image', '', 'publish', 'publish_images', 1, 1),
+                      (461, 460, '发布图片', 'send', '', 'publish', 'publish_images', 1, 1),
                       (462, 460, '图片删除', 'trash-2', '', 'publish', 'create_delete_images', 2, 1),
                       (463, 460, '回复图片评论', 'message-circle', '', 'publish', 'create_comment_reply_images', 3, 1),
                       (464, 460, '拉取图片列表', 'list', '', 'publish', 'pull_image_list', 4, 1),

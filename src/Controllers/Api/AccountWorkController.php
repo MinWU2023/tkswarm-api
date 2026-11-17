@@ -576,6 +576,17 @@ class AccountWorkController extends Controller
         if ($err = $this->assertAccountOwns($account)) {
             return $err;
         }
+        // 通用入队也可能是修改资料：关联最近一条尚未使用的版本记录，供任务按字段回撤
+        $profileVersionId = 0;
+        if ($taskType === 'modify_profile') {
+            $profileVersionId = (int)($payload['profileVersionId'] ?? $payload['profile_version_id'] ?? 0);
+            if ($profileVersionId < 1) {
+                $profileVersionId = AccountWorkBatchService::latestUnlinkedProfileVersionId($accountId);
+            }
+            if ($profileVersionId > 0) {
+                $payload['profileVersionId'] = $profileVersionId;
+            }
+        }
         try {
             $out = AccountWorkBatchService::enqueueItem(
                 $accountId,
@@ -584,6 +595,9 @@ class AccountWorkController extends Controller
                 $taskRefId,
                 $this->writeOwnerId()
             );
+            if ($profileVersionId > 0 && !empty($out['item_id'])) {
+                AccountWorkBatchService::linkProfileVersion($profileVersionId, (int)($out['batch_id'] ?? 0), (int)$out['item_id']);
+            }
             return $this->success($out, '已挂入账号会话总任务');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 400);
@@ -655,6 +669,7 @@ class AccountWorkController extends Controller
             return $err;
         }
 
+        $profileVersionId = 0;
         if ($taskType === 'modify_profile' && !empty($payload['applyProfileSettings'])) {
             $settings = $payload['profileSettings'] ?? $payload;
             if (!is_array($settings)) {
@@ -663,7 +678,27 @@ class AccountWorkController extends Controller
             if ($err = $this->applyWizardProfileSettings($accountId, is_array($account) ? $account : [], $settings)) {
                 return $err;
             }
+            // 系统资料被覆盖之前的旧数据已在 $account 里：存成版本记录，之后可按字段回撤
+            $profileVersionId = AccountWorkBatchService::createProfileVersion(
+                $accountId,
+                is_array($account) ? $account : [],
+                [
+                    'username' => ltrim(trim((string)($settings['username'] ?? '')), '@'),
+                    'nickname' => trim((string)($settings['nickname'] ?? $settings['displayName'] ?? '')),
+                    'bio' => trim((string)($settings['signature'] ?? $settings['bio'] ?? $settings['profileBio'] ?? '')),
+                    'avatar' => trim((string)($settings['avatarUrl'] ?? $settings['avatarPath'] ?? $settings['profileAvatar'] ?? '')),
+                ],
+                ['source' => 'account_wizard']
+            );
             unset($payload['applyProfileSettings'], $payload['profileSettings']);
+        }
+        if ($taskType === 'modify_profile') {
+            if ($profileVersionId < 1) {
+                $profileVersionId = AccountWorkBatchService::latestUnlinkedProfileVersionId($accountId);
+            }
+            if ($profileVersionId > 0) {
+                $payload['profileVersionId'] = $profileVersionId;
+            }
         }
 
         try {
@@ -674,6 +709,9 @@ class AccountWorkController extends Controller
                 0,
                 $this->writeOwnerId()
             );
+            if ($profileVersionId > 0 && !empty($out['item_id'])) {
+                AccountWorkBatchService::linkProfileVersion($profileVersionId, (int)($out['batch_id'] ?? 0), (int)$out['item_id']);
+            }
             $msg = $taskType === 'modify_profile' ? '已挂入修改资料任务' : '已挂入拉取数据任务';
             return $this->success($out, $msg);
         } catch (\Throwable $e) {

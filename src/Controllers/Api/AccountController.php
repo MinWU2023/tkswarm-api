@@ -676,6 +676,18 @@ class AccountController extends Controller
             return $this->error('请至少提供账号名称、昵称、签名或头像', 422);
         }
         if ($sets) {
+            // 覆盖系统资料之前，先把旧的用户名/昵称/Bio/头像存成版本，供改资料任务按字段回撤
+            \App\Services\AccountWorkBatchService::createProfileVersion(
+                (int)$id,
+                is_array($old) ? $old : [],
+                [
+                    'username' => ltrim(trim((string)$request->input('username', '')), '@'),
+                    'nickname' => trim((string)$request->input('nickname', $request->input('displayName', ''))),
+                    'bio' => trim((string)$request->input('signature', $request->input('bio', $request->input('profileBio', '')))),
+                    'avatar' => trim((string)$request->input('avatarUrl', $request->input('avatarPath', $request->input('profileAvatar', '')))),
+                ],
+                ['source' => 'profile_settings']
+            );
             $sets[] = 'updated_at=CURRENT_TIMESTAMP';
             $bind[] = (int)$id;
             DB::query('UPDATE accounts SET ' . implode(', ', $sets) . ' WHERE id=?', $bind);
@@ -698,6 +710,53 @@ class AccountController extends Controller
         ], $nicknameSkipped
             ? '系统资料已保存（昵称仍在 7 天冷却内，未改昵称）'
             : '系统资料已保存，可点「同步资料」推送到 TikTok');
+    }
+
+    /** 修改资料版本列表（每次改资料前保存的旧数据） */
+    public function profileVersions(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        if ($err = $this->assertAccountOwns($acc)) {
+            return $err;
+        }
+        return $this->success(['items' => \App\Services\AccountWorkBatchService::listProfileVersions((int)$id, 30)]);
+    }
+
+    /**
+     * 手动回撤：body { versionId?, fields? }。不传 versionId 回撤最近一条，不传 fields 回撤全部四项。
+     */
+    public function rollbackProfileVersion(Request $request, string $id): Response
+    {
+        $this->ensureSchema();
+        DataScope::ensureColumns();
+        if ($err = $this->assertCanEditAccounts()) {
+            return $err;
+        }
+        $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [(int)$id]);
+        if ($err = $this->assertAccountOwns($acc)) {
+            return $err;
+        }
+        $versionId = (int)$request->input('versionId', 0);
+        if ($versionId < 1) {
+            $list = \App\Services\AccountWorkBatchService::listProfileVersions((int)$id, 1);
+            $versionId = (int)($list[0]['id'] ?? 0);
+        }
+        $fields = $request->input('fields', []);
+        if (!is_array($fields) || !$fields) {
+            $fields = ['username', 'nickname', 'bio', 'avatar'];
+        }
+        $out = \App\Services\AccountWorkBatchService::rollbackProfileVersion(
+            (int)$id,
+            $versionId,
+            $fields,
+            '手动回撤'
+        );
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['error'] ?? '回撤失败'), 404);
+        }
+        return $this->success($out, '已回撤到修改前的资料');
     }
 
     /**

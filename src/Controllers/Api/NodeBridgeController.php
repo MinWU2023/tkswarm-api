@@ -3188,6 +3188,30 @@ class NodeBridgeController extends Controller
         }
     }
 
+    /** Node 按版本记录回撤资料字段（username/nickname/bio/avatar） */
+    public function profileVersionRollback(Request $request, string $id): Response
+    {
+        $accountId = (int)$id;
+        if ($accountId < 1) {
+            return $this->error('账号不存在', 404);
+        }
+        $fields = $request->input('fields', []);
+        if (!is_array($fields)) {
+            $fields = [];
+        }
+        $out = AccountWorkBatchService::rollbackProfileVersion(
+            $accountId,
+            (int)$request->input('versionId', 0),
+            $fields,
+            trim((string)$request->input('reason', '')),
+            filter_var($request->input('markNicknameChanged', false), FILTER_VALIDATE_BOOLEAN)
+        );
+        if (empty($out['ok'])) {
+            return $this->error((string)($out['error'] ?? '回撤失败'), 409);
+        }
+        return $this->success($out, '已回撤');
+    }
+
     /** Node 写一条「修改资料」逐字段执行记录 */
     public function profileChangeLog(Request $request, string $id): Response
     {

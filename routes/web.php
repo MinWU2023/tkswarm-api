@@ -463,6 +463,8 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::patch('/api/accounts/{id}/profile-settings', AccountController::class . '@patchProfileSettings');
     Router::patch('/api/accounts/{id}/profile-outcome', AccountController::class . '@patchProfileOutcome');
     Router::get('/api/accounts/{id}/profile-change-logs', AccountController::class . '@profileChangeLogs');
+    Router::get('/api/accounts/{id}/profile-versions', AccountController::class . '@profileVersions');
+    Router::post('/api/accounts/{id}/profile-rollback', AccountController::class . '@rollbackProfileVersion');
     Router::get('/api/accounts/{id}/tiktok-profile', AccountController::class . '@tiktokProfile');
     Router::get('/api/accounts/{id}/tiktok-videos', AccountController::class . '@tiktokVideos');
     Router::get('/api/accounts/{id}/online-videos', AccountController::class . '@onlineVideos');
@@ -780,6 +782,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::post('/api/node/work-logs', NodeBridgeController::class . '@appendWorkLog');
     Router::post('/api/node/human-verify/report', NodeBridgeController::class . '@humanVerifyReport');
     Router::post('/api/node/accounts/{id}/profile-change-log', NodeBridgeController::class . '@profileChangeLog');
+    Router::post('/api/node/accounts/{id}/profile-version-rollback', NodeBridgeController::class . '@profileVersionRollback');
     Router::post('/api/node/tasks/claim', NodeBridgeController::class . '@claimTask');
     Router::post('/api/node/tasks/{id}/account-result', NodeBridgeController::class . '@taskAccountResult');
     Router::post('/api/node/tasks/{id}/finish', NodeBridgeController::class . '@finishTask');
