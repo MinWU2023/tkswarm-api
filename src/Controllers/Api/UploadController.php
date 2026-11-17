@@ -8,15 +8,16 @@ use App\Core\Request;
 use App\Core\Response;
 
 /**
- * 通用图片/短视频上传：落到 public/uploads，供 Node 与企业门户同源访问。
+ * 通用图片/短视频上传。
+ * 优先 public/uploads；不可写时回退 storage/uploads，统一经 /api/media 读取。
  */
 class UploadController extends Controller
 {
     public function images(Request $request): Response
     {
-        $dir = $this->uploadsDir();
+        [$dir, $dirError] = $this->resolveUploadsDir();
         if ($dir === null) {
-            return $this->error('无法创建上传目录', 500);
+            return $this->error($dirError ?: '无法创建上传目录（请检查 public/uploads 与 storage/uploads 写权限）', 500);
         }
 
         $files = $this->collectUploadedFiles();
@@ -49,7 +50,6 @@ class UploadController extends Controller
                 $ext = $isVideo ? 'mp4' : 'jpg';
             }
 
-            // 优先保留客户端给定文件名（Node 本机同步同名，便于两边路径一致）
             $preferred = basename(preg_replace('/[^\w.\-]+/', '_', $orig) ?: '');
             if ($preferred !== '' && preg_match('/^\d{10,}-[a-z0-9]+\.[a-z0-9]+$/i', $preferred)) {
                 $filename = $preferred;
@@ -61,19 +61,11 @@ class UploadController extends Controller
                 @unlink($dest);
             }
 
-            $moved = false;
-            $tmp = (string)($file['tmp_name'] ?? '');
-            $raw = $file['bytes'] ?? null;
-            if (is_string($raw) && $raw !== '') {
-                $moved = @file_put_contents($dest, $raw) !== false;
-            } elseif ($tmp !== '' && is_uploaded_file($tmp)) {
-                $moved = @move_uploaded_file($tmp, $dest);
-            } elseif ($tmp !== '' && is_file($tmp)) {
-                $moved = @rename($tmp, $dest) || @copy($tmp, $dest);
-            }
-
+            $saveError = '';
+            $moved = $this->writeUploadFile($file, $dest, $saveError);
             if (!$moved || !is_file($dest)) {
-                return $this->error('保存文件失败', 500);
+                $hint = $saveError !== '' ? $saveError : ('目录=' . $dir . ' writable=' . (is_writable($dir) ? '1' : '0'));
+                return $this->error('保存文件失败：' . $hint, 500);
             }
             @chmod($dest, 0644);
 
@@ -93,21 +85,15 @@ class UploadController extends Controller
         return $this->success(['items' => $items], '文件已上传');
     }
 
-    /**
-     * 公开读上传文件（不走鉴权）。nginx 对 /uploads 异常时仍可用。
-     */
+    /** 公开读上传文件（不鉴权） */
     public function media(Request $request, string $file = ''): Response
     {
         $name = basename(rawurldecode(trim((string)$file)));
         if ($name === '' || !preg_match('/^[\w.\-]+$/', $name)) {
             return $this->error('文件不存在', 404);
         }
-        $dir = $this->uploadsDir();
-        if ($dir === null) {
-            return $this->error('上传目录不可用', 500);
-        }
-        $path = $dir . DIRECTORY_SEPARATOR . $name;
-        if (!is_file($path)) {
+        $path = $this->findUploadFile($name);
+        if ($path === null) {
             return $this->error('文件不存在', 404);
         }
 
@@ -129,13 +115,92 @@ class UploadController extends Controller
         ]);
     }
 
-    private function uploadsDir(): ?string
+    /**
+     * @return array{0:?string,1:string} [dir, error]
+     */
+    private function resolveUploadsDir(): array
     {
-        $dir = APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads';
-        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
-            return null;
+        $candidates = [
+            APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads',
+            APP_PATH . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'uploads',
+        ];
+        $errors = [];
+        foreach ($candidates as $dir) {
+            if (!is_dir($dir)) {
+                if (!@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                    $errors[] = $dir . ' 无法创建';
+                    continue;
+                }
+            }
+            if (!is_writable($dir)) {
+                @chmod($dir, 0775);
+            }
+            if (is_dir($dir) && is_writable($dir)) {
+                // 探针：确认 PHP 进程真能写
+                $probe = $dir . DIRECTORY_SEPARATOR . '.write_probe_' . bin2hex(random_bytes(2));
+                if (@file_put_contents($probe, '1') !== false) {
+                    @unlink($probe);
+                    return [$dir, ''];
+                }
+                $errors[] = $dir . ' 探针写入失败';
+                continue;
+            }
+            $errors[] = $dir . ' 不可写';
         }
-        return $dir;
+        return [null, implode('；', $errors)];
+    }
+
+    private function findUploadFile(string $name): ?string
+    {
+        foreach ([
+            APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $name,
+            APP_PATH . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $name,
+        ] as $path) {
+            if (is_file($path)) {
+                return $path;
+            }
+        }
+        return null;
+    }
+
+    /** @param array{tmp_name?:string,bytes?:string} $file */
+    private function writeUploadFile(array $file, string $dest, string &$error): bool
+    {
+        $tmp = (string)($file['tmp_name'] ?? '');
+        $raw = $file['bytes'] ?? null;
+
+        if (is_string($raw) && $raw !== '') {
+            $n = @file_put_contents($dest, $raw, LOCK_EX);
+            if ($n !== false) {
+                return true;
+            }
+            $error = 'file_put_contents 失败';
+            return false;
+        }
+
+        if ($tmp !== '' && is_uploaded_file($tmp)) {
+            if (@move_uploaded_file($tmp, $dest)) {
+                return true;
+            }
+            // 部分环境 move 失败但仍可读临时文件
+            if (@copy($tmp, $dest) && is_file($dest)) {
+                @unlink($tmp);
+                return true;
+            }
+            $error = 'move_uploaded_file/copy 失败';
+            return false;
+        }
+
+        if ($tmp !== '' && is_file($tmp)) {
+            if (@rename($tmp, $dest) || (@copy($tmp, $dest) && is_file($dest))) {
+                return true;
+            }
+            $error = 'rename/copy 临时文件失败';
+            return false;
+        }
+
+        $error = '没有可用的文件内容';
+        return false;
     }
 
     /** @return list<array{name?:string,type?:string,tmp_name?:string,error?:int,size?:int,bytes?:string}> */
@@ -163,7 +228,6 @@ class UploadController extends Controller
     }
 
     /**
-     * Node sync：JSON `{ files:[{ name, contentBase64, type? }] }`，避免 multipart 在部分环境下 $_FILES 为空。
      * @return list<array{name:string,type:string,error:int,size:int,bytes:string}>
      */
     private function collectBase64Files(Request $request): array

@@ -46,13 +46,15 @@ class MediaUrl
             return $path;
         }
 
-        // http://127.0.0.1:PORT/uploads/xxx → 公网 /uploads/xxx
-        if (preg_match('#^https?://(?:127\.0\.0\.1|localhost)(?::\d+)?(/uploads/.+)$#i', $path, $m)) {
-            return self::appBase() . $m[1];
+        // http://127.0.0.1:PORT/uploads/xxx → 公网 /api/media/xxx（不依赖 nginx 静态写权限）
+        if (preg_match('#^https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/uploads/([^/?#]+)$#i', $path, $m)) {
+            return self::appBase() . '/api/media/' . rawurlencode(rawurldecode($m[1]));
         }
 
         if (preg_match('#^(https?:)?//#i', $path)) {
-            // 旧链接若已是错误的相对解析，仍保留绝对 URL
+            if (preg_match('#/uploads/([^/?#]+)$#i', $path, $m) && preg_match('#tkswarm-api\.dyyweb\.com#i', $path)) {
+                return self::appBase() . '/api/media/' . rawurlencode(rawurldecode($m[1]));
+            }
             return $path;
         }
 
@@ -60,8 +62,11 @@ class MediaUrl
             $path = '/' . $path;
         }
 
-        // /uploads/... 优先静态；同时兼容 /api/media/（PHP 直出兜底）
-        if (str_starts_with($path, '/uploads/') || str_starts_with($path, '/api/media/')) {
+        // /uploads/xxx 与 /api/media/xxx 统一走 PHP 直出，避免 public/uploads 不可写/不可读
+        if (str_starts_with($path, '/uploads/')) {
+            return self::appBase() . '/api/media/' . rawurlencode(basename($path));
+        }
+        if (str_starts_with($path, '/api/media/')) {
             return self::appBase() . $path;
         }
 
