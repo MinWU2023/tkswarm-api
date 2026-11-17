@@ -1842,21 +1842,11 @@ class AccountWorkBatchService
             // pending 分项须已到 scheduled_at（无任务行 / 无定时 视为可领）
             // 注意：auto_follow / video_boost / pull_comments 的 task_ref_id 指向独立主表，
             // 不能 LEFT JOIN tasks，否则会误撞同号矩阵任务的定时，导致「已入队却永不推送」。
-            // 增粉/增值专领：账号有环境行或 profile 即可（领取前会 reclaim 出 idle），不要求此刻 idle
-            // cs_seat / linux 拓客不依赖 account_browser_envs 空闲行（leaseOrServerEnv 合成 linux 环境）
+            // 增粉/增值/养号专领：不在 SQL 里卡环境（否则「无 env 行」永远选不中；
+            // 选中后再 ensureAccountEnvReady / reclaim 补齐 idle）。
+            // 其它类型仍要求 idle（或坐席/linux/注册例外）。
             $envGateSql = $standaloneOnly
-                ? "AND (
-                     EXISTS (
-                       SELECT 1 FROM account_browser_envs e WHERE e.account_id=b.account_id
-                     )
-                     OR EXISTS (
-                       SELECT 1 FROM accounts a WHERE a.id=b.account_id
-                         AND (
-                           TRIM(IFNULL(a.browser_profile_id,''))<>''
-                           OR TRIM(IFNULL(a.tkswarm_browser_profile_id,''))<>''
-                         )
-                     )
-                   )"
+                ? ''
                 : "AND (
                      COALESCE(b.batch_scope,'general') = 'cs_seat'
                      OR (
@@ -1952,12 +1942,14 @@ class AccountWorkBatchService
             }
             self::stampBatchOwnerFromScope($batch);
 
-            // 增粉等专领：领取前再清一次该账号孤儿 busy，尽量腾出 idle
+            // 增粉等专领：领取前补环境 + 清孤儿 busy；失败则跳过换下一条
             if ($standaloneOnly) {
                 try {
                     AccountBrowserEnvService::reclaimExpiredEnvLeases();
                     AccountBrowserEnvService::ensureAccountEnvReady((int)$batch['account_id']);
                 } catch (\Throwable $e) {
+                    $excludeIds[] = $batchId;
+                    continue;
                 }
             }
 
