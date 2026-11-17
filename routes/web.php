@@ -79,6 +79,9 @@ Router::group(['middleware' => [CorsMiddleware::class]], function () {
     Router::get('/api/client-versions/{id}/download', ClientVersionController::class . '@download');
     Router::get('/api/client-versions/{id}', ClientVersionController::class . '@detail');
 
+    // 公开读上传图（头像等）；不鉴权，避免企业门户 / Node 跨域读 /uploads 被拦
+    Router::get('/api/media/{file}', UploadController::class . '@media');
+
     // 客户端：Node / 比特安装包目录与下载（无需登录）
     Router::get('/api/env-installers/catalog', EnvInstallerController::class . '@catalog');
     Router::get('/api/env-installers/recommended', EnvInstallerController::class . '@recommended');

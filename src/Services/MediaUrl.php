@@ -46,12 +46,13 @@ class MediaUrl
             return $path;
         }
 
-        // http://127.0.0.1:PORT/uploads/xxx → 公网 API /uploads/xxx
+        // http://127.0.0.1:PORT/uploads/xxx → 公网 /uploads/xxx
         if (preg_match('#^https?://(?:127\.0\.0\.1|localhost)(?::\d+)?(/uploads/.+)$#i', $path, $m)) {
             return self::appBase() . $m[1];
         }
 
         if (preg_match('#^(https?:)?//#i', $path)) {
+            // 旧链接若已是错误的相对解析，仍保留绝对 URL
             return $path;
         }
 
@@ -59,8 +60,8 @@ class MediaUrl
             $path = '/' . $path;
         }
 
-        // /uploads/... 挂在 API public 下，企业门户与其它端统一走公网域名
-        if (str_starts_with($path, '/uploads/')) {
+        // /uploads/... 优先静态；同时兼容 /api/media/（PHP 直出兜底）
+        if (str_starts_with($path, '/uploads/') || str_starts_with($path, '/api/media/')) {
             return self::appBase() . $path;
         }
 

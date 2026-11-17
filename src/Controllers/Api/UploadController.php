@@ -14,12 +14,15 @@ class UploadController extends Controller
 {
     public function images(Request $request): Response
     {
-        $dir = APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads';
-        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        $dir = $this->uploadsDir();
+        if ($dir === null) {
             return $this->error('无法创建上传目录', 500);
         }
 
         $files = $this->collectUploadedFiles();
+        if (!$files) {
+            $files = $this->collectBase64Files($request);
+        }
         if (!$files) {
             return $this->error('请选择文件', 400);
         }
@@ -29,16 +32,9 @@ class UploadController extends Controller
         $items = [];
 
         foreach (array_slice($files, 0, 35) as $file) {
-            $err = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+            $err = (int)($file['error'] ?? UPLOAD_ERR_OK);
             if ($err !== UPLOAD_ERR_OK) {
                 continue;
-            }
-            $tmp = (string)($file['tmp_name'] ?? '');
-            if ($tmp === '' || !is_uploaded_file($tmp)) {
-                // Node sync 可能走 curl 临时文件，允许 is_file
-                if ($tmp === '' || !is_file($tmp)) {
-                    continue;
-                }
             }
 
             $orig = (string)($file['name'] ?? 'file.bin');
@@ -62,13 +58,20 @@ class UploadController extends Controller
             }
             $dest = $dir . DIRECTORY_SEPARATOR . $filename;
             if (is_file($dest)) {
-                // 同名已存在则覆盖（同步场景）
                 @unlink($dest);
             }
-            $moved = @move_uploaded_file($tmp, $dest);
-            if (!$moved) {
+
+            $moved = false;
+            $tmp = (string)($file['tmp_name'] ?? '');
+            $raw = $file['bytes'] ?? null;
+            if (is_string($raw) && $raw !== '') {
+                $moved = @file_put_contents($dest, $raw) !== false;
+            } elseif ($tmp !== '' && is_uploaded_file($tmp)) {
+                $moved = @move_uploaded_file($tmp, $dest);
+            } elseif ($tmp !== '' && is_file($tmp)) {
                 $moved = @rename($tmp, $dest) || @copy($tmp, $dest);
             }
+
             if (!$moved || !is_file($dest)) {
                 return $this->error('保存文件失败', 500);
             }
@@ -76,6 +79,7 @@ class UploadController extends Controller
 
             $items[] = [
                 'url' => '/uploads/' . $filename,
+                'mediaUrl' => '/api/media/' . rawurlencode($filename),
                 'name' => $orig,
                 'size' => (int)(@filesize($dest) ?: ($file['size'] ?? 0)),
                 'type' => $isVideo ? 'video' : 'image',
@@ -89,7 +93,52 @@ class UploadController extends Controller
         return $this->success(['items' => $items], '文件已上传');
     }
 
-    /** @return list<array{name?:string,type?:string,tmp_name?:string,error?:int,size?:int}> */
+    /**
+     * 公开读上传文件（不走鉴权）。nginx 对 /uploads 异常时仍可用。
+     */
+    public function media(Request $request, string $file = ''): Response
+    {
+        $name = basename(rawurldecode(trim((string)$file)));
+        if ($name === '' || !preg_match('/^[\w.\-]+$/', $name)) {
+            return $this->error('文件不存在', 404);
+        }
+        $dir = $this->uploadsDir();
+        if ($dir === null) {
+            return $this->error('上传目录不可用', 500);
+        }
+        $path = $dir . DIRECTORY_SEPARATOR . $name;
+        if (!is_file($path)) {
+            return $this->error('文件不存在', 404);
+        }
+
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'gif' => 'image/gif',
+            'mp4' => 'video/mp4',
+            default => 'application/octet-stream',
+        };
+        $size = (int)(@filesize($path) ?: 0);
+        return Response::file($path, 200, [
+            'Content-Type' => $mime,
+            'Content-Length' => (string)$size,
+            'Cache-Control' => 'public, max-age=86400',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
+    }
+
+    private function uploadsDir(): ?string
+    {
+        $dir = APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads';
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+            return null;
+        }
+        return $dir;
+    }
+
+    /** @return list<array{name?:string,type?:string,tmp_name?:string,error?:int,size?:int,bytes?:string}> */
     private function collectUploadedFiles(): array
     {
         $out = [];
@@ -97,7 +146,6 @@ class UploadController extends Controller
         if (!$bag) {
             return [];
         }
-        // 单文件
         if (!is_array($bag['name'] ?? null)) {
             return [$bag];
         }
@@ -109,6 +157,55 @@ class UploadController extends Controller
                 'tmp_name' => $bag['tmp_name'][$i] ?? '',
                 'error' => (int)($bag['error'][$i] ?? UPLOAD_ERR_NO_FILE),
                 'size' => (int)($bag['size'][$i] ?? 0),
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Node sync：JSON `{ files:[{ name, contentBase64, type? }] }`，避免 multipart 在部分环境下 $_FILES 为空。
+     * @return list<array{name:string,type:string,error:int,size:int,bytes:string}>
+     */
+    private function collectBase64Files(Request $request): array
+    {
+        $body = $request->json() ?? $request->all();
+        $list = $body['files'] ?? null;
+        if (!is_array($list) || !$list) {
+            $one = $body['file'] ?? null;
+            if (is_array($one)) {
+                $list = [$one];
+            } elseif (!empty($body['contentBase64']) || !empty($body['content_base64'])) {
+                $list = [[
+                    'name' => (string)($body['name'] ?? $body['fileName'] ?? 'file.bin'),
+                    'contentBase64' => (string)($body['contentBase64'] ?? $body['content_base64'] ?? ''),
+                    'type' => (string)($body['type'] ?? ''),
+                ]];
+            } else {
+                return [];
+            }
+        }
+
+        $out = [];
+        foreach ($list as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $name = basename((string)($row['name'] ?? $row['fileName'] ?? 'file.bin'));
+            $b64 = (string)($row['contentBase64'] ?? $row['content_base64'] ?? $row['data'] ?? '');
+            $b64 = preg_replace('#^data:[^;]+;base64,#', '', trim($b64)) ?: '';
+            if ($name === '' || $b64 === '') {
+                continue;
+            }
+            $raw = base64_decode($b64, true);
+            if ($raw === false || $raw === '') {
+                continue;
+            }
+            $out[] = [
+                'name' => $name,
+                'type' => (string)($row['type'] ?? ''),
+                'error' => UPLOAD_ERR_OK,
+                'size' => strlen($raw),
+                'bytes' => $raw,
             ];
         }
         return $out;
