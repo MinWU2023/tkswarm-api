@@ -187,6 +187,10 @@ class RoutePermissionMap
             ['method' => 'PUT', 'pattern' => '#^/api/industry-data#', 'codes' => ['rbac.industry_data.update', 'rbac.industry_data', 'rbac.manage']],
             ['method' => 'DELETE', 'pattern' => '#^/api/industry-data#', 'codes' => ['rbac.industry_data.delete', 'rbac.industry_data', 'rbac.manage']],
             ['method' => 'GET', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.view', 'rbac.company_data', 'rbac.industry_data', 'rbac.manage']],
+            // 通用上传：登录即可（头像/聊天图等）
+            ['method' => 'POST', 'pattern' => '#^/api/uploads(/|$)#', 'codes' => []],
+            // 一键进门户：有企业数据查看权限即可（不要求新建权限）
+            ['method' => 'POST', 'pattern' => '#^/api/companies/\d+/portal-login$#', 'codes' => ['rbac.company_data.view', 'rbac.company_data', 'rbac.industry_data', 'rbac.manage']],
             ['method' => 'POST', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.create', 'rbac.company_data.update', 'rbac.company_data', 'rbac.manage']],
             ['method' => 'PUT', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.update', 'rbac.company_data', 'rbac.manage']],
             ['method' => 'DELETE', 'pattern' => '#^/api/companies#', 'codes' => ['rbac.company_data.delete', 'rbac.company_data', 'rbac.manage']],

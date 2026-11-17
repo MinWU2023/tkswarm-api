@@ -47,6 +47,7 @@ use App\Controllers\Api\AiLeadClueController;
 use App\Controllers\Api\IndustryDataController;
 use App\Controllers\Api\CountryDataController;
 use App\Controllers\Api\CompanyController;
+use App\Controllers\Api\UploadController;
 use App\Controllers\Admin\PermissionController;
 use App\Controllers\Admin\ConsoleController;
 use App\Controllers\Admin\TicketManageController;
@@ -215,6 +216,9 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
     Router::get('/api/settings', SystemController::class . '@getSettings');
     Router::post('/api/settings', SystemController::class . '@saveSettings');
     Router::put('/api/settings', SystemController::class . '@saveSettings');
+
+    // 通用上传：落到 public/uploads，企业门户与 Node 同步共用
+    Router::post('/api/uploads/images', UploadController::class . '@images');
 
     // 开发管理 · SMTP（仅超管，控制器内二次校验）
     Router::get('/api/smtp-config', SmtpConfigController::class . '@get');
@@ -692,6 +696,7 @@ Router::group(['middleware' => [CorsMiddleware::class, AuthMiddleware::class, Pe
 
     Router::get('/api/companies', CompanyController::class . '@list');
     Router::post('/api/companies', CompanyController::class . '@create');
+    Router::post('/api/companies/{id}/portal-login', CompanyController::class . '@portalLogin');
     Router::get('/api/companies/{id}', CompanyController::class . '@show');
     Router::put('/api/companies/{id}', CompanyController::class . '@update');
     Router::delete('/api/companies/{id}', CompanyController::class . '@delete');

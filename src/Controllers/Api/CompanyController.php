@@ -7,6 +7,7 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database\DB;
+use App\Core\Auth\RBAC;
 use App\Services\CompanyService;
 use App\Services\DataScope;
 use App\Services\IndustryDataService;
@@ -187,5 +188,92 @@ class CompanyController extends Controller
             return $this->error($e->getMessage(), 404);
         }
         return $this->success(null, '企业已删除');
+    }
+
+    /**
+     * 管理端一键进入企业门户：为关联企业客户签发会话，前端新窗口带 sso token 自动登录。
+     * 密码仅存哈希，不回传明文；以 SSO 会话代替填账密。
+     */
+    public function portalLogin(Request $request, string $id): Response
+    {
+        CompanyService::ensureSchema();
+        $companyId = (int)$id;
+        if ($companyId < 1) {
+            return $this->error('企业无效', 422);
+        }
+        if (!DataScope::isCompanyAccessible($companyId)) {
+            return $this->error('无权访问该企业', 403);
+        }
+
+        $company = DB::selectOne('SELECT id, name, status FROM companies WHERE id=? LIMIT 1', [$companyId]);
+        if (!$company) {
+            return $this->error('企业不存在', 404);
+        }
+        if ((int)($company['status'] ?? 0) !== 1) {
+            return $this->error('企业已停用，无法进入门户', 422);
+        }
+
+        $user = DB::selectOne(
+            "SELECT u.id, u.username, u.nickname, u.status, u.role_id, cu.is_primary
+             FROM company_users cu
+             INNER JOIN admin_users u ON u.id = cu.user_id
+             INNER JOIN admin_roles r ON r.id = u.role_id
+             WHERE cu.company_id=?
+               AND u.status=1
+               AND r.name LIKE ?
+             ORDER BY cu.is_primary DESC, u.id ASC
+             LIMIT 1",
+            [$companyId, '%企业客户%']
+        );
+        if (!$user) {
+            return $this->error('该企业未绑定可用的企业客户账号', 422);
+        }
+
+        $token = bin2hex(random_bytes(32));
+        $expires = date('Y-m-d H:i:s', time() + 86400 * 7);
+        DB::table('admin_sessions')->insert([
+            'user_id' => (int)$user['id'],
+            'token' => $token,
+            'expires_at' => $expires,
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+            'created_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $operatorId = (int)(($GLOBALS['auth_user']['id'] ?? 0));
+        try {
+            RBAC::logOperation(
+                $operatorId > 0 ? $operatorId : (int)$user['id'],
+                '企业门户一键登录',
+                'company_portal_sso',
+                (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'),
+                (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+                '/api/companies/' . $companyId . '/portal-login'
+            );
+        } catch (\Throwable $e) {
+        }
+
+        $appUrl = rtrim((string)(getenv('APP_URL') ?: ''), '/');
+        if ($appUrl === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+            $host = (string)($_SERVER['HTTP_HOST'] ?? 'tkswarm-api.dyyweb.com');
+            $appUrl = ($https ? 'https://' : 'http://') . $host;
+        }
+        $loginPath = '/company/login?sso=' . rawurlencode($token);
+
+        return $this->success([
+            'token' => $token,
+            'expiresAt' => $expires,
+            'companyId' => $companyId,
+            'companyName' => (string)($company['name'] ?? ''),
+            'user' => [
+                'id' => (int)$user['id'],
+                'username' => (string)($user['username'] ?? ''),
+                'nickname' => (string)($user['nickname'] ?? ''),
+                'isPrimary' => !empty($user['is_primary']),
+            ],
+            'loginPath' => $loginPath,
+            'loginUrl' => $appUrl . $loginPath,
+        ], '已签发企业门户登录凭证');
     }
 }

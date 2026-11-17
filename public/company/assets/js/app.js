@@ -379,7 +379,21 @@
     routes: routes
   });
 
+  /** 管理端一键登录：/company/login?sso=TOKEN → 写入 localStorage 后进后台 */
+  function consumeSsoFromRoute(to) {
+    var q = (to && to.query) || {};
+    var sso = String(q.sso || q.token || '').trim();
+    if (!sso) return false;
+    CompanyAPI.setToken(sso);
+    return true;
+  }
+
   router.beforeEach(async function (to, from, next) {
+    if (consumeSsoFromRoute(to)) {
+      var redirect = String((to.query && to.query.redirect) || '/dashboard');
+      if (!redirect || redirect === '/login') redirect = '/dashboard';
+      return next({ path: redirect, replace: true });
+    }
     if (to.meta && to.meta.public) return next();
     var token = CompanyAPI.getToken();
     if (!token) {

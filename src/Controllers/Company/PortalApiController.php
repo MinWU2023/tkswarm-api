@@ -14,6 +14,7 @@ use App\Services\CompanyService;
 use App\Services\CountryDataService;
 use App\Services\DataScope;
 use App\Services\Github\GithubReleaseCdnService;
+use App\Services\MediaUrl;
 use App\Services\PullCommentService;
 use App\Services\RedisCache;
 use App\Services\TikTokVideoScreenshotService;
@@ -669,7 +670,7 @@ class PortalApiController extends Controller
                     'accountStatus' => (string)($r['account_status'] ?? 'normal'),
                     'country' => $countryLabels[$countryRaw] ?? $countryRaw,
                     'groupName' => (string)($r['group_name'] ?? ''),
-                    'avatarUrl' => $avatar,
+                    'avatarUrl' => MediaUrl::publicUrl($avatar),
                     'notes' => (string)($r['notes'] ?? ''),
                     'followers' => (int)($r['followers_count'] ?? 0),
                     'following' => (int)($r['following_count'] ?? 0),
@@ -1238,7 +1239,7 @@ class PortalApiController extends Controller
                 'groupName' => (string)($account['group_name'] ?? ''),
                 'notes' => (string)($account['notes'] ?? ''),
                 'bio' => (string)($account['profile_bio'] ?? ($profile['bio'] ?? '')),
-                'avatarUrl' => $avatar,
+                'avatarUrl' => MediaUrl::publicUrl($avatar),
                 'enabled' => (int)($account['enabled'] ?? 1) === 1,
                 'createdAt' => (string)($account['created_at'] ?? ''),
                 'updatedAt' => (string)($account['updated_at'] ?? ''),
@@ -1379,7 +1380,7 @@ class PortalApiController extends Controller
                 'id' => $accountId,
                 'username' => (string)($row['username'] ?? ''),
                 'nickname' => (string)($row['nickname'] ?? ''),
-                'avatarUrl' => $avatar,
+                'avatarUrl' => MediaUrl::publicUrl($avatar),
                 'loginStatus' => (string)($row['login_status'] ?? ''),
             ],
             'screenshots' => $shots,
@@ -2812,7 +2813,7 @@ class PortalApiController extends Controller
             'friendUid' => (string)($row['friend_uid'] ?? ''),
             'username' => (string)($row['username'] ?? ''),
             'nickname' => (string)($row['nickname'] ?? ''),
-            'avatarUrl' => (string)($row['avatar_url'] ?? ''),
+            'avatarUrl' => MediaUrl::publicUrl((string)($row['avatar_url'] ?? '')),
             'relation' => $relation,
             'userType' => $userType,
             'tags' => $tags,
