@@ -5,6 +5,7 @@ namespace App\Services;
 
 /**
  * 把头像 /uploads 相对路径或本机 127.0.0.1 地址转成 API 公网可访问 URL。
+ * 尽量少用含 # 的字符类正则，避免分隔符冲突。
  */
 class MediaUrl
 {
@@ -36,6 +37,19 @@ class MediaUrl
         return (bool)preg_match('~^https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/?$~i', $base);
     }
 
+    /** 从 /uploads/xxx 或 URL 末尾取出文件名 */
+    private static function uploadFileName(string $path): string
+    {
+        $path = explode('?', $path, 2)[0];
+        $path = explode('#', $path, 2)[0];
+        $pos = stripos($path, '/uploads/');
+        if ($pos === false) {
+            return '';
+        }
+        $name = basename(substr($path, $pos + strlen('/uploads/')));
+        return preg_match('~^[\w.\-]+$~', $name) ? $name : '';
+    }
+
     public static function publicUrl(?string $path): string
     {
         $path = trim((string)$path);
@@ -46,18 +60,22 @@ class MediaUrl
             return $path;
         }
 
-        // http://127.0.0.1:PORT/uploads/xxx → 公网 /api/media/xxx
-        // 分隔符用 ~，避免 [^/?#] 里的 # 截断正则
-        if (preg_match('~^https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/uploads/([^/?#]+)$~i', $path, $m)) {
-            return self::appBase() . '/api/media/' . rawurlencode(rawurldecode($m[1]));
+        // http://127.0.0.1:PORT/uploads/xxx → /api/media/xxx
+        if (preg_match('~^https?://(?:127\.0\.0\.1|localhost)(?::\d+)/uploads/~i', $path)
+            || preg_match('~^https?://(?:127\.0\.0\.1|localhost)/uploads/~i', $path)
+        ) {
+            $name = self::uploadFileName($path);
+            if ($name !== '') {
+                return self::appBase() . '/api/media/' . rawurlencode($name);
+            }
         }
 
         if (preg_match('~^(https?:)?//~i', $path)) {
-            if (
-                preg_match('~/uploads/([^/?#]+)$~i', $path, $m)
-                && preg_match('~tkswarm-api\.dyyweb\.com~i', $path)
-            ) {
-                return self::appBase() . '/api/media/' . rawurlencode(rawurldecode($m[1]));
+            if (stripos($path, 'tkswarm-api.dyyweb.com') !== false && stripos($path, '/uploads/') !== false) {
+                $name = self::uploadFileName($path);
+                if ($name !== '') {
+                    return self::appBase() . '/api/media/' . rawurlencode($name);
+                }
             }
             return $path;
         }
@@ -67,7 +85,10 @@ class MediaUrl
         }
 
         if (str_starts_with($path, '/uploads/')) {
-            return self::appBase() . '/api/media/' . rawurlencode(basename($path));
+            $name = self::uploadFileName($path);
+            if ($name !== '') {
+                return self::appBase() . '/api/media/' . rawurlencode($name);
+            }
         }
         if (str_starts_with($path, '/api/media/')) {
             return self::appBase() . $path;

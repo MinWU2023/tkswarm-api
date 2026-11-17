@@ -2202,7 +2202,8 @@ class NodeBridgeController extends Controller
             // 归属校验：URL / 显式作者句柄必须是本账号，避免推荐视频被改写成 @本号
             $authorHint = strtolower(ltrim(trim((string)($row['authorUsername'] ?? $row['author_username'] ?? '')), '@'));
             $urlHandle = '';
-            if (preg_match('#tiktok\.com/@([^/?#]+)#i', $videoUrl, $hm)) {
+            // 分隔符用 ~，避免 [^/?#] 里的 # 截断正则（Unknown modifier ']'）
+            if (preg_match('~tiktok\.com/@([^/?#]+)~i', $videoUrl, $hm)) {
                 $urlHandle = strtolower(rawurldecode($hm[1]));
             }
             $accKey = strtolower(ltrim($accName, '@'));
