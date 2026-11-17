@@ -761,7 +761,8 @@ class NodeBridgeController extends Controller
         }
 
         // Content 页签逐条内容（含视频链接/封面，并尽量匹配系统素材 ID）
-        if (is_array($content)) {
+        // 本次没抓到任何内容行（空数组）时保留库里已有内容数据，避免一次抓取失败把旧数据清空
+        if (is_array($content) && count($content) > 0) {
             DB::query('DELETE FROM tiktok_studio_content WHERE account_id=?', [$aid]);
             $rowNo = 0;
             $matchedMaterials = 0;
