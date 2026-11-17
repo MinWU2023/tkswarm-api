@@ -918,6 +918,118 @@
     ]);
   }
 
+  /** 与查看数据弹框一致的 8 个用户画像板块 */
+  var PORTRAIT_FALLBACK = [
+    { key: 'overview_traffic_source', title: 'Traffic source', kind: 'bars' },
+    { key: 'overview_search_queries', title: 'Search queries', kind: 'bars' },
+    { key: 'viewers_gender', title: 'Viewers · Gender', kind: 'gender' },
+    { key: 'viewers_age', title: 'Viewers · Age', kind: 'bars' },
+    { key: 'viewers_locations', title: 'Viewers · Locations', kind: 'bars' },
+    { key: 'followers_gender', title: 'Followers · Gender', kind: 'gender' },
+    { key: 'followers_age', title: 'Followers · Age', kind: 'bars' },
+    { key: 'followers_locations', title: 'Followers · Locations', kind: 'bars' }
+  ];
+  var GENDER_PALETTE = ['#2F5BFF', '#6B93FF', '#B7CBFF'];
+
+  function normalizePortraitMods(studioPortrait) {
+    var list = Array.isArray(studioPortrait) ? studioPortrait : [];
+    return PORTRAIT_FALLBACK.map(function (fb, idx) {
+      var hit = null;
+      for (var i = 0; i < list.length; i++) {
+        if (String(list[i].key || '') === fb.key) { hit = list[i]; break; }
+      }
+      if (!hit) hit = list[idx] || {};
+      return {
+        key: fb.key,
+        title: hit.title || fb.title,
+        kind: hit.kind || fb.kind,
+        range: hit.range || '',
+        hint: hit.hint || '',
+        items: Array.isArray(hit.items) ? hit.items : []
+      };
+    });
+  }
+
+  function portraitBarsBody(items, hint) {
+    var rows = (items && items.length) ? items : [
+      { label: '-', value: 0, text: '-%', placeholder: true },
+      { label: '-', value: 0, text: '-%', placeholder: true },
+      { label: '-', value: 0, text: '-%', placeholder: true },
+      { label: '-', value: 0, text: '-%', placeholder: true },
+      { label: '-', value: 0, text: '-%', placeholder: true }
+    ];
+    return h('div', null, [
+      hint ? h('div', { class: 'cx-portrait-hint' }, hint) : null,
+      h('div', { class: 'cx-portrait-bars' }, rows.map(function (it) {
+        var empty = !!it.placeholder || it.label === '-' || it.text === '-%';
+        var pct = Math.max(0, Math.min(100, Number(it.value) || 0));
+        return h('div', { class: 'cx-portrait-bar-row' }, [
+          h('div', { class: 'cx-portrait-bar-head' }, [
+            h('span', { class: 'cx-portrait-bar-label', title: it.label || '' }, it.label || '-'),
+            h('span', { class: 'cx-portrait-bar-pct' }, it.text || (empty ? '-%' : (pct + '%')))
+          ]),
+          h('div', { class: 'cx-portrait-bar-track' }, [
+            h('div', {
+              class: 'cx-portrait-bar-fill' + (empty ? ' is-empty' : ''),
+              style: 'width:' + (empty ? 0 : pct) + '%'
+            })
+          ])
+        ]);
+      }))
+    ]);
+  }
+
+  function portraitGenderBody(items, hint) {
+    var rows = (items && items.length) ? items : [
+      { label: '-', value: 0, text: '-%', placeholder: true, color: GENDER_PALETTE[0] },
+      { label: '-', value: 0, text: '-%', placeholder: true, color: GENDER_PALETTE[1] },
+      { label: '-', value: 0, text: '-%', placeholder: true, color: GENDER_PALETTE[2] }
+    ];
+    var usable = rows.filter(function (it) { return !it.placeholder && Number(it.value) > 0; });
+    var acc = 0;
+    var stops = usable.map(function (it, i) {
+      var v = Math.max(0, Math.min(100, Number(it.value) || 0)) / 2;
+      var start = acc;
+      acc += v;
+      var color = it.color || GENDER_PALETTE[i % GENDER_PALETTE.length];
+      return color + ' ' + start + '% ' + Math.min(50, acc) + '%';
+    });
+    var grad = stops.length
+      ? 'conic-gradient(from 270deg, ' + stops.join(', ') + ', #E8EDF5 ' + Math.min(50, acc) + '% 50%, transparent 50% 100%)'
+      : 'conic-gradient(from 270deg, #E8EDF5 0% 50%, transparent 50% 100%)';
+    return h('div', null, [
+      hint ? h('div', { class: 'cx-portrait-hint' }, hint) : null,
+      h('div', { class: 'cx-portrait-gender' }, [
+        h('div', { class: 'cx-portrait-donut-wrap' }, [
+          h('div', { class: 'cx-portrait-donut', style: 'background:' + grad })
+        ]),
+        h('div', { class: 'cx-portrait-legend' }, rows.map(function (it, i) {
+          return h('div', { class: 'cx-portrait-legend-row' }, [
+            h('span', {
+              class: 'cx-portrait-swatch',
+              style: 'background:' + (it.color || GENDER_PALETTE[i % GENDER_PALETTE.length])
+            }),
+            h('span', { class: 'cx-portrait-legend-label' }, it.label || '-'),
+            h('span', { class: 'cx-portrait-legend-pct' }, it.text || '-%')
+          ]);
+        }))
+      ])
+    ]);
+  }
+
+  function portraitCard(mod) {
+    var body = mod.kind === 'gender'
+      ? portraitGenderBody(mod.items, mod.hint)
+      : portraitBarsBody(mod.items, mod.hint);
+    return h('div', { class: 'cx-portrait-card', key: mod.key }, [
+      h('div', { class: 'cx-portrait-card-head' }, [
+        h('div', { class: 'cx-portrait-card-title' }, mod.title),
+        mod.range ? h('div', { class: 'cx-portrait-card-range' }, mod.range) : null
+      ]),
+      h('div', { class: 'cx-portrait-card-body' }, [body])
+    ]);
+  }
+
   var AccountDetailView = {
     name: 'AccountDetailView',
     data: function () {
@@ -928,6 +1040,9 @@
         recentVideos: [],
         daily28: [],
         snapshots: [],
+        studioPortrait: [],
+        studioContent: [],
+        studioSync: null,
         hasDailyData: false,
         hasSnapshots: false,
         chartHidden: { daily28: {}, snapshots: {} }
@@ -949,12 +1064,18 @@
           this.recentVideos = d.recentVideos || [];
           this.daily28 = padDaily28(d.daily28 || []);
           this.snapshots = d.snapshots || [];
+          this.studioPortrait = d.studioPortrait || [];
+          this.studioContent = d.studioContent || [];
+          this.studioSync = d.studioSync || null;
           this.hasDailyData = !!d.hasDailyData;
           this.hasSnapshots = !!d.hasSnapshots;
         } catch (e) {
           ElMessage.error(e.message || '加载失败');
           this.account = null;
           this.daily28 = padDaily28([]);
+          this.studioPortrait = [];
+          this.studioContent = [];
+          this.studioSync = null;
         } finally {
           this.loading = false;
         }
@@ -993,6 +1114,35 @@
             { key: 'likes', name: '获赞', color: '#f59e0b', values: rows.map(function (s) { return Number(s.likes || 0); }) }
           ]
         };
+      },
+      portraitMods: function () {
+        return normalizePortraitMods(this.studioPortrait);
+      },
+      portraitFilledCount: function () {
+        return this.portraitMods().filter(function (m) {
+          return (m.items || []).some(function (it) {
+            return !it.placeholder && Number(it.value) > 0;
+          });
+        }).length;
+      },
+      syncMetaText: function () {
+        var sync = this.studioSync;
+        if (!sync) return '尚未拉取过 Studio 数据';
+        var status = sync.status === 'error' ? '失败' : '成功';
+        return '最近拉取：' + (sync.capturedAt || '-') +
+          '　页签 ' + (sync.tabCount || 0) + ' 个　接口 ' + (sync.apiCount || 0) +
+          ' 个　状态 ' + status + (sync.message ? ('　' + sync.message) : '');
+      },
+      syncRangeText: function () {
+        var sync = this.studioSync;
+        if (!sync || !sync.metaJson) return '';
+        try {
+          var meta = JSON.parse(sync.metaJson);
+          if (meta && Array.isArray(meta.ranges) && meta.ranges.length) {
+            return '各页签数据区间：' + meta.ranges.join('　');
+          }
+        } catch (e) { /* ignore */ }
+        return '';
       }
     },
     render: function () {
@@ -1022,12 +1172,18 @@
         { label: '点赞 · 28天', value: s.periodLikes || 0, cls: 'tone-violet' },
         { label: '评论 · 28天', value: s.periodComments || 0, cls: 'tone-pink' },
         { label: '转发 · 28天', value: s.periodShares || 0, cls: 'tone-orange' },
+        { label: '预估收益 · 28天', value: s.periodEstRewards || 0, cls: 'tone-amber' },
         { label: '播放 · 一年', value: s.yearVideoViews || 0, cls: 'tone-sky' },
         { label: '主页浏览 · 一年', value: s.yearProfileViews || 0, cls: 'tone-emerald' },
         { label: '点赞 · 一年', value: s.yearLikes || 0, cls: 'tone-violet' },
         { label: '评论 · 一年', value: s.yearComments || 0, cls: 'tone-pink' },
-        { label: '转发 · 一年', value: s.yearShares || 0, cls: 'tone-orange' }
+        { label: '转发 · 一年', value: s.yearShares || 0, cls: 'tone-orange' },
+        { label: '预估收益 · 一年', value: s.yearEstRewards || 0, cls: 'tone-amber' }
       ];
+      var portraitMods = self.portraitMods();
+      var portraitFilled = self.portraitFilledCount();
+      var syncRange = self.syncRangeText();
+      var studioContent = self.studioContent || [];
       return h('div', { class: 'page-view detail-page' }, [
         h('div', { class: 'detail-topbar' }, [
           h(ElementPlus.ElButton, {
@@ -1064,7 +1220,7 @@
             ])
           ])
         ]),
-        h('div', { class: 'stat-grid stat-grid-5', style: 'margin-top:16px' }, periodCards.map(function (c) {
+        h('div', { class: 'stat-grid stat-grid-6', style: 'margin-top:16px' }, periodCards.map(function (c) {
           return h('div', { class: 'stat-card ' + c.cls }, [
             h('div', { class: 'label' }, c.label),
             h('div', { class: 'value' }, fmtNum(c.value)),
@@ -1089,6 +1245,106 @@
               self.toggleChartSeries('daily28', key);
             })
           ])
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:16px' }, [
+          panelHead(
+            '用户画像',
+            h('span', { class: 'chart-hint' }, portraitFilled + '/8 有数据')
+          ),
+          h('div', { class: 'cx-portrait-meta' }, self.syncMetaText()),
+          syncRange ? h('div', { class: 'cx-portrait-meta' }, syncRange) : null,
+          h('div', { class: 'cx-portrait-meta' },
+            '采集自 Studio Analytics（Overview / Viewers / Followers）· Last 365 days；一排 2 个板块'),
+          h('div', { class: 'cx-portrait-grid' }, portraitMods.map(function (mod) {
+            return portraitCard(mod);
+          }))
+        ]),
+        h('div', { class: 'panel', style: 'margin-top:16px' }, [
+          panelHead(
+            '内容数据（Studio Posts）',
+            h('span', { class: 'chart-hint' }, studioContent.length + ' 条')
+          ),
+          studioContent.length
+            ? h('div', { class: 'cx-content-table-wrap' }, [
+                h('table', { class: 'cx-content-table' }, [
+                  h('thead', [
+                    h('tr', [
+                      h('th', '#'),
+                      h('th', '封面'),
+                      h('th', '内容'),
+                      h('th', '互动'),
+                      h('th', '操作')
+                    ])
+                  ]),
+                  h('tbody', studioContent.map(function (c) {
+                    var url = String(c.videoUrl || '');
+                    var cover = String(c.coverUrl || '');
+                    var mid = Number(c.materialId || 0);
+                    var vid = String(c.videoId || '');
+                    var shortUrl = url ? url.replace(/^https?:\/\/(www\.)?/i, '') : '';
+                    return h('tr', { key: String(c.rowNo) + '-' + vid + '-' + mid }, [
+                      h('td', { class: 'cx-content-idx' }, String(c.rowNo || '')),
+                      h('td', { class: 'cx-content-cover' }, [
+                        cover
+                          ? h('img', {
+                              class: 'cx-content-thumb',
+                              src: cover,
+                              alt: '',
+                              loading: 'lazy',
+                              referrerpolicy: 'no-referrer'
+                            })
+                          : h('span', { class: 'muted' }, '—')
+                      ]),
+                      h('td', [
+                        h('div', { class: 'cx-content-cell' }, [
+                          h('div', { class: 'cx-content-title', title: c.title || '' }, c.title || '—'),
+                          h('div', { class: 'cx-content-meta' }, [
+                            vid ? h('span', '视频 ID ' + vid) : null,
+                            h('span', '素材 ' + (mid > 0 ? mid : '—')),
+                            h('span', c.postedAt || '—')
+                          ]),
+                          url
+                            ? h('a', {
+                                class: 'cx-content-link',
+                                href: url,
+                                target: '_blank',
+                                rel: 'noopener'
+                              }, shortUrl)
+                            : h('span', { class: 'muted' }, '无链接')
+                        ])
+                      ]),
+                      h('td', [
+                        h('div', { class: 'cx-content-metrics' }, [
+                          h('div', [h('small', '播放'), h('b', fmtNum(c.views))]),
+                          h('div', [h('small', '点赞'), h('b', fmtNum(c.likes))]),
+                          h('div', [h('small', '评论'), h('b', fmtNum(c.comments))]),
+                          h('div', [h('small', '分享'), h('b', fmtNum(c.shares))])
+                        ])
+                      ]),
+                      h('td', { class: 'cx-content-ops' }, [
+                        url
+                          ? h('a', {
+                              class: 'card-detail-btn',
+                              href: url,
+                              target: '_blank',
+                              rel: 'noopener',
+                              style: 'display:inline-flex;padding:4px 10px;font-size:12px'
+                            }, '打开')
+                          : h('span', { class: 'muted' }, '—'),
+                        mid > 0
+                          ? h('button', {
+                              type: 'button',
+                              class: 'card-detail-btn is-ghost',
+                              style: 'display:inline-flex;padding:4px 10px;font-size:12px;margin-left:6px',
+                              onClick: function () { self.$router.push('/videos/' + mid); }
+                            }, '详情')
+                          : null
+                      ])
+                    ]);
+                  }))
+                ])
+              ])
+            : h('div', { class: 'empty-pub' }, '暂无内容数据（请先在客户端拉取；互动数取自 Studio Posts）')
         ]),
         h('div', { class: 'panel', style: 'margin-top:16px' }, [
           panelHead('历史快照', !self.hasSnapshots ? h('span', { class: 'chart-hint' }, '暂无快照') : null),

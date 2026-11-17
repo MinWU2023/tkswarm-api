@@ -1094,6 +1094,139 @@ class PortalApiController extends Controller
             $snapshots = [];
         }
 
+        // 与「查看数据」弹框同源：用户画像 + Studio Posts 内容
+        $studioPortrait = [];
+        try {
+            $portraitRows = DB::select(
+                'SELECT module_key, title, section_title, tab_key, kind, range_label, hint, items_json, sort_no, captured_at
+                 FROM tiktok_studio_portrait WHERE account_id=? ORDER BY sort_no ASC, id ASC',
+                [$aid]
+            ) ?: [];
+            foreach ($portraitRows as $pr) {
+                $items = [];
+                try {
+                    $decoded = json_decode((string)($pr['items_json'] ?? '[]'), true);
+                    if (is_array($decoded)) {
+                        $items = $decoded;
+                    }
+                } catch (\Throwable $e) {
+                    $items = [];
+                }
+                $studioPortrait[] = [
+                    'key' => (string)($pr['module_key'] ?? ''),
+                    'title' => (string)($pr['title'] ?? ''),
+                    'section' => (string)($pr['section_title'] ?? ''),
+                    'tab' => (string)($pr['tab_key'] ?? ''),
+                    'kind' => (string)($pr['kind'] ?? 'bars'),
+                    'range' => (string)($pr['range_label'] ?? ''),
+                    'hint' => (string)($pr['hint'] ?? ''),
+                    'items' => $items,
+                    'sortNo' => (int)($pr['sort_no'] ?? 0),
+                    'capturedAt' => (string)($pr['captured_at'] ?? ''),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $studioPortrait = [];
+        }
+
+        $studioContent = [];
+        try {
+            $studioContent = DB::select(
+                'SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at,
+                        video_id, video_url, cover_url, material_id
+                 FROM tiktok_studio_content WHERE account_id=? ORDER BY row_no ASC',
+                [$aid]
+            ) ?: [];
+        } catch (\Throwable $e) {
+            try {
+                $studioContent = DB::select(
+                    'SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at FROM tiktok_studio_content WHERE account_id=? ORDER BY row_no ASC',
+                    [$aid]
+                ) ?: [];
+            } catch (\Throwable $e2) {
+                $studioContent = [];
+            }
+        }
+        if ($studioContent) {
+            foreach ($studioContent as &$cRow) {
+                $viewsNum = max(0, (int)($cRow['views_num'] ?? 0));
+                $likesNum = max(0, (int)($cRow['likes_num'] ?? 0));
+                $commentsNum = max(0, (int)($cRow['comments_num'] ?? 0));
+                if ($viewsNum >= 50) {
+                    if ($likesNum === $viewsNum) {
+                        $cRow['likes_num'] = 0;
+                    }
+                    if ($commentsNum === $viewsNum) {
+                        $cRow['comments_num'] = 0;
+                    }
+                }
+                $mid = (int)($cRow['material_id'] ?? 0);
+                $needUrl = trim((string)($cRow['video_url'] ?? '')) === '';
+                $needCover = trim((string)($cRow['cover_url'] ?? '')) === '';
+                $needId = trim((string)($cRow['video_id'] ?? '')) === '';
+                if ($mid <= 0 && !$needUrl && !$needCover) {
+                    continue;
+                }
+                try {
+                    if ($mid <= 0) {
+                        $title = (string)($cRow['title'] ?? '');
+                        if (preg_match('/\bm-(\d{1,10})-\d{8,}\b/i', $title, $mm)) {
+                            $mid = (int)$mm[1];
+                            $cRow['material_id'] = $mid;
+                        }
+                    }
+                    if ($mid <= 0) {
+                        continue;
+                    }
+                    $mat = DB::selectOne(
+                        'SELECT platform_video_id, platform_video_url, cover_base64 FROM materials WHERE id=? LIMIT 1',
+                        [$mid]
+                    );
+                    if (!$mat) {
+                        continue;
+                    }
+                    if ($needId && trim((string)($mat['platform_video_id'] ?? '')) !== '') {
+                        $cRow['video_id'] = (string)$mat['platform_video_id'];
+                    }
+                    if ($needUrl && trim((string)($mat['platform_video_url'] ?? '')) !== '') {
+                        $cRow['video_url'] = (string)$mat['platform_video_url'];
+                    } elseif ($needUrl && trim((string)($cRow['video_id'] ?? $mat['platform_video_id'] ?? '')) !== '') {
+                        $vid = trim((string)($cRow['video_id'] ?? $mat['platform_video_id'] ?? ''));
+                        $cRow['video_url'] = 'https://www.tiktok.com/video/' . $vid;
+                    }
+                    if ($needCover) {
+                        $b64 = trim((string)($mat['cover_base64'] ?? ''));
+                        if ($b64 !== '') {
+                            if (str_starts_with($b64, 'http://') || str_starts_with($b64, 'https://') || str_starts_with($b64, 'data:')) {
+                                $cRow['cover_url'] = $b64;
+                            } else {
+                                $cRow['cover_url'] = 'data:image/jpeg;base64,' . $b64;
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // ignore enrich errors
+                }
+            }
+            unset($cRow);
+        }
+
+        $studioSync = null;
+        try {
+            $studioSync = DB::selectOne(
+                'SELECT page_url, tab_count, api_count, status, message, meta_json, captured_at FROM tiktok_studio_sync WHERE account_id=?',
+                [$aid]
+            );
+        } catch (\Throwable $e) {
+            $studioSync = null;
+        }
+
+        $profileVideos = (int)($profile['videos_count'] ?? 0);
+        $studioContentCount = count($studioContent);
+        $displayVideos = $profileVideos > 0
+            ? $profileVideos
+            : ($studioContentCount > 0 ? $studioContentCount : $videoTotal);
+
         return $this->success([
             'account' => [
                 'id' => (int)$account['id'],
@@ -1114,7 +1247,7 @@ class PortalApiController extends Controller
                 'followers' => (int)($profile['followers_count'] ?? 0),
                 'following' => (int)($profile['following_count'] ?? 0),
                 'likes' => (int)($profile['likes_count'] ?? 0),
-                'videos' => $videoTotal,
+                'videos' => $displayVideos,
                 'periodVideoViews' => (int)($profile['period_video_views'] ?? 0),
                 'periodProfileViews' => (int)($profile['period_profile_views'] ?? 0),
                 'periodLikes' => (int)($profile['period_likes'] ?? 0),
@@ -1141,6 +1274,31 @@ class PortalApiController extends Controller
                 ];
             }, array_reverse($snapshots)),
             'hasSnapshots' => count($snapshots) > 0,
+            'studioPortrait' => $studioPortrait,
+            'studioContent' => array_map(static function ($r) {
+                return [
+                    'rowNo' => (int)($r['row_no'] ?? 0),
+                    'title' => (string)($r['title'] ?? ''),
+                    'views' => (int)($r['views_num'] ?? 0),
+                    'likes' => (int)($r['likes_num'] ?? 0),
+                    'comments' => (int)($r['comments_num'] ?? 0),
+                    'shares' => (int)($r['shares_num'] ?? 0),
+                    'postedAt' => (string)($r['posted_at'] ?? ''),
+                    'videoId' => (string)($r['video_id'] ?? ''),
+                    'videoUrl' => (string)($r['video_url'] ?? ''),
+                    'coverUrl' => (string)($r['cover_url'] ?? ''),
+                    'materialId' => (int)($r['material_id'] ?? 0),
+                ];
+            }, $studioContent),
+            'studioSync' => $studioSync ? [
+                'pageUrl' => (string)($studioSync['page_url'] ?? ''),
+                'tabCount' => (int)($studioSync['tab_count'] ?? 0),
+                'apiCount' => (int)($studioSync['api_count'] ?? 0),
+                'status' => (string)($studioSync['status'] ?? ''),
+                'message' => (string)($studioSync['message'] ?? ''),
+                'metaJson' => (string)($studioSync['meta_json'] ?? ''),
+                'capturedAt' => (string)($studioSync['captured_at'] ?? ''),
+            ] : null,
         ]);
     }
 
