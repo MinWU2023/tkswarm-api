@@ -55,6 +55,12 @@ class AutoFollowController extends Controller
         if ($err = $this->assertAutoFollowAccess($task)) {
             return $err;
         }
+        $taskId = (int)$id;
+        $stuckAll = AutoFollowDispatchService::diagnoseStuckEnqueued(50);
+        $task['stuckEnqueued'] = array_values(array_filter(
+            $stuckAll,
+            static fn(array $row): bool => (int)($row['taskId'] ?? 0) === $taskId
+        ));
         return $this->success($task);
     }
 
@@ -120,12 +126,27 @@ class AutoFollowController extends Controller
             return $this->error('任务已取消或失败，无法派发', 422);
         }
         try {
-            $result = AutoFollowDispatchService::tickForTask((int)$id, 50);
-            $msg = ($result['enqueued'] ?? 0) > 0
-                ? "已入队 {$result['enqueued']} 条关注明细，请到「矩阵任务」查看执行"
-                : (($result['scanned'] ?? 0) < 1
-                    ? '暂无到期明细（可能尚未到预约时间，或已全部入队）'
-                    : "扫描 {$result['scanned']} 条，成功入队 0（失败 {$result['failed']} / 跳过 {$result['skipped']}）");
+            $taskId = (int)$id;
+            $result = AutoFollowDispatchService::tickForTask($taskId, 50);
+            $stuckAll = is_array($result['stuck'] ?? null) ? $result['stuck'] : [];
+            $stuckTask = array_values(array_filter(
+                $stuckAll,
+                static fn(array $row): bool => (int)($row['taskId'] ?? 0) === $taskId
+            ));
+            $result['stuckEnqueued'] = $stuckTask;
+            $enqueued = (int)($result['enqueued'] ?? 0);
+            if ($enqueued > 0) {
+                $msg = "已入队 {$enqueued} 条关注明细，请保持本机 Node 在线登录，矩阵任务将自动领取执行";
+            } elseif ((int)($result['scanned'] ?? 0) < 1) {
+                if ($stuckTask !== []) {
+                    $hint = (string)($stuckTask[0]['hint'] ?? '等 Node 领取');
+                    $msg = '明细已在队列中（' . count($stuckTask) . ' 条）：' . $hint;
+                } else {
+                    $msg = '暂无到期明细（可能尚未到预约时间，或已全部入队）';
+                }
+            } else {
+                $msg = "扫描 {$result['scanned']} 条，成功入队 0（失败 {$result['failed']} / 跳过 {$result['skipped']}）";
+            }
             return $this->success($result, $msg);
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 422);

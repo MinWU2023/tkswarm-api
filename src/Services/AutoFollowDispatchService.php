@@ -151,10 +151,13 @@ class AutoFollowDispatchService
             }
             if ($batchStatus === '') {
                 $hints[] = 'batch 缺失';
-            } elseif ($batchStatus === 'pending' && $idle < 1) {
-                $hints[] = $envTotal < 1 ? '账号无浏览器环境' : '无 idle 环境(被占用)';
+            } elseif ($batchStatus === 'pending' && $idle < 1 && $envTotal > 0) {
+                $hints[] = '无 idle 环境(被占用)，等占用释放或租约回收';
             } elseif ($batchStatus === 'pending') {
-                $hints[] = '等 Node 领取(跑浏览器的机器上 Node 必须在线并已部署最新代码)';
+                // env_total=0 时专领仍会 ensureAccountEnvReady，不再卡死；提示本机领取
+                $hints[] = $envTotal < 1
+                    ? '等 Node 领取(领取时会自动补浏览器环境；本机须在线登录)'
+                    : '等 Node 领取(跑浏览器的机器上 Node 必须在线并已部署最新代码)';
             } elseif ($batchStatus === 'running') {
                 $hints[] = 'batch 执行中 push=' . (string)($r['push_status'] ?? '');
             }
