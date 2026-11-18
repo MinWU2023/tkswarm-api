@@ -227,6 +227,8 @@ class AutoFollowService
 
         $filters = ['a.enabled=1'];
         $params = [];
+        // 只能从当前用户数据范围内的账号里选粉丝账号，避免把他人账号拉进自己的任务
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
         if ($targetAccountId > 0) {
             $filters[] = 'a.id <> ?';
             $params[] = $targetAccountId;
@@ -292,6 +294,8 @@ class AutoFollowService
         $keyword = trim($keyword);
         $params = [];
         $filters = [];
+        // 目标账号搜索同样只在当前用户数据范围内
+        DataScope::applyAccountListScope('a.owner_id', $filters, $params);
         if ($keyword !== '') {
             if (ctype_digit($keyword)) {
                 $filters[] = '(a.id=? OR a.username LIKE ? OR a.nickname LIKE ?)';

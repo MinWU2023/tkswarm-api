@@ -13,12 +13,18 @@ use App\Services\DataScope;
 class AutoFollowController extends Controller
 {
     /**
-     * 增粉任务：登录且有路由权限即可操作，不按 owner_id 卡死
-     *（超管/运营管理可见全量列表时也能编辑他人任务）。
+     * 增粉任务归属校验：超管 / 运营管理（按当前有效身份，切换身份后以目标用户为准）可操作全量，
+     * 其余用户只能操作自己名下的任务；不属于自己的一律按「不存在」处理，避免暴露他人任务。
      */
     private function assertAutoFollowAccess(?array $task): ?Response
     {
         if (!$task) {
+            return $this->error('任务不存在', 404);
+        }
+        if (DataScope::isSuper() || DataScope::isOpsAdmin()) {
+            return null;
+        }
+        if ((int)($task['ownerId'] ?? 0) !== $this->writeOwnerId()) {
             return $this->error('任务不存在', 404);
         }
         return null;
@@ -28,8 +34,8 @@ class AutoFollowController extends Controller
     {
         DataScope::ensureColumns();
         AutoFollowService::ensureSchema();
-        // 超管 / 运营管理看全量，其余看自己的
-        $ownerId = (DataScope::isSuper() || DataScope::isOpsAdmin() || DataScope::isLoginOpsAdmin())
+        // 超管 / 运营管理（按当前有效身份，切换到某用户后只看该用户）看全量，其余只看自己的
+        $ownerId = (DataScope::isSuper() || DataScope::isOpsAdmin())
             ? 0
             : $this->writeOwnerId();
         $pack = AutoFollowService::listTasks(
