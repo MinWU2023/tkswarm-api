@@ -2004,47 +2004,128 @@ class AccountController extends Controller
             $bind
         ) ?: [];
 
-        // 若素材为空，回退 tiktok_videos（旧同步）
-        $fromTiktok = false;
-        if (!$matRows && $keyword === '' && $page === 1) {
-            $tv = DB::select(
-                'SELECT t.id, t.video_id, t.video_url, t.description, t.thumbnail_url, t.views_count, t.likes_count, t.last_synced_at
-                 FROM tiktok_videos t
-                 INNER JOIN (
-                   SELECT account_id, video_id, MAX(id) AS max_id
-                   FROM tiktok_videos WHERE account_id=?
-                   GROUP BY account_id, video_id
-                 ) x ON t.id = x.max_id
-                 ORDER BY t.last_synced_at DESC, t.id DESC LIMIT ?',
-                [$aid, $pageSize]
-            ) ?: [];
-            $total = (int)(DB::selectOne(
-                'SELECT COUNT(*) AS c FROM (
-                   SELECT video_id FROM tiktok_videos WHERE account_id=? GROUP BY video_id
-                 ) d',
-                [$aid]
-            )['c'] ?? 0);
-            $fromTiktok = true;
-            $matRows = array_map(static function ($r) {
-                return [
-                    'id' => 0,
-                    'name' => (string)($r['description'] ?? ''),
-                    'share_title' => (string)($r['description'] ?? ''),
-                    'share_caption' => '',
-                    'cover_base64' => (string)($r['thumbnail_url'] ?? ''),
-                    'platform_video_id' => (string)($r['video_id'] ?? ''),
-                    'platform_video_url' => (string)($r['video_url'] ?? ''),
-                    'view_count' => (int)($r['views_count'] ?? 0),
-                    'like_count' => (int)($r['likes_count'] ?? 0),
-                    'comment_count' => 0,
-                    'origin' => 'tiktok_videos',
-                    'publish_status' => 'published',
-                    'platform_published_at' => null,
-                    'updated_at' => (string)($r['last_synced_at'] ?? ''),
-                    'created_at' => (string)($r['last_synced_at'] ?? ''),
-                    '_tv_id' => (int)($r['id'] ?? 0),
-                ];
-            }, $tv);
+        // 素材为空时回退：tiktok_videos（旧同步）→ tiktok_studio_content（拉取数据 / Studio Posts）
+        $source = 'materials';
+        if (!$matRows) {
+            $fallbackRows = [];
+            $fallbackTotal = 0;
+            $fallbackSource = '';
+
+            // 1) 旧表 tiktok_videos
+            if ($keyword === '' && $page === 1) {
+                try {
+                    $tv = DB::select(
+                        'SELECT t.id, t.video_id, t.video_url, t.description, t.thumbnail_url, t.views_count, t.likes_count, t.last_synced_at
+                         FROM tiktok_videos t
+                         INNER JOIN (
+                           SELECT account_id, video_id, MAX(id) AS max_id
+                           FROM tiktok_videos WHERE account_id=?
+                           GROUP BY account_id, video_id
+                         ) x ON t.id = x.max_id
+                         ORDER BY t.last_synced_at DESC, t.id DESC LIMIT ' . (int)$pageSize,
+                        [$aid]
+                    ) ?: [];
+                    if ($tv) {
+                        $fallbackTotal = (int)(DB::selectOne(
+                            'SELECT COUNT(*) AS c FROM (
+                               SELECT video_id FROM tiktok_videos WHERE account_id=? GROUP BY video_id
+                             ) d',
+                            [$aid]
+                        )['c'] ?? 0);
+                        $fallbackSource = 'tiktok_videos';
+                        $fallbackRows = array_map(static function ($r) {
+                            return [
+                                'id' => 0,
+                                'name' => (string)($r['description'] ?? ''),
+                                'share_title' => (string)($r['description'] ?? ''),
+                                'share_caption' => '',
+                                'cover_base64' => (string)($r['thumbnail_url'] ?? ''),
+                                'platform_video_id' => (string)($r['video_id'] ?? ''),
+                                'platform_video_url' => (string)($r['video_url'] ?? ''),
+                                'view_count' => (int)($r['views_count'] ?? 0),
+                                'like_count' => (int)($r['likes_count'] ?? 0),
+                                'comment_count' => 0,
+                                'origin' => 'tiktok_videos',
+                                'publish_status' => 'published',
+                                'platform_published_at' => null,
+                                'updated_at' => (string)($r['last_synced_at'] ?? ''),
+                                'created_at' => (string)($r['last_synced_at'] ?? ''),
+                            ];
+                        }, $tv);
+                    }
+                } catch (\Throwable $e) {
+                    $fallbackRows = [];
+                }
+            }
+
+            // 2) Studio 内容（拉取数据写入）；支持 keyword
+            if (!$fallbackRows) {
+                try {
+                    $scFilters = ['account_id=?'];
+                    $scBind = [$aid];
+                    if ($keyword !== '') {
+                        $scFilters[] = '(title LIKE ? OR video_id LIKE ? OR video_url LIKE ?)';
+                        $like = '%' . $keyword . '%';
+                        array_push($scBind, $like, $like, $like);
+                    }
+                    $scWhere = implode(' AND ', $scFilters);
+                    $fallbackTotal = (int)(DB::selectOne(
+                        "SELECT COUNT(*) AS c FROM tiktok_studio_content WHERE {$scWhere}",
+                        $scBind
+                    )['c'] ?? 0);
+                    if ($fallbackTotal > 0) {
+                        $scOffset = ($page - 1) * $pageSize;
+                        $scRows = DB::select(
+                            "SELECT row_no, title, views_num, likes_num, comments_num, shares_num, posted_at,
+                                    video_id, video_url, cover_url, material_id
+                             FROM tiktok_studio_content
+                             WHERE {$scWhere}
+                             ORDER BY row_no ASC
+                             LIMIT {$pageSize} OFFSET {$scOffset}",
+                            $scBind
+                        ) ?: [];
+                        $fallbackSource = 'studio_content';
+                        $fallbackRows = array_map(static function ($r) {
+                            $vid = trim((string)($r['video_id'] ?? ''));
+                            $url = trim((string)($r['video_url'] ?? ''));
+                            if ($vid === '' && preg_match('#/(?:video|photo)/(\d{8,})#', $url, $vm)) {
+                                $vid = $vm[1];
+                            }
+                            if ($url === '' && $vid !== '') {
+                                $url = 'https://www.tiktok.com/video/' . $vid;
+                            }
+                            $title = trim((string)($r['title'] ?? ''));
+                            $cover = trim((string)($r['cover_url'] ?? ''));
+                            $mid = (int)($r['material_id'] ?? 0);
+                            return [
+                                'id' => $mid > 0 ? $mid : 0,
+                                'name' => $title,
+                                'share_title' => $title,
+                                'share_caption' => '',
+                                'cover_base64' => $cover,
+                                'platform_video_id' => $vid,
+                                'platform_video_url' => $url,
+                                'view_count' => (int)($r['views_num'] ?? 0),
+                                'like_count' => (int)($r['likes_num'] ?? 0),
+                                'comment_count' => (int)($r['comments_num'] ?? 0),
+                                'origin' => 'studio_content',
+                                'publish_status' => 'published',
+                                'platform_published_at' => (string)($r['posted_at'] ?? ''),
+                                'updated_at' => '',
+                                'created_at' => '',
+                            ];
+                        }, $scRows);
+                    }
+                } catch (\Throwable $e) {
+                    // 表不存在或旧结构时忽略
+                }
+            }
+
+            if ($fallbackRows) {
+                $matRows = $fallbackRows;
+                $total = $fallbackTotal;
+                $source = $fallbackSource !== '' ? $fallbackSource : 'fallback';
+            }
         }
 
         $videoIds = array_values(array_filter(array_map(
@@ -2092,7 +2173,7 @@ class AccountController extends Controller
             'page' => $page,
             'pageSize' => $pageSize,
             'pages' => $pages,
-            'source' => $fromTiktok ? 'tiktok_videos' : 'materials',
+            'source' => $source,
         ]);
     }
 
