@@ -267,13 +267,17 @@ class WarmRecurringService
         );
     }
 
-    /** 已 queued 但暂未挂上分项的养号（曾因更高优先级 defer）→ 再试挂载 */
+    /**
+     * 已 queued 但暂未挂上分项的养号（更高优先级 defer / 定时未到点）→ 再试挂载。
+     * 必须尊重 scheduled_at：此前 forceDue=true 且无到点过滤，会把「未到中国定时」的养号立刻挂上执行。
+     */
     private static function retryAttachDeferredQueuedWarms(int $limit): void
     {
         $rows = DB::select(
             "SELECT id FROM tasks
              WHERE type='warm' AND status='queued'
                AND COALESCE(recurring_dispatch_enabled, 1)=1
+               AND (scheduled_at IS NULL OR scheduled_at<=CURRENT_TIMESTAMP)
                AND NOT EXISTS (
                  SELECT 1 FROM account_work_items i
                  WHERE i.task_ref_id=tasks.id AND i.status IN ('pending','running')
@@ -287,7 +291,8 @@ class WarmRecurringService
                 continue;
             }
             try {
-                AccountWorkBatchService::attachFromTask($tid, true);
+                // 不再 forceDue：与 isTaskDue / 上方 SQL 到点条件双保险
+                AccountWorkBatchService::attachFromTask($tid, false);
             } catch (\Throwable $e) {
                 // ignore single failure
             }

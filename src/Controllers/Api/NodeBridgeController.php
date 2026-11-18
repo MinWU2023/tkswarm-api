@@ -3793,6 +3793,36 @@ class NodeBridgeController extends Controller
     {
         AutoFollowService::ensureSchema();
         try {
+            // 用户隔离：有登录/切换身份时，明细所属任务 owner、明细 owner、批次 owner 任一等于当前身份才可回写；
+            // 不通过按「不存在」处理，不暴露他人明细。纯服务调用（无身份）与其它 /api/node 接口一致放行。
+            $afItem = DB::selectOne(
+                'SELECT i.*, t.owner_id AS task_owner_id
+                 FROM auto_follow_task_items i
+                 LEFT JOIN auto_follow_tasks t ON t.id=i.task_id
+                 WHERE i.id=?',
+                [(int)$id]
+            );
+            if (!$afItem) {
+                return $this->error('明细不存在', 404);
+            }
+            $afScopeOwner = DataScope::filterOwnerId();
+            if (DataScope::effectiveUser() && $afScopeOwner !== null) {
+                $meOwner = (int)$afScopeOwner;
+                $afAllowed = $meOwner > 0
+                    && ((int)($afItem['task_owner_id'] ?? 0) === $meOwner || (int)($afItem['owner_id'] ?? 0) === $meOwner);
+                if (!$afAllowed && $meOwner > 0 && (int)($afItem['work_item_id'] ?? 0) > 0) {
+                    $afBatch = DB::selectOne(
+                        'SELECT b.owner_id FROM account_work_items wi
+                         INNER JOIN account_work_batches b ON b.id=wi.batch_id
+                         WHERE wi.id=?',
+                        [(int)$afItem['work_item_id']]
+                    );
+                    $afAllowed = $afBatch && (int)($afBatch['owner_id'] ?? 0) === $meOwner;
+                }
+                if (!$afAllowed) {
+                    return $this->error('明细不存在', 404);
+                }
+            }
             $out = AutoFollowService::finishItem((int)$id, $request->all());
             return $this->success($out);
         } catch (\Throwable $e) {

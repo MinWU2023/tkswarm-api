@@ -1196,7 +1196,7 @@ class AccountWorkBatchService
         return (int)($row['c'] ?? 0) > 0;
     }
 
-    /** 任务是否已到可执行时间（scheduled_at 为空或已到点；按库当前时间，与 PHP Asia/Shanghai 对齐） */
+    /** 任务是否已到可执行时间（scheduled_at 为空或已到点；按中国墙钟 Asia/Shanghai） */
     public static function isTaskDue(?array $task): bool
     {
         if (!$task) {
@@ -1204,13 +1204,30 @@ class AccountWorkBatchService
         }
         $scheduled = trim((string)($task['scheduled_at'] ?? ''));
         if ($scheduled === '') {
+            $payload = $task['payload'] ?? null;
+            if (is_string($payload)) {
+                $payload = json_decode($payload, true) ?: [];
+            }
+            if (is_array($payload)) {
+                $scheduled = trim((string)($payload['scheduleChinaAt'] ?? ''));
+            }
+        }
+        if ($scheduled === '') {
             return true;
         }
-        $ts = strtotime($scheduled);
-        if ($ts === false) {
-            return true;
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::(\d{2}))?/', $scheduled, $m)) {
+            $ts = strtotime($scheduled);
+            return $ts === false ? true : ($ts <= time());
         }
-        return $ts <= time();
+        $wall = sprintf('%s %s:%s', $m[1], $m[2], $m[3] ?? '00');
+        try {
+            $due = new \DateTimeImmutable($wall, new \DateTimeZone('Asia/Shanghai'));
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('Asia/Shanghai'));
+            return $due <= $now;
+        } catch (\Throwable $e) {
+            $ts = strtotime($wall);
+            return $ts === false ? true : ($ts <= time());
+        }
     }
 
     /**

@@ -1031,12 +1031,12 @@ class TaskController extends Controller
         if ($type === 'warm') {
             $payload = $this->normalizeWarmPayload($payload);
         }
-        $scheduled = $request->input('scheduledAt');
-        if (is_string($scheduled) && $scheduled !== '') {
-            $scheduled = date('Y-m-d H:i:s', strtotime($scheduled) ?: time());
-        } else {
-            $scheduled = null;
-        }
+        // 定时一律存「中国墙钟」YYYY-MM-DD HH:mm:ss（与 MySQL +08:00 / DB::now 对齐）
+        // 优先用前端折算好的 scheduleChinaAt，避免 ISO+偏移被 PHP 默认时区二次改写
+        $scheduled = self::normalizeScheduledAtChina(
+            $request->input('scheduledAt'),
+            is_array($payload) ? $payload : []
+        );
         return [
             'name' => self::clampTaskName((string)$request->input('name', '')),
             'type' => $type,
@@ -1047,8 +1047,60 @@ class TaskController extends Controller
         ];
     }
 
-    /** tasks.name ���ޣ��� ensureSchema / Ǩ��һ�£� */
     private const TASK_NAME_MAX = 255;
+
+    /**
+     * 将前端 scheduledAt / payload.scheduleChinaAt 规范为中国墙钟 DATETIME。
+     * @param mixed $scheduledAt
+     * @param array<string,mixed> $payload
+     */
+    private static function normalizeScheduledAtChina($scheduledAt, array $payload): ?string
+    {
+        $chinaHint = trim((string)($payload['scheduleChinaAt'] ?? ''));
+        if ($chinaHint !== '' && preg_match('/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::(\d{2}))?/', $chinaHint, $m)) {
+            return sprintf('%s %s:%s', $m[1], $m[2], $m[3] ?? '00');
+        }
+        $raw = is_string($scheduledAt) ? trim($scheduledAt) : '';
+        if ($raw === '') {
+            return null;
+        }
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/', $raw, $m)) {
+            $wall = sprintf('%s %s:%s', $m[1], $m[2], $m[3] ?? '00');
+            $offset = $m[4] ?? '';
+            // 已是 +08:00 / 无偏移（前端按中国墙钟约定）→ 直接取墙钟片段
+            if ($offset === '' || $offset === 'Z') {
+                if ($offset === 'Z') {
+                    try {
+                        $dt = new \DateTimeImmutable($raw);
+                        return $dt->setTimezone(new \DateTimeZone('Asia/Shanghai'))->format('Y-m-d H:i:s');
+                    } catch (\Throwable $e) {
+                        return $wall;
+                    }
+                }
+                return $wall;
+            }
+            if (preg_match('/^[+-]08:?00$/', $offset)) {
+                return $wall;
+            }
+            try {
+                $dt = new \DateTimeImmutable($raw);
+                return $dt->setTimezone(new \DateTimeZone('Asia/Shanghai'))->format('Y-m-d H:i:s');
+            } catch (\Throwable $e) {
+                // fall through
+            }
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return null;
+        }
+        try {
+            return (new \DateTimeImmutable('@' . $ts))
+                ->setTimezone(new \DateTimeZone('Asia/Shanghai'))
+                ->format('Y-m-d H:i:s');
+        } catch (\Throwable $e) {
+            return date('Y-m-d H:i:s', $ts);
+        }
+    }
 
     private static function clampTaskName(string $name): string
     {
