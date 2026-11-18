@@ -92,6 +92,8 @@ class NodeBridgeController extends Controller
             'loginUsername' => (string)($loginUser['login_username'] ?? ($row['username'] ?? '')),
             'pending_username' => (string)($loginUser['pending_username'] ?? ''),
             'pendingUsername' => (string)($loginUser['pending_username'] ?? ''),
+            'username_prev' => (string)($row['username_prev'] ?? ''),
+            'usernamePrev' => (string)($row['username_prev'] ?? ''),
             'nickname' => $row['nickname'] ?? '',
             'profile_bio' => $row['profile_bio'] ?? '',
             'profile_avatar' => $row['profile_avatar'] ?? '',
