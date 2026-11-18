@@ -2432,7 +2432,22 @@ class AccountController extends Controller
                         [$aid]
                     ) ?: [];
                     $normTitle = static function (string $s): string {
-                        return mb_strtolower(trim((string)preg_replace('/\s+/u', ' ', $s)));
+                        $s = trim((string)preg_replace('/\s+/u', ' ', $s));
+                        // 与 Node normalizeContentTitle 对齐：去时长前缀 / 素材与时间文案
+                        $s = (string)preg_replace('/^\d{1,2}:\d{2}(?::\d{2})?\s+/u', '', $s);
+                        $s = (string)preg_replace('/\b(everyone|only\s*me|friends?|private|public|followers?|素材|草稿|draft|posted|privacy)\b/iu', ' ', $s);
+                        $s = (string)preg_replace('/\b(\d+\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s*ago|yesterday|刚刚|昨天|\d+\s*(秒|分钟|小时|天|周|月|年)\s*前)\b/iu', ' ', $s);
+                        $s = mb_strtolower(trim((string)preg_replace('/\s+/u', ' ', $s)));
+                        $len = mb_strlen($s);
+                        if ($len >= 8) {
+                            $half = (int)floor($len / 2);
+                            $a = trim(mb_substr($s, 0, $half));
+                            $b = trim(mb_substr($s, $half));
+                            if ($a !== '' && $a === $b) {
+                                $s = $a;
+                            }
+                        }
+                        return $s;
                     };
                     $knownById = [];
                     $knownByTitle = [];
@@ -2455,10 +2470,23 @@ class AccountController extends Controller
                         if ($vid !== '' && isset($knownById[$vid])) {
                             $hit = $knownById[$vid];
                         } else {
-                            // 标题必须完全一致且库里只有一条，避免同标题作品张冠李戴
                             $tk = $normTitle((string)($cRow2['title'] ?? ''));
                             if (mb_strlen($tk) >= 6 && isset($knownByTitle[$tk]) && count($knownByTitle[$tk]) === 1) {
                                 $hit = $knownByTitle[$tk][0];
+                            } elseif (mb_strlen($tk) >= 8) {
+                                // 包含关系兜底：Studio 标题常截断
+                                $cands = [];
+                                foreach ($knownByTitle as $kt => $list) {
+                                    if (count($list) !== 1) {
+                                        continue;
+                                    }
+                                    if (mb_strpos($kt, $tk) !== false || mb_strpos($tk, $kt) !== false) {
+                                        $cands[] = $list[0];
+                                    }
+                                }
+                                if (count($cands) === 1) {
+                                    $hit = $cands[0];
+                                }
                             }
                         }
                         if (!$hit || trim((string)($hit['video_url'] ?? '')) === '') {

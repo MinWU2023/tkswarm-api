@@ -359,6 +359,7 @@ class AccountWorkBatchService
             $usernameConfirmed = $freshRun
                 && $failReason === ''
                 && $wantedUsername !== ''
+                && !empty($result['usernameVerified'])
                 && ($original === '' || strcasecmp($wantedUsername, $original) !== 0);
             $nickErr = trim((string)($result['nicknameError'] ?? $result['nickname_error'] ?? ''));
             $lockedAt = trim((string)($result['nicknameLockedAt'] ?? $result['nickname_locked_at'] ?? ''));
