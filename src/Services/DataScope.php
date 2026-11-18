@@ -1343,7 +1343,10 @@ class DataScope
             $params[] = '%' . $keyword . '%';
         }
         if ($industryId > 0) {
+            // descendantIds 不含自身：选到叶子行业时为空，会误返回空企业列表
             $ids = IndustryDataService::descendantIds($industryId);
+            $ids[] = $industryId;
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
             if (!$ids) {
                 return [];
             }

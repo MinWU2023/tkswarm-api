@@ -3030,7 +3030,10 @@ class AccountController extends Controller
         $industryId = (int)$request->get('industryId', $request->get('industry_id', 0));
         if ($industryId > 0 && DataScope::canUseAccountIndustryFilter()) {
             IndustryDataService::ensureSchema();
+            // descendantIds 只返回下级、不含自身：选到最细一级（叶子）时为空数组，会直接 1=0 查不到任何账号
             $ids = IndustryDataService::descendantIds($industryId);
+            $ids[] = $industryId;
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
             if (!$ids) {
                 $filters[] = '1=0';
                 return;
