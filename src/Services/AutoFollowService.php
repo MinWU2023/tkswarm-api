@@ -677,7 +677,7 @@ class AutoFollowService
         return (int)($row['id'] ?? 0);
     }
 
-    public static function resolveItemOwnerId(int $sourceAccountId): int
+    public static function resolveItemOwnerId(int $sourceAccountId, int $taskOwnerId = 0): int
     {
         $acc = DB::selectOne('SELECT id, owner_id FROM accounts WHERE id=?', [$sourceAccountId]);
         if (!$acc) {
@@ -687,7 +687,7 @@ class AutoFollowService
         if ($owner > 0) {
             return $owner;
         }
-        $fallback = self::randomOpsOwnerId();
+        $fallback = $taskOwnerId > 0 ? $taskOwnerId : self::randomOpsOwnerId();
         if ($fallback < 1) {
             throw new \RuntimeException('账号无关联用户，且系统中无可用的运营专员/运营管理用户');
         }
@@ -724,7 +724,7 @@ class AutoFollowService
         }
 
         try {
-            $ownerId = self::resolveItemOwnerId($sourceAccountId);
+            $ownerId = self::resolveItemOwnerId($sourceAccountId, (int)($taskRow['owner_id'] ?? 0));
             $actionPlan = [];
             $rawPlan = (string)($itemRow['action_plan_json'] ?? '');
             if ($rawPlan !== '') {

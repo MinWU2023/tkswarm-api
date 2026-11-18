@@ -3001,12 +3001,17 @@ class NodeBridgeController extends Controller
             $standaloneOnly = $norm !== [] && count(array_diff($norm, $standaloneTypes)) === 0;
         }
 
-        // 超管未切换：与矩阵列表一致，不按 owner 卡死（否则本机专领领不到其它运营名下增粉）
-        // 增粉/增值/养号专领：运营管理也可跨归属领取，避免 schedule 入队后永远「等 Node」
+        // 增粉/增值/养号专领：一律只领当前身份名下的 batch，超管/运营管理也不跨归属领取（用户隔离）
+        // 其它类型：超管未切换时与矩阵列表一致，不按 owner 过滤
         $ownerFilter = null;
-        if (DataScope::isSuper() && !DataScope::isActing()) {
-            $ownerFilter = $forceOwner > 0 ? $forceOwner : null;
-        } elseif ($standaloneOnly && DataScope::isOpsAdmin() && !DataScope::isActing()) {
+        if ($standaloneOnly) {
+            // 专领（增粉/增值/养号）：只领当前身份名下的 batch，超管/运营管理也不跨归属；无登录用户（guest）时不过滤
+            $scopeOwner = DataScope::filterOwnerId();
+            if ($scopeOwner !== null && $forceOwner > 0 && $forceOwner !== $scopeOwner) {
+                return $this->error('无权领取其他用户的任务', 403);
+            }
+            $ownerFilter = ($scopeOwner !== null && $scopeOwner > 0) ? $scopeOwner : null;
+        } elseif (DataScope::isSuper() && !DataScope::isActing()) {
             $ownerFilter = $forceOwner > 0 ? $forceOwner : null;
         } else {
             $scopeOwner = DataScope::filterOwnerId();
