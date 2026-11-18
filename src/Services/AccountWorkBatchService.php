@@ -2828,6 +2828,31 @@ class AccountWorkBatchService
         }
     }
 
+    /**
+     * 重置子任务/总任务后，把关联的 tasks 父任务从 failed/completed 拉回 queued，
+     * 并回退该子任务此前计入的成功/失败次数，避免重置后父任务状态仍是「失败」。
+     */
+    private static function reopenParentTaskAfterReset(int $taskRefId, string $taskType, string $prevItemStatus): void
+    {
+        if ($taskRefId < 1 || in_array($taskType, self::STANDALONE_TASK_TYPES, true)) {
+            return;
+        }
+        try {
+            if ($prevItemStatus === 'failed') {
+                DB::query('UPDATE tasks SET fail_count=GREATEST(fail_count-1,0), updated_at=CURRENT_TIMESTAMP WHERE id=?', [$taskRefId]);
+            } elseif ($prevItemStatus === 'completed') {
+                DB::query('UPDATE tasks SET success_count=GREATEST(success_count-1,0), updated_at=CURRENT_TIMESTAMP WHERE id=?', [$taskRefId]);
+            }
+            DB::query(
+                "UPDATE tasks SET status='queued', finished_at=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND status IN ('failed','completed')",
+                [$taskRefId]
+            );
+        } catch (\Throwable $e) {
+            // tasks 表异常时不阻断重置
+        }
+    }
+
     public static function resumeBatch(int $batchId): array
     {
         self::ensureSchema();
@@ -2926,6 +2951,18 @@ class AccountWorkBatchService
 
         AccountBrowserEnvService::releaseEnvByBatch($batchId);
 
+        $prevItems = DB::select(
+            'SELECT id, task_type, task_ref_id, status FROM account_work_items WHERE batch_id=?',
+            [$batchId]
+        ) ?: [];
+        foreach ($prevItems as $pi) {
+            self::reopenParentTaskAfterReset(
+                (int)($pi['task_ref_id'] ?? 0),
+                (string)($pi['task_type'] ?? ''),
+                (string)($pi['status'] ?? '')
+            );
+        }
+
         DB::query(
             "UPDATE account_work_items
              SET status='pending',
@@ -2983,6 +3020,12 @@ class AccountWorkBatchService
         if (!empty($batch['deleted_at']) || ($batch['status'] ?? '') === 'deleted') {
             throw new \RuntimeException('总任务已删除，无法重置子任务');
         }
+
+        self::reopenParentTaskAfterReset(
+            (int)($item['task_ref_id'] ?? 0),
+            (string)($item['task_type'] ?? ''),
+            (string)($item['status'] ?? '')
+        );
 
         // 若总任务正在跑且锁着环境，释放以便重新领取
         if (($batch['status'] ?? '') === 'running') {

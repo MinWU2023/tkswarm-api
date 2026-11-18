@@ -120,10 +120,7 @@ class UploadController extends Controller
      */
     private function resolveUploadsDir(): array
     {
-        $candidates = [
-            APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads',
-            APP_PATH . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'uploads',
-        ];
+        $candidates = $this->uploadCandidates();
         $errors = [];
         foreach ($candidates as $dir) {
             if (!is_dir($dir)) {
@@ -142,20 +139,66 @@ class UploadController extends Controller
                     @unlink($probe);
                     return [$dir, ''];
                 }
-                $errors[] = $dir . ' 探针写入失败';
+                $errors[] = $dir . ' 探针写入失败（' . $this->dirDiag($dir) . '）';
                 continue;
             }
-            $errors[] = $dir . ' 不可写';
+            $errors[] = $dir . ' 不可写（' . $this->dirDiag($dir) . '）';
         }
         return [null, implode('；', $errors)];
     }
 
+    /**
+     * 上传目录候选：环境变量 TKSWARM_UPLOAD_DIR（可指向任意 PHP 可写目录）优先，
+     * 其次 public/uploads，最后 storage/uploads。
+     * @return list<string>
+     */
+    private function uploadCandidates(): array
+    {
+        $list = [];
+        $env = trim((string)(getenv('TKSWARM_UPLOAD_DIR') ?: ''));
+        if ($env !== '') {
+            $list[] = rtrim($env, '/\\');
+        }
+        $list[] = APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads';
+        $list[] = APP_PATH . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'uploads';
+        return $list;
+    }
+
+    /** 排错信息：PHP 运行用户、目录属主与权限位 */
+    private function dirDiag(string $dir): string
+    {
+        $user = get_current_user();
+        if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+            $pw = @posix_getpwuid(posix_geteuid());
+            if (is_array($pw) && !empty($pw['name'])) {
+                $user = (string)$pw['name'];
+            }
+        }
+        $owner = '-';
+        $perm = '-';
+        if (is_dir($dir)) {
+            $uid = @fileowner($dir);
+            if ($uid !== false) {
+                $owner = (string)$uid;
+                if (function_exists('posix_getpwuid')) {
+                    $info = @posix_getpwuid($uid);
+                    if (is_array($info) && !empty($info['name'])) {
+                        $owner = (string)$info['name'];
+                    }
+                }
+            }
+            $p = @fileperms($dir);
+            if ($p !== false) {
+                $perm = substr(sprintf('%o', $p), -4);
+            }
+        }
+        return "PHP用户={$user} 目录属主={$owner} 权限={$perm}";
+    }
+
     private function findUploadFile(string $name): ?string
     {
-        foreach ([
-            APP_PATH . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $name,
-            APP_PATH . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $name,
-        ] as $path) {
+        foreach ($this->uploadCandidates() as $dir) {
+            $path = $dir . DIRECTORY_SEPARATOR . $name;
             if (is_file($path)) {
                 return $path;
             }
