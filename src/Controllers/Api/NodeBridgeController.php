@@ -406,7 +406,8 @@ class NodeBridgeController extends Controller
                     handle=VALUES(handle), display_name=VALUES(display_name), bio=VALUES(bio),
                     avatar_url=VALUES(avatar_url), region=VALUES(region),
                     followers_count=VALUES(followers_count), following_count=VALUES(following_count),
-                    likes_count=VALUES(likes_count), videos_count=VALUES(videos_count),
+                    likes_count=VALUES(likes_count),
+                    videos_count=IF(VALUES(videos_count)=0, videos_count, VALUES(videos_count)),
                     sync_status='ok', sync_error='', last_synced_at=CURRENT_TIMESTAMP",
                 [
                     $aid,

@@ -2336,6 +2336,66 @@ class AccountController extends Controller
                 }
             }
             unset($cRow);
+            // 兜底：之前拉取视频列表已入库过的链接（tiktok_videos）直接带出，不必重新拉取
+            try {
+                $needLink = false;
+                foreach ($content as $r0) {
+                    if (trim((string)($r0['video_url'] ?? '')) === '') {
+                        $needLink = true;
+                        break;
+                    }
+                }
+                if ($needLink) {
+                    $known = DB::select(
+                        'SELECT video_id, video_url, thumbnail_url, description FROM tiktok_videos WHERE account_id=?',
+                        [$aid]
+                    ) ?: [];
+                    $normTitle = static function (string $s): string {
+                        return mb_strtolower(trim((string)preg_replace('/\s+/u', ' ', $s)));
+                    };
+                    $knownById = [];
+                    $knownByTitle = [];
+                    foreach ($known as $k) {
+                        $kid = trim((string)($k['video_id'] ?? ''));
+                        if ($kid !== '') {
+                            $knownById[$kid] = $k;
+                        }
+                        $tk = $normTitle((string)($k['description'] ?? ''));
+                        if (mb_strlen($tk) >= 6) {
+                            $knownByTitle[$tk][] = $k;
+                        }
+                    }
+                    foreach ($content as &$cRow2) {
+                        if (trim((string)($cRow2['video_url'] ?? '')) !== '') {
+                            continue;
+                        }
+                        $hit = null;
+                        $vid = trim((string)($cRow2['video_id'] ?? ''));
+                        if ($vid !== '' && isset($knownById[$vid])) {
+                            $hit = $knownById[$vid];
+                        } else {
+                            // 标题必须完全一致且库里只有一条，避免同标题作品张冠李戴
+                            $tk = $normTitle((string)($cRow2['title'] ?? ''));
+                            if (mb_strlen($tk) >= 6 && isset($knownByTitle[$tk]) && count($knownByTitle[$tk]) === 1) {
+                                $hit = $knownByTitle[$tk][0];
+                            }
+                        }
+                        if (!$hit || trim((string)($hit['video_url'] ?? '')) === '') {
+                            continue;
+                        }
+                        $cRow2['video_url'] = (string)$hit['video_url'];
+                        if (trim((string)($cRow2['video_id'] ?? '')) === '') {
+                            $cRow2['video_id'] = (string)($hit['video_id'] ?? '');
+                        }
+                        if (trim((string)($cRow2['cover_url'] ?? '')) === '' && trim((string)($hit['thumbnail_url'] ?? '')) !== '') {
+                            $cRow2['cover_url'] = (string)$hit['thumbnail_url'];
+                        }
+                    }
+                    unset($cRow2);
+                }
+            } catch (\Throwable $e) {
+                // tiktok_videos 不可用时忽略
+            }
         }
         try {
             $sync = DB::selectOne('SELECT page_url, tab_count, api_count, status, message, meta_json, captured_at FROM tiktok_studio_sync WHERE account_id=?', [$aid]);
@@ -2976,11 +3036,13 @@ class AccountController extends Controller
                 return;
             }
             $ph = implode(',', array_fill(0, count($ids), '?'));
-            $filters[] = "EXISTS (
+            // 账号自身绑定的行业（列表「所属行业」展示的就是它）优先；未绑定时兼容按所属企业的行业匹配。
+            // 旧逻辑只查企业行业，账号单独绑了行业但没挂企业（或企业行业不同）时筛选不生效。
+            $filters[] = "(a.industry_id IN ({$ph}) OR EXISTS (
                 SELECT 1 FROM companies c
                 WHERE c.id = a.company_id AND c.industry_id IN ({$ph})
-            )";
-            array_push($params, ...$ids);
+            ))";
+            array_push($params, ...$ids, ...$ids);
         }
     }
 
