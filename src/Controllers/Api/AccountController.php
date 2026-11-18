@@ -3474,8 +3474,11 @@ class AccountController extends Controller
             $publishVideos = (int)($publishCountMap[$id] ?? 0);
             $taskVideos = (int)($taskPublishCountMap[$id] ?? 0);
             $listedVideos = (int)($videoCountMap[$id] ?? 0);
-            // 优先全库 materials / 成功发布任务，再兜底资料/同步表
-            $videos = max($publishVideos, $taskVideos, $profileVideos, $listedVideos);
+            // 视频数优先取拉取数据时 Studio Posts 列表总计数（tiktok_profiles.videos_count）；
+            // 还没拉取过时，才退回 materials / 成功发布任务 / 同步表的最大值
+            $videos = $profileVideos > 0
+                ? $profileVideos
+                : max($publishVideos, $taskVideos, $listedVideos);
             $profileSynced = trim((string)($p['last_synced_at'] ?? ''));
             $publishAt = trim((string)($publishAtMap[$id] ?? ''));
             $taskAt = trim((string)($taskPublishAtMap[$id] ?? ''));

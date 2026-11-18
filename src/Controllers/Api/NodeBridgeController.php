@@ -947,30 +947,7 @@ class NodeBridgeController extends Controller
                         // 忽略素材回写失败
                     }
                 }
-                // 同步到 tiktok_videos，便于「最近同步视频」展示
-                if ($videoId !== '') {
-                    try {
-                        $normVideoId = \App\Controllers\Api\AccountController::normalizeVideoId($videoId, $videoUrl);
-                        DB::query(
-                            "INSERT INTO tiktok_videos(account_id, video_id, video_url, description, thumbnail_url, last_synced_at)
-                             VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
-                             ON DUPLICATE KEY UPDATE
-                                video_url=IF(VALUES(video_url)='', video_url, VALUES(video_url)),
-                                description=IF(VALUES(description)='', description, VALUES(description)),
-                                thumbnail_url=IF(VALUES(thumbnail_url)='', thumbnail_url, VALUES(thumbnail_url)),
-                                last_synced_at=CURRENT_TIMESTAMP",
-                            [
-                                $aid,
-                                mb_substr($normVideoId, 0, 191),
-                                mb_substr($videoUrl, 0, 1000),
-                                $title,
-                                mb_substr($coverUrl, 0, 1000),
-                            ]
-                        );
-                    } catch (\Throwable $e) {
-                        // 忽略视频表写入失败，不影响内容入库
-                    }
-                }
+                // 不再把内容行同步到 tiktok_videos（「最近同步视频」已不拉取、不展示）
             }
             if ($matchedMaterials > 0 && is_array($meta)) {
                 $meta['matchedMaterials'] = $matchedMaterials;

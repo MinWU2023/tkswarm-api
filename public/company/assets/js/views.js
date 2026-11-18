@@ -1354,35 +1354,6 @@
               })
             : h('div', { class: 'cx-chart-empty' }, '拉取数据后会生成历史快照')
         ]),
-        h('div', { class: 'panel', style: 'margin-top:16px' }, [
-          panelHead('近期视频', h('span', { class: 'text-xs text-slate-400' }, '共 ' + (s.videos || 0) + ' 条')),
-          self.recentVideos.length
-            ? h('div', { class: 'material-grid' }, self.recentVideos.map(function (item) {
-                return h('div', { class: 'material-card', key: item.materialId }, [
-                  h('div', { class: 'material-thumb' }, [
-                    item.coverUrl
-                      ? h('img', { class: 'material-thumb-img', src: item.coverUrl, alt: '', loading: 'lazy' })
-                      : h('div', { class: 'material-thumb-empty' }, '无封面')
-                  ]),
-                  h('div', { class: 'material-body' }, [
-                    h('div', { class: 'material-title' }, item.title || '未命名视频'),
-                    h('div', { class: 'material-meta-row' }, [
-                      h('span', '▶ ' + fmtNum(item.views)),
-                      h('span', '♡ ' + fmtNum(item.likes)),
-                      h('span', '💬 ' + fmtNum(item.comments))
-                    ])
-                  ]),
-                  h('div', { class: 'card-detail-bar' }, [
-                    h('button', {
-                      type: 'button',
-                      class: 'card-detail-btn',
-                      onClick: function () { self.$router.push('/videos/' + item.materialId); }
-                    }, '查看详情')
-                  ])
-                ]);
-              }))
-            : h('div', { class: 'empty-pub' }, '暂无视频')
-        ])
       ]);
     }
   };
