@@ -199,9 +199,15 @@ class NodeBridgeController extends Controller
             );
             $ownerOverride = $ownerOverrideRaw === '' ? null : (int)$ownerOverrideRaw;
             // 归属指向自己（登录身份或当前有效身份）不算越权，如非超管发布注册环境；指定给他人仍仅超管可操作
+            // 环境本机共用，归属仅用于额度记账：指定为「该账号自己的归属用户」或当前身份可见范围内的用户，
+            // 属于 Node 代建环境的正常场景（账号已通过上面的可见范围校验），不算越权；指定给无关他人仍仅超管可操作
+            $bindAccountOwner = (int)($row['owner_id'] ?? 0);
             if ($ownerOverride !== null && $ownerOverride > 0 && !\App\Services\DataScope::isLoginSuper()
                 && $ownerOverride !== (int)(\App\Services\DataScope::loginUser()['id'] ?? 0)
-                && $ownerOverride !== \App\Services\DataScope::effectiveUserId()) {
+                && $ownerOverride !== \App\Services\DataScope::effectiveUserId()
+                && !($bindAccountOwner > 0 && $ownerOverride === $bindAccountOwner)
+                && !\App\Services\DataScope::isLoginOpsAdmin()
+                && !\App\Services\DataScope::isOpsAdmin()) {
                 return $this->error('仅超级管理员可为环境指定管理用户归属', 403);
             }
             if (!$asPrimary) {
