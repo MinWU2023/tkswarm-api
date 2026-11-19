@@ -334,7 +334,7 @@ class TaskController extends Controller
                 'publishCaption' => trim((string)($row['publish_caption'] ?? '')),
                 'hashtags' => '',
                 'threadCount' => 1,
-                'saveTraffic' => false,
+                'saveTraffic' => true,
                 'deleteAfterPublish' => false,
             ];
             try {

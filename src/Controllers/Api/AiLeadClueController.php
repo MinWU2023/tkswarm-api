@@ -187,7 +187,7 @@ class AiLeadClueController extends Controller
             SELECT 'comment' AS source_type, cm.id AS source_id, cm.lead_id, cm.username, cm.nickname,
                    cm.profile_url, cm.uuid, cm.intent_score, cm.comment_text, cm.comment_text_zh,
                    cm.ai_reason, cm.industry_id, cm.video_id, cm.created_at,
-                   l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+                   l.keywords AS lead_keywords, l.type AS lead_type, l.keywords AS lead_name
             FROM ai_lead_comments cm
             INNER JOIN ai_lead_comment_shared_users su ON su.comment_id=cm.id
             INNER JOIN ai_leads l ON l.id=cm.lead_id
@@ -196,7 +196,7 @@ class AiLeadClueController extends Controller
             SELECT 'creator' AS source_type, c.id AS source_id, c.lead_id, c.username, c.nickname,
                    c.profile_url, c.uuid, c.intent_score, '' AS comment_text, '' AS comment_text_zh,
                    '' AS ai_reason, COALESCE(l.industry_id, 0) AS industry_id, 0 AS video_id, c.created_at,
-                   l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+                   l.keywords AS lead_keywords, l.type AS lead_type, l.keywords AS lead_name
             FROM ai_lead_creators c
             INNER JOIN ai_lead_creator_shared_users su ON su.creator_id=c.id
             INNER JOIN ai_leads l ON l.id=c.lead_id
@@ -238,7 +238,7 @@ class AiLeadClueController extends Controller
         if ($parsed['sourceType'] === 'comment') {
             $row = DB::selectOne(
                 "SELECT 'comment' AS source_type, cm.id AS source_id, cm.*, l.keywords AS lead_keywords,
-                        l.type AS lead_type, l.name AS lead_name
+                        l.type AS lead_type, l.keywords AS lead_name
                  FROM ai_lead_comments cm
                  INNER JOIN ai_lead_comment_shared_users su ON su.comment_id=cm.id AND su.user_id=?
                  INNER JOIN ai_leads l ON l.id=cm.lead_id
@@ -249,7 +249,7 @@ class AiLeadClueController extends Controller
             $row = DB::selectOne(
                 "SELECT 'creator' AS source_type, c.id AS source_id, c.*, '' AS comment_text, '' AS comment_text_zh,
                         '' AS ai_reason, COALESCE(l.industry_id, 0) AS industry_id, 0 AS video_id,
-                        l.keywords AS lead_keywords, l.type AS lead_type, l.name AS lead_name
+                        l.keywords AS lead_keywords, l.type AS lead_type, l.keywords AS lead_name
                  FROM ai_lead_creators c
                  INNER JOIN ai_lead_creator_shared_users su ON su.creator_id=c.id AND su.user_id=?
                  INNER JOIN ai_leads l ON l.id=c.lead_id

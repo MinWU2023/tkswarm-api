@@ -670,6 +670,14 @@ class AccountWorkController extends Controller
         }
 
         $profileVersionId = 0;
+        // 「是否执行任务」：false = 只保存系统资料，不生成修改资料任务
+        $executeTaskRaw = $payload['executeTask'] ?? $payload['execute_task'] ?? true;
+        $executeTask = !($executeTaskRaw === false || $executeTaskRaw === 0 || $executeTaskRaw === '0'
+            || (is_string($executeTaskRaw) && in_array(strtolower(trim($executeTaskRaw)), ['false', 'off', 'no'], true)));
+        unset($payload['executeTask'], $payload['execute_task']);
+        if ($taskType === 'modify_profile' && !$executeTask && empty($payload['applyProfileSettings'])) {
+            return $this->error('不执行任务时需要保存系统资料', 422);
+        }
         if ($taskType === 'modify_profile' && !empty($payload['applyProfileSettings'])) {
             $settings = $payload['profileSettings'] ?? $payload;
             if (!is_array($settings)) {
@@ -691,6 +699,13 @@ class AccountWorkController extends Controller
                 ['source' => 'account_wizard']
             );
             unset($payload['applyProfileSettings'], $payload['profileSettings']);
+            if (!$executeTask) {
+                return $this->success([
+                    'executed' => false,
+                    'batch_id' => 0,
+                    'profileVersionId' => $profileVersionId,
+                ], '已保存系统资料，未生成修改资料任务');
+            }
         }
         if ($taskType === 'modify_profile') {
             if ($profileVersionId < 1) {
@@ -766,10 +781,9 @@ class AccountWorkController extends Controller
         if (array_key_exists('nickname', $settings) || array_key_exists('displayName', $settings)) {
             $nickname = trim((string)($settings['nickname'] ?? $settings['displayName'] ?? ''));
             $prevNick = trim((string)($old['nickname'] ?? ''));
-            if (!($nickname !== '' && $nickname !== $prevNick && $cooldownLocked)) {
-                $sets[] = 'nickname=?';
-                $bind[] = $nickname;
-            }
+            // 昵称不再因本地 7 天冷却记录而被拦截：由用户自行决定；TikTok 真拒绝时 Node 会回写并恢复原昵称
+            $sets[] = 'nickname=?';
+            $bind[] = $nickname;
         }
         if (array_key_exists('signature', $settings) || array_key_exists('bio', $settings) || array_key_exists('profileBio', $settings)) {
             $sets[] = 'profile_bio=?';
