@@ -673,8 +673,18 @@ class PullCommentService
             $comments = [];
         }
 
+        // 平台评论总数（角标 / API commentCount）；勿用入库评论行数冒充
+        $rawPlatformComments = $payload['commentCount']
+            ?? $payload['comment_count']
+            ?? $payload['commentsCount']
+            ?? $payload['comments_count']
+            ?? null;
+        $hasPlatformCommentCount = $rawPlatformComments !== null && $rawPlatformComments !== '';
+        $platformCommentCount = $hasPlatformCommentCount ? max(0, (int)$rawPlatformComments) : -1;
+        $scrapedRows = count(array_filter($comments, static fn ($c) => is_array($c) && trim((string)($c['username'] ?? '')) !== ''));
+        $commentTotal = $hasPlatformCommentCount ? $platformCommentCount : $scrapedRows;
+
         // 先写互动数据，避免评论入库失败时播放量/点赞丢失
-        $commentTotal = count(array_filter($comments, static fn ($c) => is_array($c) && trim((string)($c['username'] ?? '')) !== ''));
         $sets = [
             'view_count=?',
             'like_count=?',
@@ -697,7 +707,8 @@ class PullCommentService
             $comments
         );
 
-        if ($saved !== $commentTotal) {
+        // 仅当未提供平台 commentCount 时，才用成功入库行数回填
+        if (!$hasPlatformCommentCount && $saved !== $commentTotal) {
             DB::query(
                 'UPDATE materials SET comment_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
                 [$saved, $materialId]
