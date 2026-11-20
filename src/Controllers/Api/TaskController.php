@@ -74,6 +74,7 @@ class TaskController extends Controller
             $params
         );
         $items = array_map([$this, 'mapTask'], $rows);
+        $this->attachTaskAccountNames($items);
         $pages = max(1, (int)ceil($total / $pageSize));
         return $this->success([
             'items' => $items,
@@ -1262,6 +1263,78 @@ class TaskController extends Controller
             $normalized['executionPlans'] = new \stdClass();
         }
         return $normalized;
+    }
+
+    /**
+     * 列表里给每个任务附带 account_names（账号用户名数组）：载荷里的 accountIds/pairs + 子任务里出现过的账号。
+     * @param list<array<string,mixed>> $items
+     */
+    private function attachTaskAccountNames(array &$items): void
+    {
+        if (!$items) {
+            return;
+        }
+        $byTask = [];
+        $taskIds = [];
+        foreach ($items as $t) {
+            $tid = (int)($t['id'] ?? 0);
+            if ($tid <= 0) {
+                continue;
+            }
+            $taskIds[] = $tid;
+            $p = is_array($t['payload'] ?? null) ? $t['payload'] : [];
+            $ids = [];
+            foreach ((array)($p['accountIds'] ?? []) as $a) {
+                $ids[] = (int)$a;
+            }
+            foreach ((array)($p['pairs'] ?? []) as $pr) {
+                if (is_array($pr)) {
+                    $ids[] = (int)($pr['accountId'] ?? $pr['account_id'] ?? 0);
+                }
+            }
+            $byTask[$tid] = $ids;
+        }
+        $names = [];
+        try {
+            if ($taskIds) {
+                $ph = implode(',', array_fill(0, count($taskIds), '?'));
+                $rows = DB::select(
+                    "SELECT DISTINCT task_id, account_id FROM task_items WHERE account_id IS NOT NULL AND task_id IN ({$ph}) ORDER BY id ASC",
+                    $taskIds
+                ) ?: [];
+                foreach ($rows as $r) {
+                    $byTask[(int)$r['task_id']][] = (int)$r['account_id'];
+                }
+            }
+            $all = [];
+            foreach ($byTask as $ids) {
+                foreach ($ids as $i) {
+                    if ($i > 0) {
+                        $all[$i] = true;
+                    }
+                }
+            }
+            if ($all) {
+                $aids = array_keys($all);
+                $ph2 = implode(',', array_fill(0, count($aids), '?'));
+                foreach (DB::select("SELECT id, username FROM accounts WHERE id IN ({$ph2})", $aids) ?: [] as $a) {
+                    $names[(int)$a['id']] = (string)($a['username'] ?? '');
+                }
+            }
+        } catch (\Throwable $e) {
+            // 取账号失败不影响列表
+        }
+        foreach ($items as &$t) {
+            $tid = (int)($t['id'] ?? 0);
+            $list = [];
+            foreach (array_values(array_unique($byTask[$tid] ?? [])) as $aid) {
+                if ($aid > 0 && ($names[$aid] ?? '') !== '') {
+                    $list[] = $names[$aid];
+                }
+            }
+            $t['account_names'] = $list;
+        }
+        unset($t);
     }
 
     private function mapTask(array $row): array
